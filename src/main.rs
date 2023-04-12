@@ -1,6 +1,7 @@
 extern crate ash;
 use ash::{vk, Entry};
 pub use ash::{Device, Instance};
+use ash_window::create_surface;
 
 use std::ffi::CStr;
 
@@ -8,11 +9,27 @@ use ash::extensions::{
     ext::DebugUtils,
     khr::{Surface, Swapchain},
 };
+use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::default::Default;
 use std::ops::Drop;
 use std::os::raw::c_char;
+use winit::window::Window;
+
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+use ash::vk::{
+    KhrGetPhysicalDeviceProperties2Fn, KhrPortabilityEnumerationFn, KhrPortabilitySubsetFn,
+};
+
+
+use winit::{
+    event::{ElementState, Event, KeyboardInput, VirtualKeyCode, WindowEvent},
+    event_loop::{ControlFlow, EventLoop},
+    platform::run_return::EventLoopExtRunReturn,
+    window::WindowBuilder,
+};
+
 
 unsafe extern "system" fn vulkan_debug_callback(
     message_severity: vk::DebugUtilsMessageSeverityFlagsEXT,
@@ -107,7 +124,7 @@ impl VkRes {
         debug_call_back
     }
 
-    unsafe fn create_instance(entry: &Entry) -> Instance {
+    unsafe fn create_instance(entry: &Entry, extension_names : &Vec<*const i8>) -> Instance {
         let create_flags = if cfg!(any(target_os = "macos", target_os = "ios"))
         {
             vk::InstanceCreateFlags::ENUMERATE_PORTABILITY_KHR
@@ -123,7 +140,6 @@ impl VkRes {
             b"VK_LAYER_KHRONOS_validation\0",
         )];
 
-        let extension_names = vec![DebugUtils::name().as_ptr()];
         let layers_names_raw: Vec<*const c_char> = layer_names
             .iter()
             .map(|raw_name| raw_name.as_ptr())
@@ -142,8 +158,6 @@ impl VkRes {
             .enabled_extension_names(&extension_names)
             .flags(create_flags);
 
-        let entry = Entry::load().unwrap();
-
         let instance: Instance = entry
             .create_instance(&create_info, None)
             .expect("Instance creation error");
@@ -152,12 +166,22 @@ impl VkRes {
         instance
     }
 
-    unsafe fn new() -> Self{
-        let entry = Entry::load().unwrap();
+    unsafe fn create_surface(entry: &Entry, instance: &Instance, window: &Window) -> (vk::SurfaceKHR, Surface) {
+        let surface_loader = Surface::new(&entry, &instance);
 
-        let instance = Self::create_instance(&entry);
-        let debug_utils = Self::create_debug_utils(&instance, &entry);
+        let surface = ash_window::create_surface(
+            &entry,
+            &instance,
+            window.raw_display_handle(),
+            window.raw_window_handle(),
+            None,
+        )
+        .unwrap();
 
+        return (surface, surface_loader)
+    }
+
+    unsafe fn create_physical_device(instance: &Instance, surface: vk::SurfaceKHR, surface_loader: &Surface) -> (vk::PhysicalDevice, u32) {
         let pdevices = instance
             .enumerate_physical_devices()
             .expect("Physical device error");
@@ -170,9 +194,16 @@ impl VkRes {
                     .iter()
                     .enumerate()
                     .find_map(|(index, info)| {
-                        let supports_compute = info.queue_flags.contains(vk::QueueFlags::GRAPHICS | vk::QueueFlags::COMPUTE);
-
-                        if supports_compute {
+                        let supports_graphic_and_surface =
+                            info.queue_flags.contains(vk::QueueFlags::GRAPHICS | vk::QueueFlags::COMPUTE)
+                                && surface_loader
+                                    .get_physical_device_surface_support(
+                                        *pdevice,
+                                        index as u32,
+                                        surface,
+                                    )
+                                    .unwrap();
+                        if supports_graphic_and_surface {
                             Some((*pdevice, index))
                         } else {
                             None
@@ -181,8 +212,105 @@ impl VkRes {
             })
             .expect("Couldn't find suitable device.");
 
+        return (pdevice, queue_family_index as u32)
+    }
 
-        let queue_family_index = queue_family_index as u32;
+    unsafe fn create_swapchain(instance: &Instance, device: &Device, pdevice: vk::PhysicalDevice, surface: vk::SurfaceKHR, surface_loader: &Surface, width: u32, height: u32) -> vk::SwapchainKHR {
+
+        let surface_capabilities = surface_loader
+            .get_physical_device_surface_capabilities(pdevice, surface)
+            .unwrap();
+
+        let surface_format = surface_loader
+            .get_physical_device_surface_formats(pdevice, surface)
+            .unwrap()[0];
+
+        let mut desired_image_count = surface_capabilities.min_image_count + 1;
+        if surface_capabilities.max_image_count > 0
+            && desired_image_count > surface_capabilities.max_image_count
+        {
+            desired_image_count = surface_capabilities.max_image_count;
+        }
+        let surface_resolution = match surface_capabilities.current_extent.width {
+            std::u32::MAX => vk::Extent2D {
+                width: width,
+                height: height,
+            },
+            _ => surface_capabilities.current_extent,
+        };
+        let pre_transform = if surface_capabilities
+            .supported_transforms
+            .contains(vk::SurfaceTransformFlagsKHR::IDENTITY)
+        {
+            vk::SurfaceTransformFlagsKHR::IDENTITY
+        } else {
+            surface_capabilities.current_transform
+        };
+        let present_modes = surface_loader
+            .get_physical_device_surface_present_modes(pdevice, surface)
+            .unwrap();
+        let present_mode = present_modes
+            .iter()
+            .cloned()
+            .find(|&mode| mode == vk::PresentModeKHR::MAILBOX)
+            .unwrap_or(vk::PresentModeKHR::FIFO);
+
+        let swapchain_loader = Swapchain::new(&instance, &device);
+
+        let swapchain_create_info = vk::SwapchainCreateInfoKHR::builder()
+            .surface(surface)
+            .min_image_count(desired_image_count)
+            .image_color_space(surface_format.color_space)
+            .image_format(surface_format.format)
+            .image_extent(surface_resolution)
+            .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT)
+            .image_sharing_mode(vk::SharingMode::EXCLUSIVE)
+            .pre_transform(pre_transform)
+            .composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE)
+            .present_mode(present_mode)
+            .clipped(true)
+            .image_array_layers(1);
+
+        let swapchain = swapchain_loader
+            .create_swapchain(&swapchain_create_info, None)
+            .unwrap();
+
+        swapchain
+    }
+
+    unsafe fn new() -> Self{
+        let window_height = 800;
+        let window_width  = 600;
+        let event_loop = EventLoop::new();
+        let window = WindowBuilder::new()
+            .with_title("Ash - Example")
+            .with_inner_size(winit::dpi::LogicalSize::new(
+                f64::from(window_height),
+                f64::from(window_width),
+            ))
+            .build(&event_loop)
+            .unwrap();
+
+        let mut extension_names = ash_window::enumerate_required_extensions(window.raw_display_handle())
+                    .unwrap()
+                    .to_vec();
+        extension_names.push(DebugUtils::name().as_ptr());
+
+        #[cfg(any(target_os = "macos", target_os = "ios"))]
+        {
+            extension_names.push(KhrPortabilityEnumerationFn::name().as_ptr());
+            // Enabling this extension is a requirement when using `VK_KHR_portability_subset`
+            extension_names.push(KhrGetPhysicalDeviceProperties2Fn::name().as_ptr());
+        }
+
+
+        let entry = Entry::load().unwrap();
+        let instance = Self::create_instance(&entry, &extension_names);
+        let debug_utils = Self::create_debug_utils(&instance, &entry);
+        let (surface, surface_loader) = Self::create_surface(&entry, &instance, &window);
+
+
+        let (pdevice, queue_family_index) = Self::create_physical_device(&instance, surface, &surface_loader);
 
         let device_extension_names_raw : [*const i8; 1] = [
             Swapchain::name().as_ptr(),
@@ -202,12 +330,26 @@ impl VkRes {
 
         let device_create_info = vk::DeviceCreateInfo::builder()
             .queue_create_infos(std::slice::from_ref(&queue_info))
-//            .enabled_extension_names(&device_extension_names_raw)
+            .enabled_extension_names(&device_extension_names_raw)
             .enabled_features(&features);
 
         let device: Device = instance
             .create_device(pdevice, &device_create_info, None)
             .unwrap();
+
+
+        let swapchain = Self::create_swapchain(&instance, &device, pdevice, surface, &surface_loader, 800, 600);
+
+
+
+
+
+
+
+
+
+
+
 
 //        let present_queue = device.get_device_queue(queue_family_index, 0);
     
