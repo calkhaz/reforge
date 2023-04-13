@@ -1,14 +1,15 @@
 extern crate ash;
-use ash::{vk, Entry};
+use ash::{vk::{self, SurfaceFormatKHR}, Entry};
 pub use ash::{Device, Instance};
 use ash_window::create_surface;
 
 use std::ffi::CStr;
 
-use ash::extensions::{
-    ext::DebugUtils,
-    khr::{Surface, Swapchain},
-};
+use ash::extensions::khr;
+//use ash::extensions::{
+//    ext::DebugUtils,
+//    khr::{Surface, Swapchain},
+//};
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 use std::borrow::Cow;
 use std::cell::RefCell;
@@ -22,6 +23,12 @@ use ash::vk::{
     KhrGetPhysicalDeviceProperties2Fn, KhrPortabilityEnumerationFn, KhrPortabilitySubsetFn,
 };
 
+pub struct SwapChain {
+    pub surface_format: SurfaceFormatKHR,
+    pub vk: vk::SwapchainKHR,
+    pub loader: khr::Swapchain,
+    pub images: Vec<vk::ImageView>
+}
 
 use winit::{
     event::{ElementState, Event, KeyboardInput, VirtualKeyCode, WindowEvent},
@@ -115,7 +122,7 @@ impl VkRes {
             )
             .pfn_user_callback(Some(vulkan_debug_callback));
 
-        let debug_utils_loader = DebugUtils::new(&entry, &instance);
+        let debug_utils_loader = ash::extensions::ext::DebugUtils::new(&entry, &instance);
 
         let debug_call_back = debug_utils_loader
             .create_debug_utils_messenger(&debug_info, None)
@@ -166,8 +173,8 @@ impl VkRes {
         instance
     }
 
-    unsafe fn create_surface(entry: &Entry, instance: &Instance, window: &Window) -> (vk::SurfaceKHR, Surface) {
-        let surface_loader = Surface::new(&entry, &instance);
+    unsafe fn create_surface(entry: &Entry, instance: &Instance, window: &Window) -> (vk::SurfaceKHR, khr::Surface) {
+        let surface_loader = khr::Surface::new(&entry, &instance);
 
         let surface = ash_window::create_surface(
             &entry,
@@ -181,7 +188,7 @@ impl VkRes {
         return (surface, surface_loader)
     }
 
-    unsafe fn create_physical_device(instance: &Instance, surface: vk::SurfaceKHR, surface_loader: &Surface) -> (vk::PhysicalDevice, u32) {
+    unsafe fn create_physical_device(instance: &Instance, surface: vk::SurfaceKHR, surface_loader: &khr::Surface) -> (vk::PhysicalDevice, u32) {
         let pdevices = instance
             .enumerate_physical_devices()
             .expect("Physical device error");
@@ -215,8 +222,7 @@ impl VkRes {
         return (pdevice, queue_family_index as u32)
     }
 
-    unsafe fn create_swapchain(instance: &Instance, device: &Device, pdevice: vk::PhysicalDevice, surface: vk::SurfaceKHR, surface_loader: &Surface, width: u32, height: u32) -> vk::SwapchainKHR {
-
+    unsafe fn create_swapchain(instance: &Instance, device: &Device, pdevice: vk::PhysicalDevice, surface: vk::SurfaceKHR, surface_loader: &khr::Surface, width: u32, height: u32) -> SwapChain {
         let surface_capabilities = surface_loader
             .get_physical_device_surface_capabilities(pdevice, surface)
             .unwrap();
@@ -255,7 +261,7 @@ impl VkRes {
             .find(|&mode| mode == vk::PresentModeKHR::MAILBOX)
             .unwrap_or(vk::PresentModeKHR::FIFO);
 
-        let swapchain_loader = Swapchain::new(&instance, &device);
+        let swapchain_loader = khr::Swapchain::new(&instance, &device);
 
         let swapchain_create_info = vk::SwapchainCreateInfoKHR::builder()
             .surface(surface)
@@ -275,26 +281,45 @@ impl VkRes {
             .create_swapchain(&swapchain_create_info, None)
             .unwrap();
 
-        swapchain
+        let present_images = swapchain_loader.get_swapchain_images(swapchain).unwrap();
+
+        let present_image_views: Vec<vk::ImageView> = present_images
+            .iter()
+            .map(|&image| {
+                let create_view_info = vk::ImageViewCreateInfo::builder()
+                    .view_type(vk::ImageViewType::TYPE_2D)
+                    .format(surface_format.format)
+                    .components(vk::ComponentMapping {
+                        r: vk::ComponentSwizzle::R,
+                        g: vk::ComponentSwizzle::G,
+                        b: vk::ComponentSwizzle::B,
+                        a: vk::ComponentSwizzle::A,
+                    })
+                    .subresource_range(vk::ImageSubresourceRange {
+                        aspect_mask: vk::ImageAspectFlags::COLOR,
+                        base_mip_level: 0,
+                        level_count: 1,
+                        base_array_layer: 0,
+                        layer_count: 1,
+                    })
+                    .image(image);
+                device.create_image_view(&create_view_info, None).unwrap()
+           }).collect();
+
+        return SwapChain {
+            surface_format: surface_format,
+            vk: swapchain,
+            loader: swapchain_loader,
+            images: present_image_views
+        };
     }
 
-    unsafe fn new() -> Self{
-        let window_height = 800;
-        let window_width  = 600;
-        let event_loop = EventLoop::new();
-        let window = WindowBuilder::new()
-            .with_title("Ash - Example")
-            .with_inner_size(winit::dpi::LogicalSize::new(
-                f64::from(window_height),
-                f64::from(window_width),
-            ))
-            .build(&event_loop)
-            .unwrap();
+    unsafe fn new(event_loop: EventLoop<()>, window: Window) -> Self{
 
         let mut extension_names = ash_window::enumerate_required_extensions(window.raw_display_handle())
                     .unwrap()
                     .to_vec();
-        extension_names.push(DebugUtils::name().as_ptr());
+        extension_names.push(ash::extensions::ext::DebugUtils::name().as_ptr());
 
         #[cfg(any(target_os = "macos", target_os = "ios"))]
         {
@@ -309,11 +334,10 @@ impl VkRes {
         let debug_utils = Self::create_debug_utils(&instance, &entry);
         let (surface, surface_loader) = Self::create_surface(&entry, &instance, &window);
 
-
         let (pdevice, queue_family_index) = Self::create_physical_device(&instance, surface, &surface_loader);
 
         let device_extension_names_raw : [*const i8; 1] = [
-            Swapchain::name().as_ptr(),
+            khr::Swapchain::name().as_ptr(),
             #[cfg(any(target_os = "macos", target_os = "ios"))]
             KhrPortabilitySubsetFn::name().as_ptr(),
         ];
@@ -337,18 +361,22 @@ impl VkRes {
             .create_device(pdevice, &device_create_info, None)
             .unwrap();
 
-
         let swapchain = Self::create_swapchain(&instance, &device, pdevice, surface, &surface_loader, 800, 600);
 
+        let pool_create_info = vk::CommandPoolCreateInfo::builder()
+            .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER)
+            .queue_family_index(queue_family_index);
 
+        let pool = device.create_command_pool(&pool_create_info, None).unwrap();
 
+        let command_buffer_allocate_info = vk::CommandBufferAllocateInfo::builder()
+            .command_buffer_count(2)
+            .command_pool(pool)
+            .level(vk::CommandBufferLevel::PRIMARY);
 
-
-
-
-
-
-
+        let command_buffers = device
+            .allocate_command_buffers(&command_buffer_allocate_info)
+            .unwrap();
 
 
 //        let present_queue = device.get_device_queue(queue_family_index, 0);
@@ -363,7 +391,22 @@ impl VkRes {
 }
 
 fn main() {
+    let window_height = 800;
+    let window_width  = 600;
+    let event_loop = EventLoop::new();
+    let window = WindowBuilder::new()
+        .with_title("Ash - Example")
+        .with_inner_size(winit::dpi::LogicalSize::new(
+            f64::from(window_height),
+            f64::from(window_width),
+        ))
+        .build(&event_loop)
+        .unwrap();
+
     unsafe {
-    let res = VkRes::new();
+    let res = VkRes::new(event_loop, window);
     }
+
+
+
 }
