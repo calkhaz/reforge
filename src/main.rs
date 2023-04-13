@@ -3,7 +3,7 @@ use ash::{vk::{self, SurfaceFormatKHR}, Entry};
 pub use ash::{Device, Instance};
 use ash_window::create_surface;
 
-use std::ffi::CStr;
+use std::{ffi::CStr, borrow::BorrowMut};
 
 use ash::extensions::khr;
 //use ash::extensions::{
@@ -314,7 +314,7 @@ impl VkRes {
         };
     }
 
-    unsafe fn new(event_loop: EventLoop<()>, window: Window) -> Self{
+    unsafe fn new(event_loop: &EventLoop<()>, window: &Window) -> Self{
 
         let mut extension_names = ash_window::enumerate_required_extensions(window.raw_display_handle())
                     .unwrap()
@@ -390,10 +390,11 @@ impl VkRes {
 
 }
 
+
 fn main() {
     let window_height = 800;
     let window_width  = 600;
-    let event_loop = EventLoop::new();
+    let mut event_loop = EventLoop::new();
     let window = WindowBuilder::new()
         .with_title("Ash - Example")
         .with_inner_size(winit::dpi::LogicalSize::new(
@@ -404,8 +405,31 @@ fn main() {
         .unwrap();
 
     unsafe {
-    let res = VkRes::new(event_loop, window);
+    let res = VkRes::new(&event_loop, &window);
     }
+
+    event_loop
+        .run_return(|event, _, control_flow| {
+            *control_flow = ControlFlow::Poll;
+            match event {
+                Event::WindowEvent {
+                    event:
+                        WindowEvent::CloseRequested
+                        | WindowEvent::KeyboardInput {
+                            input:
+                                KeyboardInput {
+                                    state: ElementState::Pressed,
+                                    virtual_keycode: Some(VirtualKeyCode::Escape),
+                                    ..
+                                },
+                            ..
+                        },
+                    ..
+                } => *control_flow = ControlFlow::Exit,
+                Event::MainEventsCleared => (),
+                _ => (),
+            }
+        });
 
 
 
