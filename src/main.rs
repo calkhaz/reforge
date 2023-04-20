@@ -30,11 +30,6 @@ pub struct SwapChain {
     pub images: Vec<vk::ImageView>
 }
 
-pub struct Commands {
-    pub pool   : vk::CommandPool,
-    pub buffers: Vec<vk::CommandBuffer>
-}
-
 use winit::{
     event::{ElementState, Event, KeyboardInput, VirtualKeyCode, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
@@ -72,11 +67,20 @@ unsafe extern "system" fn vulkan_debug_callback(
     vk::FALSE
 }
 
+pub struct VkFrameRes {
+    pub fence: vk::Fence,
+    pub present_complete_semaphore: vk::Semaphore,
+    pub render_complete_semaphore:  vk::Semaphore,
+    pub cmd_pool   : vk::CommandPool,
+    pub cmd_buffer: vk::CommandBuffer
+}
+
 pub struct VkRes {
     pub entry: Entry,
-
     pub instance: Instance,
     pub device: Device,
+    pub swapchain: SwapChain,
+    pub frames: Vec<VkFrameRes>
 //    pub surface_loader: Surface,
 //    pub swapchain_loader: Swapchain,
 //    pub debug_utils_loader: DebugUtils,
@@ -193,7 +197,7 @@ impl VkRes {
         return (surface, surface_loader)
     }
 
-    unsafe fn create_commands(device: &ash::Device, queue_family_index: u32) -> Commands {
+    unsafe fn create_commands(device: &ash::Device, queue_family_index: u32) -> (vk::CommandPool, vk::CommandBuffer) {
         let pool_create_info = vk::CommandPoolCreateInfo::builder()
             .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER)
             .queue_family_index(queue_family_index);
@@ -201,15 +205,15 @@ impl VkRes {
         let pool = device.create_command_pool(&pool_create_info, None).unwrap();
 
         let command_buffer_allocate_info = vk::CommandBufferAllocateInfo::builder()
-            .command_buffer_count(2)
+            .command_buffer_count(1)
             .command_pool(pool)
             .level(vk::CommandBufferLevel::PRIMARY);
 
-        let command_buffers = device
+        let command_buffer = device
             .allocate_command_buffers(&command_buffer_allocate_info)
             .unwrap();
 
-        return Commands{pool: pool, buffers: command_buffers}
+        (pool, command_buffer[0])
     }
 
     unsafe fn create_physical_device(instance: &Instance, surface: vk::SurfaceKHR, surface_loader: &khr::Surface) -> (vk::PhysicalDevice, u32) {
@@ -387,31 +391,42 @@ impl VkRes {
 
         let swapchain = Self::create_swapchain(&instance, &device, pdevice, surface, &surface_loader, 800, 600);
 
-        let commands = Self::create_commands(&device, queue_family_index);
+        let frames : Vec<VkFrameRes> = (1..2).map(|_|{
+            let semaphore_create_info = vk::SemaphoreCreateInfo::default();
 
-        let semaphore_create_info = vk::SemaphoreCreateInfo::default();
+            let present_complete_semaphore = device
+                .create_semaphore(&semaphore_create_info, None)
+                .unwrap();
+            let render_complete_semaphore = device
+                .create_semaphore(&semaphore_create_info, None)
+                .unwrap();
 
-        let present_complete_semaphore = device
-            .create_semaphore(&semaphore_create_info, None)
-            .unwrap();
-        let render_complete_semaphore = device
-            .create_semaphore(&semaphore_create_info, None)
-            .unwrap();
+            let fence_create_info =
+                vk::FenceCreateInfo::builder().flags(vk::FenceCreateFlags::SIGNALED);
 
-        let fence_create_info =
-            vk::FenceCreateInfo::builder().flags(vk::FenceCreateFlags::SIGNALED);
+            let fence = device
+                .create_fence(&fence_create_info, None)
+                .expect("Create fence failed.");
 
-        let fence = device
-            .create_fence(&fence_create_info, None)
-            .expect("Create fence failed.");
+            let (cmd_pool, cmd_buff) = Self::create_commands(&device, queue_family_index);
 
+            VkFrameRes{
+                fence: fence,
+                present_complete_semaphore: present_complete_semaphore,
+                render_complete_semaphore: render_complete_semaphore,
+                cmd_pool: cmd_pool,
+                cmd_buffer: cmd_buff
+            }
+        }).collect();
 
 //        let present_queue = device.get_device_queue(queue_family_index, 0);
     
         VkRes {
             entry: entry,
             instance: instance,
-            device: device
+            device: device,
+            swapchain: swapchain,
+            frames: frames
         }
     }
 }
