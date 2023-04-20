@@ -18,6 +18,8 @@ use std::ops::Drop;
 use std::os::raw::c_char;
 use winit::window::Window;
 
+const NUM_FRAMES: u8 = 2;
+
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 use ash::vk::{
     KhrGetPhysicalDeviceProperties2Fn, KhrPortabilityEnumerationFn, KhrPortabilitySubsetFn,
@@ -393,7 +395,7 @@ impl VkRes {
 
         let swapchain = Self::create_swapchain(&instance, &device, pdevice, surface, &surface_loader, 800, 600);
 
-        let frames : Vec<VkFrameRes> = (1..2).map(|_|{
+        let frames : Vec<VkFrameRes> = (0..NUM_FRAMES).map(|_|{
             let semaphore_create_info = vk::SemaphoreCreateInfo::default();
 
             let present_complete_semaphore = device
@@ -436,23 +438,7 @@ impl VkRes {
     }
 }
 
-fn main() {
-    let window_height = 800;
-    let window_width  = 600;
-    let mut event_loop = EventLoop::new();
-    let window = WindowBuilder::new()
-        .with_title("Ash - Example")
-        .with_inner_size(winit::dpi::LogicalSize::new(
-            f64::from(window_height),
-            f64::from(window_width),
-        ))
-        .build(&event_loop)
-        .unwrap();
-
-    unsafe {
-    let res = VkRes::new(&event_loop, &window);
-    }
-
+fn render_loop<F: Fn()>(event_loop: &mut EventLoop<()>, f: F) {
     event_loop
         .run_return(|event, _, control_flow| {
             *control_flow = ControlFlow::Poll;
@@ -471,10 +457,63 @@ fn main() {
                         },
                     ..
                 } => *control_flow = ControlFlow::Exit,
-                Event::MainEventsCleared => (),
+                Event::MainEventsCleared => f(),
                 _ => (),
             }
         });
+}
+
+
+fn main() {
+    let window_height = 800;
+    let window_width  = 600;
+    let mut event_loop = EventLoop::new();
+    let window = WindowBuilder::new()
+        .with_title("Reforge")
+        .with_inner_size(winit::dpi::LogicalSize::new(
+            f64::from(window_height),
+            f64::from(window_width),
+        ))
+        .build(&event_loop)
+        .unwrap();
+
+    unsafe {
+    let res = VkRes::new(&event_loop, &window);
+
+    render_loop(&mut event_loop, || {
+        static mut FRAME_INDEX: u8 = 0;
+
+        let frame = &res.frames[FRAME_INDEX as usize];
+
+        /*
+        let (present_index, _) = res
+            .swapchain.loader
+            .acquire_next_image(
+                res.swapchain.vk,
+                std::u64::MAX,
+                frame.present_complete_semaphore,
+                vk::Fence::null(),
+            )
+            .unwrap();
+
+
+        let wait_semaphors = [frame.render_complete_semaphore];
+        let swapchains = [res.swapchain.vk];
+        let image_indices = [present_index];
+        let present_info = vk::PresentInfoKHR::builder()
+            .wait_semaphores(&wait_semaphors) // &base.rendering_complete_semaphore)
+            .swapchains(&swapchains)
+            .image_indices(&image_indices);
+
+        res.swapchain.loader
+            .queue_present(res.queue, &present_info)
+            .unwrap();
+        */
+
+        FRAME_INDEX = (FRAME_INDEX+1)%NUM_FRAMES;
+    });
+
+    }
 
 
 
