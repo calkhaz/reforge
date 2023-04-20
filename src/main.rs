@@ -1,5 +1,5 @@
 extern crate ash;
-use ash::{vk::{self, SurfaceFormatKHR}, Entry};
+use ash::{vk::{self, SurfaceFormatKHR, CommandBuffer}, Entry};
 pub use ash::{Device, Instance};
 use ash_window::create_surface;
 
@@ -28,6 +28,11 @@ pub struct SwapChain {
     pub vk: vk::SwapchainKHR,
     pub loader: khr::Swapchain,
     pub images: Vec<vk::ImageView>
+}
+
+pub struct Commands {
+    pub pool   : vk::CommandPool,
+    pub buffers: Vec<vk::CommandBuffer>
 }
 
 use winit::{
@@ -186,6 +191,25 @@ impl VkRes {
         .unwrap();
 
         return (surface, surface_loader)
+    }
+
+    unsafe fn create_commands(device: &ash::Device, queue_family_index: u32) -> Commands {
+        let pool_create_info = vk::CommandPoolCreateInfo::builder()
+            .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER)
+            .queue_family_index(queue_family_index);
+
+        let pool = device.create_command_pool(&pool_create_info, None).unwrap();
+
+        let command_buffer_allocate_info = vk::CommandBufferAllocateInfo::builder()
+            .command_buffer_count(2)
+            .command_pool(pool)
+            .level(vk::CommandBufferLevel::PRIMARY);
+
+        let command_buffers = device
+            .allocate_command_buffers(&command_buffer_allocate_info)
+            .unwrap();
+
+        return Commands{pool: pool, buffers: command_buffers}
     }
 
     unsafe fn create_physical_device(instance: &Instance, surface: vk::SurfaceKHR, surface_loader: &khr::Surface) -> (vk::PhysicalDevice, u32) {
@@ -363,20 +387,23 @@ impl VkRes {
 
         let swapchain = Self::create_swapchain(&instance, &device, pdevice, surface, &surface_loader, 800, 600);
 
-        let pool_create_info = vk::CommandPoolCreateInfo::builder()
-            .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER)
-            .queue_family_index(queue_family_index);
+        let commands = Self::create_commands(&device, queue_family_index);
 
-        let pool = device.create_command_pool(&pool_create_info, None).unwrap();
+        let semaphore_create_info = vk::SemaphoreCreateInfo::default();
 
-        let command_buffer_allocate_info = vk::CommandBufferAllocateInfo::builder()
-            .command_buffer_count(2)
-            .command_pool(pool)
-            .level(vk::CommandBufferLevel::PRIMARY);
-
-        let command_buffers = device
-            .allocate_command_buffers(&command_buffer_allocate_info)
+        let present_complete_semaphore = device
+            .create_semaphore(&semaphore_create_info, None)
             .unwrap();
+        let render_complete_semaphore = device
+            .create_semaphore(&semaphore_create_info, None)
+            .unwrap();
+
+        let fence_create_info =
+            vk::FenceCreateInfo::builder().flags(vk::FenceCreateFlags::SIGNALED);
+
+        let fence = device
+            .create_fence(&fence_create_info, None)
+            .expect("Create fence failed.");
 
 
 //        let present_queue = device.get_device_queue(queue_family_index, 0);
@@ -387,9 +414,7 @@ impl VkRes {
             device: device
         }
     }
-
 }
-
 
 fn main() {
     let window_height = 800;
