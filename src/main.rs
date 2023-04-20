@@ -70,8 +70,8 @@ unsafe extern "system" fn vulkan_debug_callback(
 pub struct VkFrameRes {
     pub fence: vk::Fence,
     pub present_complete_semaphore: vk::Semaphore,
-    pub render_complete_semaphore:  vk::Semaphore,
-    pub cmd_pool   : vk::CommandPool,
+    pub render_complete_semaphore: vk::Semaphore,
+    pub cmd_pool: vk::CommandPool,
     pub cmd_buffer: vk::CommandBuffer
 }
 
@@ -80,10 +80,12 @@ pub struct VkRes {
     pub instance: Instance,
     pub device: Device,
     pub swapchain: SwapChain,
-    pub frames: Vec<VkFrameRes>
+    pub frames: Vec<VkFrameRes>,
+    pub queue: vk::Queue,
 //    pub surface_loader: Surface,
 //    pub swapchain_loader: Swapchain,
-//    pub debug_utils_loader: DebugUtils,
+    pub debug_utils_loader: ash::extensions::ext::DebugUtils,
+    pub debug_callback: ash::vk::DebugUtilsMessengerEXT,
 ////    pub window: winit::window::Window,
 ////    pub event_loop: RefCell<EventLoop<()>>,
 //    pub debug_call_back: vk::DebugUtilsMessengerEXT,
@@ -117,7 +119,7 @@ pub struct VkRes {
 }
 
 impl VkRes {
-    unsafe fn create_debug_utils(instance : &Instance, entry: &Entry) -> vk::DebugUtilsMessengerEXT {
+    unsafe fn create_debug_utils(instance : &Instance, entry: &Entry) -> (vk::DebugUtilsMessengerEXT, ash::extensions::ext::DebugUtils) {
         let debug_info = vk::DebugUtilsMessengerCreateInfoEXT::builder()
             .message_severity(
                 vk::DebugUtilsMessageSeverityFlagsEXT::ERROR
@@ -137,7 +139,7 @@ impl VkRes {
             .create_debug_utils_messenger(&debug_info, None)
             .unwrap();
 
-        debug_call_back
+        (debug_call_back, debug_utils_loader)
     }
 
     unsafe fn create_instance(entry: &Entry, extension_names : &Vec<*const i8>) -> Instance {
@@ -359,7 +361,7 @@ impl VkRes {
 
         let entry = Entry::load().unwrap();
         let instance = Self::create_instance(&entry, &extension_names);
-        let debug_utils = Self::create_debug_utils(&instance, &entry);
+        let (debug_callback, debug_utils) = Self::create_debug_utils(&instance, &entry);
         let (surface, surface_loader) = Self::create_surface(&entry, &instance, &window);
 
         let (pdevice, queue_family_index) = Self::create_physical_device(&instance, surface, &surface_loader);
@@ -419,14 +421,17 @@ impl VkRes {
             }
         }).collect();
 
-//        let present_queue = device.get_device_queue(queue_family_index, 0);
+        let queue = device.get_device_queue(queue_family_index, 0);
     
         VkRes {
             entry: entry,
             instance: instance,
             device: device,
             swapchain: swapchain,
-            frames: frames
+            frames: frames,
+            queue: queue,
+            debug_utils_loader: debug_utils,
+            debug_callback: debug_callback,
         }
     }
 }
