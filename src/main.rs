@@ -2,6 +2,7 @@ extern crate ash;
 use ash::{vk::{self, SurfaceFormatKHR, CommandBuffer}, Entry};
 pub use ash::{Device, Instance};
 use ash_window::create_surface;
+use std::io::Cursor;
 
 use std::{ffi::CStr, borrow::BorrowMut};
 
@@ -423,7 +424,68 @@ impl VkRes {
             }
         }).collect();
 
+        let mut spv_file = Cursor::new(&include_bytes!("../shaders/compute.spv")[..]);
+
+        let shader_code = ash::util::read_spv(&mut spv_file).expect("Failed to read vertex shader spv file");
+        let shader_info = vk::ShaderModuleCreateInfo::builder().code(&shader_code);
+
+        let shader_module = device
+            .create_shader_module(&shader_info, None)
+            .expect("Vertex shader module error");
+
+        let shader_entry_name = CStr::from_bytes_with_nul_unchecked(b"main\0");
+
+        let shader_stage_create_infos = vk::PipelineShaderStageCreateInfo {
+                module: shader_module,
+                p_name: shader_entry_name.as_ptr(),
+                stage: vk::ShaderStageFlags::COMPUTE,
+                ..Default::default()
+        };
+
+
         let queue = device.get_device_queue(queue_family_index, 0);
+
+        let descriptor_sizes = [
+            vk::DescriptorPoolSize {
+                ty: vk::DescriptorType::STORAGE_IMAGE,
+                descriptor_count: 1,
+            },
+        ];
+        let descriptor_pool_info = vk::DescriptorPoolCreateInfo::builder()
+            .pool_sizes(&descriptor_sizes)
+            .max_sets(1);
+
+        let descriptor_pool = device
+            .create_descriptor_pool(&descriptor_pool_info, None)
+            .unwrap();
+        let desc_layout_bindings = [
+            vk::DescriptorSetLayoutBinding {
+                descriptor_type: vk::DescriptorType::STORAGE_IMAGE,
+                descriptor_count: 1,
+                stage_flags: vk::ShaderStageFlags::FRAGMENT,
+                ..Default::default()
+            }
+        ];
+        let descriptor_info =
+            vk::DescriptorSetLayoutCreateInfo::builder().bindings(&desc_layout_bindings);
+
+        let desc_set_layouts = [device
+            .create_descriptor_set_layout(&descriptor_info, None)
+            .unwrap()];
+
+        let desc_alloc_info = vk::DescriptorSetAllocateInfo::builder()
+            .descriptor_pool(descriptor_pool)
+            .set_layouts(&desc_set_layouts);
+        let descriptor_sets = device
+            .allocate_descriptor_sets(&desc_alloc_info)
+            .unwrap();
+
+        let pipeline_layout = device.create_pipeline_layout(&vk::PipelineLayoutCreateInfo::default(), None).unwrap();
+        let pipeline_info = vk::ComputePipelineCreateInfo::builder()
+            .layout(pipeline_layout)
+            .stage(shader_stage_create_infos);
+
+        let compute_pipeline = device.create_compute_pipelines(vk::PipelineCache::null(), &[pipeline_info.build()], None).unwrap()[0];
     
         VkRes {
             entry: entry,
