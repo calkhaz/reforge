@@ -89,6 +89,11 @@ pub struct VkRes {
 //    pub swapchain_loader: Swapchain,
     pub debug_utils_loader: ash::extensions::ext::DebugUtils,
     pub debug_callback: ash::vk::DebugUtilsMessengerEXT,
+    pub compute_pipeline: ash::vk::Pipeline,
+    pub pipeline_layout: ash::vk::PipelineLayout,
+    pub descriptor_set: ash::vk::DescriptorSet,
+    pub descriptor_pool: ash::vk::DescriptorPool,
+    pub descriptor_layout: ash::vk::DescriptorSetLayout,
 ////    pub window: winit::window::Window,
 ////    pub event_loop: RefCell<EventLoop<()>>,
 //    pub debug_call_back: vk::DebugUtilsMessengerEXT,
@@ -347,7 +352,7 @@ impl VkRes {
         };
     }
 
-    unsafe fn new(event_loop: &EventLoop<()>, window: &Window) -> Self{
+    unsafe fn new(event_loop: &EventLoop<()>, window: &Window) -> Self {
 
         let mut extension_names = ash_window::enumerate_required_extensions(window.raw_display_handle())
                     .unwrap()
@@ -462,25 +467,28 @@ impl VkRes {
             vk::DescriptorSetLayoutBinding {
                 descriptor_type: vk::DescriptorType::STORAGE_IMAGE,
                 descriptor_count: 1,
-                stage_flags: vk::ShaderStageFlags::FRAGMENT,
+                stage_flags: vk::ShaderStageFlags::COMPUTE,
                 ..Default::default()
             }
         ];
         let descriptor_info =
             vk::DescriptorSetLayoutCreateInfo::builder().bindings(&desc_layout_bindings);
 
-        let desc_set_layouts = [device
+        let descriptor_layout = [device
             .create_descriptor_set_layout(&descriptor_info, None)
             .unwrap()];
 
         let desc_alloc_info = vk::DescriptorSetAllocateInfo::builder()
             .descriptor_pool(descriptor_pool)
-            .set_layouts(&desc_set_layouts);
-        let descriptor_sets = device
+            .set_layouts(&descriptor_layout);
+        let descriptor_set = device
             .allocate_descriptor_sets(&desc_alloc_info)
             .unwrap();
 
-        let pipeline_layout = device.create_pipeline_layout(&vk::PipelineLayoutCreateInfo::default(), None).unwrap();
+        let pipeline_layout = device.
+            create_pipeline_layout(&vk::PipelineLayoutCreateInfo::builder()
+                .set_layouts(&descriptor_layout), None).unwrap();
+
         let pipeline_info = vk::ComputePipelineCreateInfo::builder()
             .layout(pipeline_layout)
             .stage(shader_stage_create_infos);
@@ -496,6 +504,11 @@ impl VkRes {
             queue: queue,
             debug_utils_loader: debug_utils,
             debug_callback: debug_callback,
+            compute_pipeline: compute_pipeline,
+            pipeline_layout: pipeline_layout,
+            descriptor_set: descriptor_set[0],
+            descriptor_pool: descriptor_pool,
+            descriptor_layout: descriptor_layout[0]
         }
     }
 }
