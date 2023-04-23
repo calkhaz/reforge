@@ -1,4 +1,6 @@
 extern crate ash;
+extern crate shaderc;
+
 use ash::{vk::{self, SurfaceFormatKHR, CommandBuffer, SamplerCustomBorderColorCreateInfoEXTBuilder}, Entry};
 pub use ash::{Device, Instance};
 use ash_window::create_surface;
@@ -265,6 +267,27 @@ impl VkRes {
         return (pdevice, queue_family_index as u32)
     }
 
+    unsafe fn create_shader_module(device: &ash::Device, path: &str) -> vk::ShaderModule {
+        let glsl_source = std::fs::read_to_string(path)
+            .expect("Should have been able to read the file");
+
+
+        let compiler = shaderc::Compiler::new().unwrap();
+        let options = shaderc::CompileOptions::new().unwrap();
+        let binary_result = compiler.compile_into_spirv(&glsl_source.to_owned(),
+                                                        shaderc::ShaderKind::Compute,
+                                                        path,
+                                                        "main",
+                                                        Some(&options)).unwrap();
+
+        assert_eq!(Some(&0x07230203), binary_result.as_binary().first());
+
+        let shader_info = vk::ShaderModuleCreateInfo::builder().code(&binary_result.as_binary());
+
+        device.create_shader_module(&shader_info, None)
+            .expect("Shader module error")
+    }
+
     unsafe fn create_swapchain(instance: &Instance, device: &Device, pdevice: vk::PhysicalDevice, surface: vk::SurfaceKHR, surface_loader: &khr::Surface, width: u32, height: u32) -> SwapChain {
         let surface_capabilities = surface_loader
             .get_physical_device_surface_capabilities(pdevice, surface)
@@ -435,14 +458,7 @@ impl VkRes {
             }
         }).collect();
 
-        let mut spv_file = Cursor::new(&include_bytes!("../shaders/compute.spv")[..]);
-
-        let shader_code = ash::util::read_spv(&mut spv_file).expect("Failed to read vertex shader spv file");
-        let shader_info = vk::ShaderModuleCreateInfo::builder().code(&shader_code);
-
-        let shader_module = device
-            .create_shader_module(&shader_info, None)
-            .expect("Vertex shader module error");
+        let shader_module = Self::create_shader_module(&device, "shaders/shader.comp");
 
         let shader_entry_name = CStr::from_bytes_with_nul_unchecked(b"main\0");
 
