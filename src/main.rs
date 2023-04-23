@@ -381,6 +381,64 @@ impl VkRes {
         };
     }
 
+    unsafe fn create_resizable_res(instance: &Instance,
+                                   device: &Device,
+                                   pdevice: vk::PhysicalDevice,
+                                   surface: vk::SurfaceKHR,
+                                   surface_loader: &khr::Surface,
+                                   width: u32,
+                                   height: u32,
+                                   descriptor_layout: &[vk::DescriptorSetLayout]) -> (SwapChain, Vec<VkSwapRes>, vk::DescriptorPool) {
+        let swapchain = Self::create_swapchain(&instance, &device, pdevice, surface, &surface_loader, width, height);
+
+        let descriptor_sizes = [
+            vk::DescriptorPoolSize {
+                ty: vk::DescriptorType::STORAGE_IMAGE,
+                descriptor_count: swapchain.images.len() as u32,
+            },
+        ];
+        let descriptor_pool_info = vk::DescriptorPoolCreateInfo::builder()
+            .pool_sizes(&descriptor_sizes)
+            .max_sets(swapchain.images.len() as u32);
+
+        let descriptor_pool = device
+            .create_descriptor_pool(&descriptor_pool_info, None)
+            .unwrap();
+
+        let desc_alloc_info = vk::DescriptorSetAllocateInfo::builder()
+            .descriptor_pool(descriptor_pool)
+            .set_layouts(descriptor_layout);
+
+        let swap_res : Vec<VkSwapRes> = (0..swapchain.images.len()).map(|i|{
+            let descriptor_set = device
+                .allocate_descriptor_sets(&desc_alloc_info)
+                .unwrap()[0];
+
+            let image_descriptor = vk::DescriptorImageInfo {
+                image_layout: vk::ImageLayout::GENERAL,
+                image_view: swapchain.views[i],
+                ..Default::default()
+            };
+
+            let write_desc_sets = [
+                vk::WriteDescriptorSet {
+                    dst_set: descriptor_set,
+                    descriptor_count: 1,
+                    descriptor_type: vk::DescriptorType::STORAGE_IMAGE,
+                    p_image_info: &image_descriptor,
+                    ..Default::default()
+                },
+            ];
+            device.update_descriptor_sets(&write_desc_sets, &[]);
+
+            VkSwapRes {
+                descriptor_set : descriptor_set
+            }
+        }).collect();
+
+        (swapchain, swap_res, descriptor_pool)
+    }
+
     unsafe fn new(event_loop: &EventLoop<()>, window: &Window) -> Self {
 
         let mut extension_names = ash_window::enumerate_required_extensions(window.raw_display_handle())
@@ -428,7 +486,6 @@ impl VkRes {
             .create_device(pdevice, &device_create_info, None)
             .unwrap();
 
-        let swapchain = Self::create_swapchain(&instance, &device, pdevice, surface, &surface_loader, 800, 600);
 
         let frames : Vec<VkFrameRes> = (0..NUM_FRAMES).map(|_|{
             let semaphore_create_info = vk::SemaphoreCreateInfo::default();
@@ -469,22 +526,8 @@ impl VkRes {
                 ..Default::default()
         };
 
-
         let queue = device.get_device_queue(queue_family_index, 0);
 
-        let descriptor_sizes = [
-            vk::DescriptorPoolSize {
-                ty: vk::DescriptorType::STORAGE_IMAGE,
-                descriptor_count: swapchain.images.len() as u32,
-            },
-        ];
-        let descriptor_pool_info = vk::DescriptorPoolCreateInfo::builder()
-            .pool_sizes(&descriptor_sizes)
-            .max_sets(swapchain.images.len() as u32);
-
-        let descriptor_pool = device
-            .create_descriptor_pool(&descriptor_pool_info, None)
-            .unwrap();
         let desc_layout_bindings = [
             vk::DescriptorSetLayoutBinding {
                 descriptor_type: vk::DescriptorType::STORAGE_IMAGE,
@@ -500,37 +543,8 @@ impl VkRes {
             .create_descriptor_set_layout(&descriptor_info, None)
             .unwrap()];
 
-        let desc_alloc_info = vk::DescriptorSetAllocateInfo::builder()
-            .descriptor_pool(descriptor_pool)
-            .set_layouts(&descriptor_layout);
-
-        let swap_res : Vec<VkSwapRes> = (0..swapchain.images.len()).map(|i|{
-            let descriptor_set = device
-                .allocate_descriptor_sets(&desc_alloc_info)
-                .unwrap()[0];
-
-            let image_descriptor = vk::DescriptorImageInfo {
-                image_layout: vk::ImageLayout::GENERAL,
-                image_view: swapchain.views[i],
-                ..Default::default()
-            };
-
-            let write_desc_sets = [
-                vk::WriteDescriptorSet {
-                    dst_set: descriptor_set,
-                    descriptor_count: 1,
-                    descriptor_type: vk::DescriptorType::STORAGE_IMAGE,
-                    p_image_info: &image_descriptor,
-                    ..Default::default()
-                },
-            ];
-            device.update_descriptor_sets(&write_desc_sets, &[]);
-
-            VkSwapRes {
-                descriptor_set : descriptor_set
-            }
-        }).collect();
-
+        let window_size = window.inner_size();
+        let (swapchain, swap_res, descriptor_pool) = Self::create_resizable_res(&instance, &device, pdevice, surface, &surface_loader, window_size.width, window_size.height, &descriptor_layout);
 
         let pipeline_layout = device.
             create_pipeline_layout(&vk::PipelineLayoutCreateInfo::builder()
@@ -559,6 +573,7 @@ impl VkRes {
         }
     }
 }
+
 
 fn render_loop<F: Fn()>(event_loop: &mut EventLoop<()>, f: F) {
     event_loop
@@ -596,6 +611,7 @@ fn main() {
             f64::from(window_width),
             f64::from(window_height),
         ))
+        .with_resizable(true)
         .build(&event_loop)
         .unwrap();
 
