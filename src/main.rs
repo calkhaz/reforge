@@ -1,5 +1,5 @@
 extern crate ash;
-use ash::{vk::{self, SurfaceFormatKHR, CommandBuffer}, Entry};
+use ash::{vk::{self, SurfaceFormatKHR, CommandBuffer, SamplerCustomBorderColorCreateInfoEXTBuilder}, Entry};
 pub use ash::{Device, Instance};
 use ash_window::create_surface;
 use std::io::Cursor;
@@ -30,7 +30,8 @@ pub struct SwapChain {
     pub surface_format: SurfaceFormatKHR,
     pub vk: vk::SwapchainKHR,
     pub loader: khr::Swapchain,
-    pub images: Vec<vk::ImageView>
+    pub images: Vec<vk::Image>,
+    pub views: Vec<vk::ImageView>
 }
 
 use winit::{
@@ -70,12 +71,16 @@ unsafe extern "system" fn vulkan_debug_callback(
     vk::FALSE
 }
 
+pub struct VkSwapRes {
+    pub descriptor_set: ash::vk::DescriptorSet,
+}
+
 pub struct VkFrameRes {
     pub fence: vk::Fence,
     pub present_complete_semaphore: vk::Semaphore,
     pub render_complete_semaphore: vk::Semaphore,
     pub cmd_pool: vk::CommandPool,
-    pub cmd_buffer: vk::CommandBuffer
+    pub cmd_buffer: vk::CommandBuffer,
 }
 
 pub struct VkRes {
@@ -84,6 +89,7 @@ pub struct VkRes {
     pub device: Device,
     pub swapchain: SwapChain,
     pub frames: Vec<VkFrameRes>,
+    pub swap_res: Vec<VkSwapRes>,
     pub queue: vk::Queue,
 //    pub surface_loader: Surface,
 //    pub swapchain_loader: Swapchain,
@@ -91,7 +97,6 @@ pub struct VkRes {
     pub debug_callback: ash::vk::DebugUtilsMessengerEXT,
     pub compute_pipeline: ash::vk::Pipeline,
     pub pipeline_layout: ash::vk::PipelineLayout,
-    pub descriptor_set: ash::vk::DescriptorSet,
     pub descriptor_pool: ash::vk::DescriptorPool,
     pub descriptor_layout: ash::vk::DescriptorSetLayout,
 ////    pub window: winit::window::Window,
@@ -307,7 +312,7 @@ impl VkRes {
             .image_color_space(surface_format.color_space)
             .image_format(surface_format.format)
             .image_extent(surface_resolution)
-            .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT)
+            .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::STORAGE)
             .image_sharing_mode(vk::SharingMode::EXCLUSIVE)
             .pre_transform(pre_transform)
             .composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE)
@@ -348,7 +353,8 @@ impl VkRes {
             surface_format: surface_format,
             vk: swapchain,
             loader: swapchain_loader,
-            images: present_image_views
+            images: present_images,
+            views: present_image_views
         };
     }
 
@@ -453,12 +459,12 @@ impl VkRes {
         let descriptor_sizes = [
             vk::DescriptorPoolSize {
                 ty: vk::DescriptorType::STORAGE_IMAGE,
-                descriptor_count: 1,
+                descriptor_count: swapchain.images.len() as u32,
             },
         ];
         let descriptor_pool_info = vk::DescriptorPoolCreateInfo::builder()
             .pool_sizes(&descriptor_sizes)
-            .max_sets(1);
+            .max_sets(swapchain.images.len() as u32);
 
         let descriptor_pool = device
             .create_descriptor_pool(&descriptor_pool_info, None)
@@ -481,9 +487,34 @@ impl VkRes {
         let desc_alloc_info = vk::DescriptorSetAllocateInfo::builder()
             .descriptor_pool(descriptor_pool)
             .set_layouts(&descriptor_layout);
-        let descriptor_set = device
-            .allocate_descriptor_sets(&desc_alloc_info)
-            .unwrap();
+
+        let swap_res : Vec<VkSwapRes> = (0..swapchain.images.len()).map(|i|{
+            let descriptor_set = device
+                .allocate_descriptor_sets(&desc_alloc_info)
+                .unwrap()[0];
+
+            let image_descriptor = vk::DescriptorImageInfo {
+                image_layout: vk::ImageLayout::GENERAL,
+                image_view: swapchain.views[i],
+                ..Default::default()
+            };
+
+            let write_desc_sets = [
+                vk::WriteDescriptorSet {
+                    dst_set: descriptor_set,
+                    descriptor_count: 1,
+                    descriptor_type: vk::DescriptorType::STORAGE_IMAGE,
+                    p_image_info: &image_descriptor,
+                    ..Default::default()
+                },
+            ];
+            device.update_descriptor_sets(&write_desc_sets, &[]);
+
+            VkSwapRes {
+                descriptor_set : descriptor_set
+            }
+        }).collect();
+
 
         let pipeline_layout = device.
             create_pipeline_layout(&vk::PipelineLayoutCreateInfo::builder()
@@ -501,12 +532,12 @@ impl VkRes {
             device: device,
             swapchain: swapchain,
             frames: frames,
+            swap_res: swap_res,
             queue: queue,
             debug_utils_loader: debug_utils,
             debug_callback: debug_callback,
             compute_pipeline: compute_pipeline,
             pipeline_layout: pipeline_layout,
-            descriptor_set: descriptor_set[0],
             descriptor_pool: descriptor_pool,
             descriptor_layout: descriptor_layout[0]
         }
@@ -540,14 +571,14 @@ fn render_loop<F: Fn()>(event_loop: &mut EventLoop<()>, f: F) {
 
 
 fn main() {
-    let window_height = 800;
-    let window_width  = 600;
+    let window_width  = 800_f32;
+    let window_height = 600_f32;
     let mut event_loop = EventLoop::new();
     let window = WindowBuilder::new()
         .with_title("Reforge")
-        .with_inner_size(winit::dpi::LogicalSize::new(
-            f64::from(window_height),
+        .with_inner_size(winit::dpi::PhysicalSize::new(
             f64::from(window_width),
+            f64::from(window_height),
         ))
         .build(&event_loop)
         .unwrap();
@@ -559,18 +590,116 @@ fn main() {
         static mut FRAME_INDEX: u8 = 0;
 
         let frame = &res.frames[FRAME_INDEX as usize];
+        let device = &res.device;
 
-        /*
         let (present_index, _) = res
-            .swapchain.loader
-            .acquire_next_image(
+            .swapchain.loader.acquire_next_image(
                 res.swapchain.vk,
                 std::u64::MAX,
-                frame.present_complete_semaphore,
+                frame.present_complete_semaphore, // Semaphore to signal
                 vk::Fence::null(),
             )
             .unwrap();
 
+        let swap_res = &res.swap_res[present_index as usize];
+
+        device
+            .wait_for_fences(&[frame.fence], true, std::u64::MAX)
+            .expect("Wait for fence failed.");
+
+        device
+            .reset_fences(&[frame.fence])
+            .expect("Reset fences failed.");
+
+        device
+            .reset_command_buffer(
+                frame.cmd_buffer,
+                vk::CommandBufferResetFlags::RELEASE_RESOURCES,
+            )
+            .expect("Reset command buffer failed.");
+
+
+        let command_buffer_begin_info = vk::CommandBufferBeginInfo::default();
+
+        device.begin_command_buffer(frame.cmd_buffer, &command_buffer_begin_info)
+            .expect("Begin commandbuffer");
+
+        let image_barrier = vk::ImageMemoryBarrier {
+            src_access_mask: vk::AccessFlags::empty(),
+            dst_access_mask: vk::AccessFlags::SHADER_WRITE,
+            old_layout: vk::ImageLayout::UNDEFINED,
+            new_layout: vk::ImageLayout::GENERAL,
+            image: res.swapchain.images[present_index as usize],
+            subresource_range: vk::ImageSubresourceRange {
+                aspect_mask: vk::ImageAspectFlags::COLOR,
+                level_count: 1,
+                layer_count: 1,
+                ..Default::default()
+                    },
+            ..Default::default()
+        };
+
+        device.cmd_pipeline_barrier(frame.cmd_buffer,
+                                    vk::PipelineStageFlags::TOP_OF_PIPE,
+                                    vk::PipelineStageFlags::COMPUTE_SHADER, vk::DependencyFlags::empty(), &[], &[], &[image_barrier]);
+
+        let dispatch_x = (window_width/16.0).ceil() as u32;
+        let dispatch_y = (window_height/16.0).ceil() as u32;
+
+        device.cmd_bind_descriptor_sets(
+            frame.cmd_buffer,
+            vk::PipelineBindPoint::COMPUTE,
+            res.pipeline_layout,
+            0,
+            &[swap_res.descriptor_set],
+            &[],
+        );
+        device.cmd_bind_pipeline(
+            frame.cmd_buffer,
+            vk::PipelineBindPoint::COMPUTE,
+            res.compute_pipeline,
+        );
+        device.cmd_dispatch(frame.cmd_buffer, dispatch_x, dispatch_y, 1);
+
+        let image_barrier = vk::ImageMemoryBarrier {
+            src_access_mask: vk::AccessFlags::SHADER_WRITE,
+            dst_access_mask: vk::AccessFlags::COLOR_ATTACHMENT_READ,
+            old_layout: vk::ImageLayout::GENERAL,
+            new_layout: vk::ImageLayout::PRESENT_SRC_KHR,
+            image: res.swapchain.images[present_index as usize],
+            subresource_range: vk::ImageSubresourceRange {
+                aspect_mask: vk::ImageAspectFlags::COLOR,
+                level_count: 1,
+                layer_count: 1,
+                ..Default::default()
+                    },
+            ..Default::default()
+        };
+
+        device.cmd_pipeline_barrier(frame.cmd_buffer,
+                                    vk::PipelineStageFlags::COMPUTE_SHADER,
+                                    vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT, vk::DependencyFlags::empty(), &[], &[], &[image_barrier]);
+
+
+        device.end_command_buffer(frame.cmd_buffer);
+
+
+        let present_complete_semaphore = &[frame.present_complete_semaphore];
+        let cmd_buffers = &[frame.cmd_buffer];
+        let signal_semaphores = &[frame.render_complete_semaphore];
+
+        let submit_info = vk::SubmitInfo::builder()
+            .wait_semaphores(present_complete_semaphore)
+            .wait_dst_stage_mask(&[vk::PipelineStageFlags::COMPUTE_SHADER])
+            .command_buffers(cmd_buffers)
+            .signal_semaphores(signal_semaphores);
+
+        device.queue_submit(
+            res.queue,
+            &[submit_info.build()],
+            frame.fence,
+        )
+        .expect("queue submit failed.");
 
         let wait_semaphors = [frame.render_complete_semaphore];
         let swapchains = [res.swapchain.vk];
@@ -583,13 +712,9 @@ fn main() {
         res.swapchain.loader
             .queue_present(res.queue, &present_info)
             .unwrap();
-        */
 
         FRAME_INDEX = (FRAME_INDEX+1)%NUM_FRAMES;
     });
 
     }
-
-
-
 }
