@@ -22,6 +22,7 @@ use std::os::raw::c_char;
 use winit::window::Window;
 
 const NUM_FRAMES: u8 = 2;
+const SHADER_PATH: &str = "shaders/shader.comp";
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 use ash::vk::{
@@ -288,6 +289,26 @@ impl VkRes {
             .expect("Shader module error")
     }
 
+    pub unsafe fn rebuild_changed_compute_pipeline(&mut self) {
+        let shader_module = Self::create_shader_module(&self.device, SHADER_PATH);
+
+        let shader_entry_name = CStr::from_bytes_with_nul_unchecked(b"main\0");
+
+        let shader_stage_create_infos = vk::PipelineShaderStageCreateInfo {
+            module: shader_module,
+            p_name: shader_entry_name.as_ptr(),
+            stage: vk::ShaderStageFlags::COMPUTE,
+            ..Default::default()
+        };
+        let pipeline_info = vk::ComputePipelineCreateInfo::builder()
+            .layout(self.pipeline_layout)
+            .stage(shader_stage_create_infos);
+
+        let compute_pipeline = self.device.create_compute_pipelines(vk::PipelineCache::null(), &[pipeline_info.build()], None).unwrap()[0];
+
+        self.compute_pipeline = compute_pipeline;
+    }
+
     unsafe fn create_swapchain(instance: &Instance, device: &Device, pdevice: vk::PhysicalDevice, surface: vk::SurfaceKHR, surface_loader: &khr::Surface, width: u32, height: u32) -> SwapChain {
         let surface_capabilities = surface_loader
             .get_physical_device_surface_capabilities(pdevice, surface)
@@ -520,10 +541,10 @@ impl VkRes {
         let shader_entry_name = CStr::from_bytes_with_nul_unchecked(b"main\0");
 
         let shader_stage_create_infos = vk::PipelineShaderStageCreateInfo {
-                module: shader_module,
-                p_name: shader_entry_name.as_ptr(),
-                stage: vk::ShaderStageFlags::COMPUTE,
-                ..Default::default()
+            module: shader_module,
+            p_name: shader_entry_name.as_ptr(),
+            stage: vk::ShaderStageFlags::COMPUTE,
+            ..Default::default()
         };
 
         let queue = device.get_device_queue(queue_family_index, 0);
@@ -575,7 +596,7 @@ impl VkRes {
 }
 
 
-fn render_loop<F: Fn()>(event_loop: &mut EventLoop<()>, f: F) {
+fn render_loop<F: FnMut()>(event_loop: &mut EventLoop<()>, f: &mut F) {
     event_loop
         .run_return(|event, _, control_flow| {
             *control_flow = ControlFlow::Poll;
@@ -600,6 +621,9 @@ fn render_loop<F: Fn()>(event_loop: &mut EventLoop<()>, f: F) {
         });
 }
 
+fn get_modified_time(path: &str) -> u64 {
+    std::fs::metadata(path).unwrap().modified().unwrap().duration_since(std::time::SystemTime::UNIX_EPOCH).unwrap().as_secs()
+}
 
 fn main() {
     let window_width  = 800_f32;
@@ -616,10 +640,21 @@ fn main() {
         .unwrap();
 
     unsafe {
-    let res = VkRes::new(&event_loop, &window);
+    let mut res = VkRes::new(&event_loop, &window);
 
-    render_loop(&mut event_loop, || {
+    let mut last_modified_shader_time = get_modified_time(SHADER_PATH);
+
+    render_loop(&mut event_loop, &mut || {
         static mut FRAME_INDEX: u8 = 0;
+
+        let current_modified_time = get_modified_time(SHADER_PATH);
+
+        if current_modified_time != last_modified_shader_time
+        {
+            res.rebuild_changed_compute_pipeline();
+        }
+
+        last_modified_shader_time = current_modified_time;
 
         let frame = &res.frames[FRAME_INDEX as usize];
         let device = &res.device;
