@@ -268,45 +268,49 @@ impl VkRes {
         return (pdevice, queue_family_index as u32)
     }
 
-    unsafe fn create_shader_module(device: &ash::Device, path: &str) -> vk::ShaderModule {
+    unsafe fn create_shader_module(device: &ash::Device, path: &str) -> Option<vk::ShaderModule> {
         let glsl_source = std::fs::read_to_string(path)
             .expect("Should have been able to read the file");
 
-
         let compiler = shaderc::Compiler::new().unwrap();
         let options = shaderc::CompileOptions::new().unwrap();
-        let binary_result = compiler.compile_into_spirv(&glsl_source.to_owned(),
+
+        match compiler.compile_into_spirv(&glsl_source.to_owned(),
                                                         shaderc::ShaderKind::Compute,
                                                         path,
                                                         "main",
-                                                        Some(&options)).unwrap();
+                                                        Some(&options)) {
+            Ok(binary) => {
+                assert_eq!(Some(&0x07230203), binary.as_binary().first());
 
-        assert_eq!(Some(&0x07230203), binary_result.as_binary().first());
+                let shader_info = vk::ShaderModuleCreateInfo::builder().code(&binary.as_binary());
 
-        let shader_info = vk::ShaderModuleCreateInfo::builder().code(&binary_result.as_binary());
-
-        device.create_shader_module(&shader_info, None)
-            .expect("Shader module error")
+                Some(device.create_shader_module(&shader_info, None).expect("Shader module error"))
+            }
+            Err(e) => { eprintln!("{:?}", e); None }
+        }
     }
 
     pub unsafe fn rebuild_changed_compute_pipeline(&mut self) {
         let shader_module = Self::create_shader_module(&self.device, SHADER_PATH);
 
-        let shader_entry_name = CStr::from_bytes_with_nul_unchecked(b"main\0");
+        if shader_module.is_some() {
+            let shader_entry_name = CStr::from_bytes_with_nul_unchecked(b"main\0");
 
-        let shader_stage_create_infos = vk::PipelineShaderStageCreateInfo {
-            module: shader_module,
-            p_name: shader_entry_name.as_ptr(),
-            stage: vk::ShaderStageFlags::COMPUTE,
-            ..Default::default()
-        };
-        let pipeline_info = vk::ComputePipelineCreateInfo::builder()
-            .layout(self.pipeline_layout)
-            .stage(shader_stage_create_infos);
+            let shader_stage_create_infos = vk::PipelineShaderStageCreateInfo {
+                module: shader_module.unwrap(),
+                p_name: shader_entry_name.as_ptr(),
+                stage: vk::ShaderStageFlags::COMPUTE,
+                ..Default::default()
+            };
+            let pipeline_info = vk::ComputePipelineCreateInfo::builder()
+                .layout(self.pipeline_layout)
+                .stage(shader_stage_create_infos);
 
-        let compute_pipeline = self.device.create_compute_pipelines(vk::PipelineCache::null(), &[pipeline_info.build()], None).unwrap()[0];
+            let compute_pipeline = self.device.create_compute_pipelines(vk::PipelineCache::null(), &[pipeline_info.build()], None).unwrap()[0];
 
-        self.compute_pipeline = compute_pipeline;
+            self.compute_pipeline = compute_pipeline;
+        }
     }
 
     unsafe fn create_swapchain(instance: &Instance, device: &Device, pdevice: vk::PhysicalDevice, surface: vk::SurfaceKHR, surface_loader: &khr::Surface, width: u32, height: u32) -> SwapChain {
@@ -541,7 +545,7 @@ impl VkRes {
         let shader_entry_name = CStr::from_bytes_with_nul_unchecked(b"main\0");
 
         let shader_stage_create_infos = vk::PipelineShaderStageCreateInfo {
-            module: shader_module,
+            module: shader_module.unwrap(),
             p_name: shader_entry_name.as_ptr(),
             stage: vk::ShaderStageFlags::COMPUTE,
             ..Default::default()
