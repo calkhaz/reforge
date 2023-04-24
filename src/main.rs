@@ -1,25 +1,14 @@
 extern crate ash;
 extern crate shaderc;
 
-use ash::{vk::{self, SurfaceFormatKHR, CommandBuffer, SamplerCustomBorderColorCreateInfoEXTBuilder}, Entry};
-pub use ash::{Device, Instance};
-use ash_window::create_surface;
-use std::io::Cursor;
-
-use std::{ffi::CStr, borrow::BorrowMut};
-
+use ash::{vk::{self, SurfaceFormatKHR}};
+use std::ffi::CStr;
 use ash::extensions::khr;
-//use ash::extensions::{
-//    ext::DebugUtils,
-//    khr::{Surface, Swapchain},
-//};
-use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 use std::borrow::Cow;
-use std::cell::RefCell;
 use std::default::Default;
-use std::ops::Drop;
 use std::os::raw::c_char;
 use winit::window::Window;
+use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 
 const NUM_FRAMES: u8 = 2;
 const SHADER_PATH: &str = "shaders/shader.comp";
@@ -43,7 +32,6 @@ use winit::{
     platform::run_return::EventLoopExtRunReturn,
     window::WindowBuilder,
 };
-
 
 unsafe extern "system" fn vulkan_debug_callback(
     message_severity: vk::DebugUtilsMessageSeverityFlagsEXT,
@@ -87,55 +75,23 @@ pub struct VkFrameRes {
 }
 
 pub struct VkRes {
-    pub entry: Entry,
-    pub instance: Instance,
-    pub device: Device,
+    pub entry: ash::Entry,
+    pub instance: ash::Instance,
+    pub device: ash::Device,
     pub swapchain: SwapChain,
     pub frames: Vec<VkFrameRes>,
     pub swap_res: Vec<VkSwapRes>,
     pub queue: vk::Queue,
-//    pub surface_loader: Surface,
-//    pub swapchain_loader: Swapchain,
     pub debug_utils_loader: ash::extensions::ext::DebugUtils,
     pub debug_callback: ash::vk::DebugUtilsMessengerEXT,
     pub compute_pipeline: ash::vk::Pipeline,
     pub pipeline_layout: ash::vk::PipelineLayout,
     pub descriptor_pool: ash::vk::DescriptorPool,
     pub descriptor_layout: ash::vk::DescriptorSetLayout,
-////    pub window: winit::window::Window,
-////    pub event_loop: RefCell<EventLoop<()>>,
-//    pub debug_call_back: vk::DebugUtilsMessengerEXT,
-//
-//    pub pdevice: vk::PhysicalDevice,
-// //   pub device_memory_properties: vk::PhysicalDeviceMemoryProperties,
-//    pub queue_family_index: u32,
-//    pub present_queue: vk::Queue,
-
-//    pub surface: vk::SurfaceKHR,
-//    pub surface_format: vk::SurfaceFormatKHR,
-//    pub surface_resolution: vk::Extent2D,
-//
-//    pub swapchain: vk::SwapchainKHR,
-//    pub present_images: Vec<vk::Image>,
-//    pub present_image_views: Vec<vk::ImageView>,
-//
-//    pub pool: vk::CommandPool,
-//    pub draw_command_buffer: vk::CommandBuffer,
-//    pub setup_command_buffer: vk::CommandBuffer,
-//
-//    pub depth_image: vk::Image,
-//    pub depth_image_view: vk::ImageView,
-//    pub depth_image_memory: vk::DeviceMemory,
-//
-//    pub present_complete_semaphore: vk::Semaphore,
-//    pub rendering_complete_semaphore: vk::Semaphore,
-//
-//    pub draw_commands_reuse_fence: vk::Fence,
-//    pub setup_commands_reuse_fence: vk::Fence,
 }
 
 impl VkRes {
-    unsafe fn create_debug_utils(instance : &Instance, entry: &Entry) -> (vk::DebugUtilsMessengerEXT, ash::extensions::ext::DebugUtils) {
+    unsafe fn create_debug_utils(instance: &ash::Instance, entry: &ash::Entry) -> (vk::DebugUtilsMessengerEXT, ash::extensions::ext::DebugUtils) {
         let debug_info = vk::DebugUtilsMessengerCreateInfoEXT::builder()
             .message_severity(
                 vk::DebugUtilsMessageSeverityFlagsEXT::ERROR
@@ -158,7 +114,7 @@ impl VkRes {
         (debug_call_back, debug_utils_loader)
     }
 
-    unsafe fn create_instance(entry: &Entry, extension_names : &Vec<*const i8>) -> Instance {
+    unsafe fn create_instance(entry: &ash::Entry, extension_names : &Vec<*const i8>) -> ash::Instance {
         let create_flags = if cfg!(any(target_os = "macos", target_os = "ios"))
         {
             vk::InstanceCreateFlags::ENUMERATE_PORTABILITY_KHR
@@ -192,7 +148,7 @@ impl VkRes {
             .enabled_extension_names(&extension_names)
             .flags(create_flags);
 
-        let instance: Instance = entry
+        let instance = entry
             .create_instance(&create_info, None)
             .expect("Instance creation error");
 
@@ -200,7 +156,7 @@ impl VkRes {
         instance
     }
 
-    unsafe fn create_surface(entry: &Entry, instance: &Instance, window: &Window) -> (vk::SurfaceKHR, khr::Surface) {
+    unsafe fn create_surface(entry: &ash::Entry, instance: &ash::Instance, window: &Window) -> (vk::SurfaceKHR, khr::Surface) {
         let surface_loader = khr::Surface::new(&entry, &instance);
 
         let surface = ash_window::create_surface(
@@ -234,7 +190,7 @@ impl VkRes {
         (pool, command_buffer[0])
     }
 
-    unsafe fn create_physical_device(instance: &Instance, surface: vk::SurfaceKHR, surface_loader: &khr::Surface) -> (vk::PhysicalDevice, u32) {
+    unsafe fn create_physical_device(instance: &ash::Instance, surface: vk::SurfaceKHR, surface_loader: &khr::Surface) -> (vk::PhysicalDevice, u32) {
         let pdevices = instance
             .enumerate_physical_devices()
             .expect("Physical device error");
@@ -313,7 +269,7 @@ impl VkRes {
         }
     }
 
-    unsafe fn create_swapchain(instance: &Instance, device: &Device, pdevice: vk::PhysicalDevice, surface: vk::SurfaceKHR, surface_loader: &khr::Surface, width: u32, height: u32) -> SwapChain {
+    unsafe fn create_swapchain(instance: &ash::Instance, device: &ash::Device, pdevice: vk::PhysicalDevice, surface: vk::SurfaceKHR, surface_loader: &khr::Surface, width: u32, height: u32) -> SwapChain {
         let surface_capabilities = surface_loader
             .get_physical_device_surface_capabilities(pdevice, surface)
             .unwrap();
@@ -406,8 +362,8 @@ impl VkRes {
         };
     }
 
-    unsafe fn create_resizable_res(instance: &Instance,
-                                   device: &Device,
+    unsafe fn create_resizable_res(instance: &ash::Instance,
+                                   device: &ash::Device,
                                    pdevice: vk::PhysicalDevice,
                                    surface: vk::SurfaceKHR,
                                    surface_loader: &khr::Surface,
@@ -464,7 +420,7 @@ impl VkRes {
         (swapchain, swap_res, descriptor_pool)
     }
 
-    unsafe fn new(event_loop: &EventLoop<()>, window: &Window) -> Self {
+    unsafe fn new(window: &Window) -> Self {
 
         let mut extension_names = ash_window::enumerate_required_extensions(window.raw_display_handle())
                     .unwrap()
@@ -479,7 +435,7 @@ impl VkRes {
         }
 
 
-        let entry = Entry::load().unwrap();
+        let entry = ash::Entry::load().unwrap();
         let instance = Self::create_instance(&entry, &extension_names);
         let (debug_callback, debug_utils) = Self::create_debug_utils(&instance, &entry);
         let (surface, surface_loader) = Self::create_surface(&entry, &instance, &window);
@@ -507,7 +463,7 @@ impl VkRes {
             .enabled_extension_names(&device_extension_names_raw)
             .enabled_features(&features);
 
-        let device: Device = instance
+        let device: ash::Device = instance
             .create_device(pdevice, &device_create_info, None)
             .unwrap();
 
@@ -540,7 +496,7 @@ impl VkRes {
             }
         }).collect();
 
-        let shader_module = Self::create_shader_module(&device, "shaders/shader.comp");
+        let shader_module = Self::create_shader_module(&device, SHADER_PATH);
 
         let shader_entry_name = CStr::from_bytes_with_nul_unchecked(b"main\0");
 
@@ -644,7 +600,7 @@ fn main() {
         .unwrap();
 
     unsafe {
-    let mut res = VkRes::new(&event_loop, &window);
+    let mut res = VkRes::new(&window);
 
     let mut last_modified_shader_time = get_modified_time(SHADER_PATH);
 
@@ -772,11 +728,11 @@ fn main() {
         )
         .expect("queue submit failed.");
 
-        let wait_semaphors = [frame.render_complete_semaphore];
+        let wait_semaphores = [frame.render_complete_semaphore];
         let swapchains = [res.swapchain.vk];
         let image_indices = [present_index];
         let present_info = vk::PresentInfoKHR::builder()
-            .wait_semaphores(&wait_semaphors) // &base.rendering_complete_semaphore)
+            .wait_semaphores(&wait_semaphores)
             .swapchains(&swapchains)
             .image_indices(&image_indices);
 
