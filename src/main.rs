@@ -1,7 +1,11 @@
 extern crate ash;
 extern crate shaderc;
+extern crate gpu_allocator;
 
-use ash::{vk::{self, SurfaceFormatKHR}};
+use gpu_allocator as gpu_alloc;
+use gpu_allocator::vulkan as gpu_alloc_vk;
+
+use ash::{vk::{self, SurfaceFormatKHR, ImageCreateFlags}};
 use std::ffi::CStr;
 use ash::extensions::khr;
 use std::borrow::Cow;
@@ -24,6 +28,17 @@ pub struct SwapChain {
     pub loader: khr::Swapchain,
     pub images: Vec<vk::Image>,
     pub views: Vec<vk::ImageView>
+}
+
+pub struct Image {
+    pub vk: vk::Image,
+    pub view: vk::ImageView,
+    pub allocation: gpu_alloc_vk::Allocation
+}
+
+pub struct Buffer {
+    pub vk: vk::Buffer,
+    pub allocation: gpu_alloc_vk::Allocation
 }
 
 use winit::{
@@ -88,6 +103,8 @@ pub struct VkRes {
     pub pipeline_layout: ash::vk::PipelineLayout,
     pub descriptor_pool: ash::vk::DescriptorPool,
     pub descriptor_layout: ash::vk::DescriptorSetLayout,
+    pub input_image: Image,
+    pub allocator: gpu_alloc_vk::Allocator
 }
 
 impl VkRes {
@@ -247,6 +264,80 @@ impl VkRes {
         }
     }
 
+    pub unsafe fn create_buffer(&mut self, 
+                                size: vk::DeviceSize,
+                                usage: vk::BufferUsageFlags,
+                                mem_type: gpu_alloc::MemoryLocation) -> Buffer {
+        let info = vk::BufferCreateInfo::builder()
+            .size(size)
+            .usage(usage)
+            .sharing_mode(vk::SharingMode::EXCLUSIVE);
+
+        let buffer = self.device.create_buffer(&info, None).unwrap();
+
+        let allocation = self.allocator
+            .allocate(&gpu_alloc_vk::AllocationCreateDesc {
+                requirements: self.device.get_buffer_memory_requirements(buffer),
+                location: mem_type,
+                linear: true,
+                allocation_scheme: gpu_alloc_vk::AllocationScheme::GpuAllocatorManaged,
+                name: "input-image-staging-buffer",
+            })
+            .unwrap();
+
+        self.device.bind_buffer_memory(buffer, allocation.memory(), allocation.offset()).unwrap();
+
+        Buffer{vk: buffer, allocation: allocation}
+    }
+
+    pub unsafe fn create_input_image(device: &ash::Device, width: u32, height: u32, allocator: &mut gpu_alloc_vk::Allocator) -> Image {
+        let input_image_info = vk::ImageCreateInfo::builder()
+            .image_type(vk::ImageType::TYPE_2D)
+            .array_layers(1)
+            .samples(vk::SampleCountFlags::TYPE_1)
+            .tiling(vk::ImageTiling::OPTIMAL)
+            .initial_layout(vk::ImageLayout::UNDEFINED)
+            .format(vk::Format::R8G8B8A8_UNORM)
+            .mip_levels(1)
+            .extent(vk::Extent3D{width: width, height: height, depth: 1})
+            .usage(vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::TRANSFER_DST)
+            .sharing_mode(vk::SharingMode::EXCLUSIVE);
+
+        let image = device.create_image(&input_image_info, None).unwrap();
+
+        let image_allocation = allocator
+            .allocate(&gpu_alloc_vk::AllocationCreateDesc {
+                requirements: device.get_image_memory_requirements(image),
+                location: gpu_alloc::MemoryLocation::GpuOnly,
+                linear: true,
+                allocation_scheme: gpu_alloc_vk::AllocationScheme::GpuAllocatorManaged,
+                name: "input-image",
+            })
+            .unwrap();
+
+
+        device.bind_image_memory(image, image_allocation.memory(), image_allocation.offset()).unwrap();
+
+        let image_view_info = vk::ImageViewCreateInfo::builder()
+            .image(image)
+            .view_type(vk::ImageViewType::TYPE_2D)
+            .format(vk::Format::R8G8B8A8_UNORM)
+            .subresource_range(*vk::ImageSubresourceRange::builder()
+                .aspect_mask(vk::ImageAspectFlags::COLOR)
+                .base_mip_level(0)
+                .level_count(1)
+                .base_array_layer(0)
+                .layer_count(1));
+
+        let image_view = device.create_image_view(&image_view_info, None).unwrap();
+
+        Image {
+            vk: image,
+            view: image_view,
+            allocation: image_allocation
+        }
+    }
+
     pub unsafe fn rebuild_changed_compute_pipeline(&mut self) {
         let shader_module = Self::create_shader_module(&self.device, SHADER_PATH);
 
@@ -369,13 +460,16 @@ impl VkRes {
                                    surface_loader: &khr::Surface,
                                    width: u32,
                                    height: u32,
-                                   descriptor_layout: &[vk::DescriptorSetLayout]) -> (SwapChain, Vec<VkSwapRes>, vk::DescriptorPool) {
+                                   input_image: &Image,
+                                   descriptor_layout: &[vk::DescriptorSetLayout]) -> (SwapChain, Vec<VkSwapRes>, vk::DescriptorPool)
+    {
         let swapchain = Self::create_swapchain(&instance, &device, pdevice, surface, &surface_loader, width, height);
 
         let descriptor_sizes = [
             vk::DescriptorPoolSize {
                 ty: vk::DescriptorType::STORAGE_IMAGE,
-                descriptor_count: swapchain.images.len() as u32,
+                // Input + output, so 2*
+                descriptor_count: 2*swapchain.images.len() as u32,
             },
         ];
         let descriptor_pool_info = vk::DescriptorPoolCreateInfo::builder()
@@ -395,7 +489,13 @@ impl VkRes {
                 .allocate_descriptor_sets(&desc_alloc_info)
                 .unwrap()[0];
 
-            let image_descriptor = vk::DescriptorImageInfo {
+            let input_image_descriptor = vk::DescriptorImageInfo {
+                image_layout: vk::ImageLayout::GENERAL,
+                image_view: input_image.view,
+                ..Default::default()
+            };
+
+            let output_image_descriptor = vk::DescriptorImageInfo {
                 image_layout: vk::ImageLayout::GENERAL,
                 image_view: swapchain.views[i],
                 ..Default::default()
@@ -404,9 +504,18 @@ impl VkRes {
             let write_desc_sets = [
                 vk::WriteDescriptorSet {
                     dst_set: descriptor_set,
+                    dst_binding: 0,
                     descriptor_count: 1,
                     descriptor_type: vk::DescriptorType::STORAGE_IMAGE,
-                    p_image_info: &image_descriptor,
+                    p_image_info: &input_image_descriptor,
+                    ..Default::default()
+                },
+                vk::WriteDescriptorSet {
+                    dst_set: descriptor_set,
+                    dst_binding: 1,
+                    descriptor_count: 1,
+                    descriptor_type: vk::DescriptorType::STORAGE_IMAGE,
+                    p_image_info: &output_image_descriptor,
                     ..Default::default()
                 },
             ];
@@ -510,10 +619,20 @@ impl VkRes {
         let queue = device.get_device_queue(queue_family_index, 0);
 
         let desc_layout_bindings = [
+            // input
             vk::DescriptorSetLayoutBinding {
                 descriptor_type: vk::DescriptorType::STORAGE_IMAGE,
                 descriptor_count: 1,
                 stage_flags: vk::ShaderStageFlags::COMPUTE,
+                binding: 0,
+                ..Default::default()
+            },
+            // output
+            vk::DescriptorSetLayoutBinding {
+                descriptor_type: vk::DescriptorType::STORAGE_IMAGE,
+                descriptor_count: 1,
+                stage_flags: vk::ShaderStageFlags::COMPUTE,
+                binding: 1,
                 ..Default::default()
             }
         ];
@@ -525,7 +644,20 @@ impl VkRes {
             .unwrap()];
 
         let window_size = window.inner_size();
-        let (swapchain, swap_res, descriptor_pool) = Self::create_resizable_res(&instance, &device, pdevice, surface, &surface_loader, window_size.width, window_size.height, &descriptor_layout);
+
+        // Setting up the allocator
+        let mut allocator = gpu_alloc_vk::Allocator::new(&gpu_alloc_vk::AllocatorCreateDesc {
+            instance: instance.clone(),
+            device: device.clone(),
+            physical_device: pdevice,
+            debug_settings: Default::default(),
+            buffer_device_address: false,
+        }).unwrap();
+
+
+        let input_image = Self::create_input_image(&device, window_size.width, window_size.height, &mut allocator);
+
+        let (swapchain, swap_res, descriptor_pool) = Self::create_resizable_res(&instance, &device, pdevice, surface, &surface_loader, window_size.width, window_size.height, &input_image, &descriptor_layout);
 
         let pipeline_layout = device.
             create_pipeline_layout(&vk::PipelineLayoutCreateInfo::builder()
@@ -536,6 +668,14 @@ impl VkRes {
             .stage(shader_stage_create_infos);
 
         let compute_pipeline = device.create_compute_pipelines(vk::PipelineCache::null(), &[pipeline_info.build()], None).unwrap()[0];
+
+
+        /*
+        allocator.free(allocation).unwrap();
+        allocator.free(image_allocation).unwrap();
+        device.destroy_buffer(test_buffer, None);
+        device.destroy_image(test_image, None);
+        */
     
         VkRes {
             entry: entry,
@@ -550,7 +690,9 @@ impl VkRes {
             compute_pipeline: compute_pipeline,
             pipeline_layout: pipeline_layout,
             descriptor_pool: descriptor_pool,
-            descriptor_layout: descriptor_layout[0]
+            descriptor_layout: descriptor_layout[0],
+            input_image: input_image,
+            allocator: allocator
         }
     }
 }
@@ -604,7 +746,27 @@ fn main() {
 
     let mut last_modified_shader_time = get_modified_time(SHADER_PATH);
 
+    let buffer_size = (window_width as vk::DeviceSize)*(window_height as vk::DeviceSize)*4;
+    let input_image_buffer = res.create_buffer(buffer_size, vk::BufferUsageFlags::TRANSFER_SRC, gpu_alloc::MemoryLocation::CpuToGpu);
+
+    let mut comp_index = 0;
+    let num_pixels = window_width as usize*window_height as usize;
+
+    let mapped_input_image_data: *mut u8 = input_image_buffer.allocation.mapped_ptr().unwrap().as_ptr() as *mut u8;
+
+    for i in 0 .. num_pixels*4{
+        if comp_index == 0 || comp_index == 3 {
+            *mapped_input_image_data.offset(i as isize) = 50;
+        }
+        else {
+            *mapped_input_image_data.offset(i as isize) = 0;
+        }
+        comp_index = (comp_index+1)%4;
+    }
+
+
     render_loop(&mut event_loop, &mut || {
+        static mut FIRST_RUN: bool = true;
         static mut FRAME_INDEX: u8 = 0;
 
         let current_modified_time = get_modified_time(SHADER_PATH);
@@ -650,6 +812,67 @@ fn main() {
 
         device.begin_command_buffer(frame.cmd_buffer, &command_buffer_begin_info)
             .expect("Begin commandbuffer");
+
+
+
+        if FIRST_RUN {
+            let regions = vk::BufferImageCopy {
+                buffer_offset: input_image_buffer.allocation.offset(),
+                image_subresource: vk::ImageSubresourceLayers {
+                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                    layer_count: 1,
+                    ..Default::default()
+                },
+                image_extent: vk::Extent3D {
+                    width: window_width as u32,
+                    height: window_height as u32,
+                    depth: 1
+                },
+                ..Default::default()
+            };
+
+            let image_barrier = vk::ImageMemoryBarrier {
+                src_access_mask: vk::AccessFlags::empty(),
+                dst_access_mask: vk::AccessFlags::TRANSFER_WRITE,
+                old_layout: vk::ImageLayout::UNDEFINED,
+                new_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                image: res.input_image.vk,
+                subresource_range: vk::ImageSubresourceRange {
+                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                    level_count: 1,
+                    layer_count: 1,
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+
+            device.cmd_pipeline_barrier(frame.cmd_buffer,
+                                        vk::PipelineStageFlags::TOP_OF_PIPE,
+                                        vk::PipelineStageFlags::TRANSFER, vk::DependencyFlags::empty(), &[], &[], &[image_barrier]);
+
+            device.cmd_copy_buffer_to_image(frame.cmd_buffer, input_image_buffer.vk, res.input_image.vk, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &[regions]);
+
+            let image_barrier = vk::ImageMemoryBarrier {
+                src_access_mask: vk::AccessFlags::TRANSFER_WRITE,
+                dst_access_mask: vk::AccessFlags::SHADER_READ,
+                old_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                new_layout: vk::ImageLayout::GENERAL,
+                image: res.input_image.vk,
+                subresource_range: vk::ImageSubresourceRange {
+                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                    level_count: 1,
+                    layer_count: 1,
+                    ..Default::default()
+                        },
+                ..Default::default()
+            };
+
+            device.cmd_pipeline_barrier(frame.cmd_buffer,
+                                        vk::PipelineStageFlags::TRANSFER,
+                                        vk::PipelineStageFlags::COMPUTE_SHADER, vk::DependencyFlags::empty(), &[], &[], &[image_barrier]);
+
+            FIRST_RUN = false;
+        }
 
         let image_barrier = vk::ImageMemoryBarrier {
             src_access_mask: vk::AccessFlags::empty(),
