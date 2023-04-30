@@ -1,6 +1,7 @@
 extern crate ash;
 extern crate shaderc;
 extern crate gpu_allocator;
+extern crate ffmpeg_next as ffmpeg;
 
 use gpu_allocator as gpu_alloc;
 use gpu_allocator::vulkan as gpu_alloc_vk;
@@ -39,6 +40,108 @@ pub struct Image {
 pub struct Buffer {
     pub vk: vk::Buffer,
     pub allocation: gpu_alloc_vk::Allocation
+}
+
+pub struct ImageFileDecoder {
+    decoder: ffmpeg::decoder::Video,
+    input_context: ffmpeg::format::context::Input,
+    width: u32,
+    height: u32
+}
+
+impl ImageFileDecoder {
+    pub fn new(file_path: &str) -> Self {
+        let input_context = ffmpeg::format::input(&file_path).unwrap();
+
+        let stream = input_context
+            .streams()
+            .best(ffmpeg::media::Type::Video)
+            .ok_or(ffmpeg::Error::StreamNotFound).unwrap();
+
+        let context_decoder = ffmpeg::codec::context::Context::from_parameters(stream.parameters()).unwrap();
+        let decoder = context_decoder.decoder().video().unwrap();
+
+        let width = decoder.width();
+        let height = decoder.height();
+
+        ImageFileDecoder {
+            decoder: decoder,
+            input_context: input_context,
+            width: width,
+            height: height
+        }
+    }
+
+    pub fn decode(&mut self, buffer: *mut u8, scale_width: u32, scale_height: u32) {
+        let mut scaler = ffmpeg::software::scaling::context::Context::get(
+            self.decoder.format(),
+            self.decoder.width(),
+            self.decoder.height(),
+            ffmpeg::format::Pixel::RGBA, // 8 bits per channel
+            scale_width,
+            scale_height,
+            ffmpeg::software::scaling::flag::Flags::LANCZOS,
+        ).unwrap();
+
+        let mut frame_index = 0;
+
+        let best_video_stream_index = self.input_context
+            .streams()
+            .best(ffmpeg::media::Type::Video)
+            .map(|stream| stream.index());
+
+        let mut receive_and_process_decoded_frames =
+            |decoder: &mut ffmpeg::decoder::Video| -> Result<(), ffmpeg::Error> {
+                let mut decoded = ffmpeg::util::frame::Video::empty();
+                while decoder.receive_frame(&mut decoded).is_ok() {
+                    let mut rgb_frame = ffmpeg::util::frame::Video::empty();
+                    scaler.run(&decoded, &mut rgb_frame)?;
+                    Self::write_frame_to_buffer(&rgb_frame, buffer);
+                    frame_index += 1;
+
+                    // TODO: Check how to the number of frames in advance
+                    break;
+                }
+                Ok(())
+            };
+
+        for (stream, packet) in self.input_context.packets() {
+            if stream.index() == best_video_stream_index.unwrap() {
+                self.decoder.send_packet(&packet).unwrap();
+                receive_and_process_decoded_frames(&mut self.decoder).unwrap();
+            }
+        }
+        self.decoder.send_eof().unwrap();
+        receive_and_process_decoded_frames(&mut self.decoder).unwrap();
+
+        println!("format: {:?}", self.decoder.format());
+        println!("codec format: {:?}", self.decoder.codec().unwrap().name());
+    }
+
+    fn write_frame_to_buffer(frame: &ffmpeg::util::frame::video::Video, buffer: *mut u8) {
+        // https://github.com/zmwangx/rust-ffmpeg/issues/64
+        let data = frame.data(0);
+        let stride = frame.stride(0);
+        let byte_width: usize = 4 * frame.width() as usize;
+        let width: usize = frame.width() as usize;
+        let height: usize = frame.height() as usize;
+
+        let mut buffer_index: usize = 0;
+
+        unsafe {
+        // *4 for rgba
+        let buffer_slice = std::slice::from_raw_parts_mut(buffer, width*height*4);
+
+        for line in 0..height {
+            let begin = line * stride;
+            let end = begin + byte_width;
+            let len = end-begin;
+            buffer_slice[buffer_index..buffer_index+len].copy_from_slice(&data[begin..end]);
+            buffer_index = buffer_index+len;
+        }
+        }
+    }
+
 }
 
 use winit::{
@@ -728,8 +831,20 @@ fn get_modified_time(path: &str) -> u64 {
 }
 
 fn main() {
-    let window_width  = 800_f32;
-    let window_height = 600_f32;
+    let args: Vec<String> = std::env::args().collect();
+
+    if args.len() < 2 {
+        eprintln!("Must provide image file as argument");
+        std::process::exit(1)
+    }
+
+    ffmpeg::init().unwrap();
+    ffmpeg::log::set_level(ffmpeg::log::Level::Verbose);
+
+    let mut file_decoder = ImageFileDecoder::new(&args[1]);
+
+    let window_width  = file_decoder.width;
+    let window_height = file_decoder.height;
     let mut event_loop = EventLoop::new();
     let window = WindowBuilder::new()
         .with_title("Reforge")
@@ -749,21 +864,9 @@ fn main() {
     let buffer_size = (window_width as vk::DeviceSize)*(window_height as vk::DeviceSize)*4;
     let input_image_buffer = res.create_buffer(buffer_size, vk::BufferUsageFlags::TRANSFER_SRC, gpu_alloc::MemoryLocation::CpuToGpu);
 
-    let mut comp_index = 0;
-    let num_pixels = window_width as usize*window_height as usize;
-
     let mapped_input_image_data: *mut u8 = input_image_buffer.allocation.mapped_ptr().unwrap().as_ptr() as *mut u8;
 
-    for i in 0 .. num_pixels*4{
-        if comp_index == 0 || comp_index == 3 {
-            *mapped_input_image_data.offset(i as isize) = 50;
-        }
-        else {
-            *mapped_input_image_data.offset(i as isize) = 0;
-        }
-        comp_index = (comp_index+1)%4;
-    }
-
+    file_decoder.decode(mapped_input_image_data, window_width, window_height);
 
     render_loop(&mut event_loop, &mut || {
         static mut FIRST_RUN: bool = true;
@@ -893,8 +996,8 @@ fn main() {
                                     vk::PipelineStageFlags::TOP_OF_PIPE,
                                     vk::PipelineStageFlags::COMPUTE_SHADER, vk::DependencyFlags::empty(), &[], &[], &[image_barrier]);
 
-        let dispatch_x = (window_width/16.0).ceil() as u32;
-        let dispatch_y = (window_height/16.0).ceil() as u32;
+        let dispatch_x = (window_width as f32/16.0).ceil() as u32;
+        let dispatch_y = (window_height as f32/16.0).ceil() as u32;
 
         device.cmd_bind_descriptor_sets(
             frame.cmd_buffer,
