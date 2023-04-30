@@ -844,6 +844,26 @@ fn get_modified_time(path: &str) -> u64 {
     std::fs::metadata(path).unwrap().modified().unwrap().duration_since(std::time::SystemTime::UNIX_EPOCH).unwrap().as_secs()
 }
 
+fn get_dim(width: u32, height: u32, new_width: Option<u32>, new_height: Option<u32>) -> (u32, u32) {
+    let mut w  = width;
+    let mut h = height;
+
+    if new_width.is_some() && new_height.is_some() {
+        return (new_width.unwrap(), new_height.unwrap())
+    }
+
+    if new_width.is_some() {
+        w = new_width.unwrap();
+        h = ((w as f32/width as f32)*height as f32) as u32;
+    }
+    else if new_height.is_some() {
+        h = new_height.unwrap();
+        w = ((h as f32/(height as f32))*width as f32) as u32;
+    }
+
+    (w, h)
+}
+
 fn main() {
     let args = Args::parse();
 
@@ -852,8 +872,7 @@ fn main() {
 
     let mut file_decoder = ImageFileDecoder::new(&args.file_path);
 
-    let window_width  = args.width.or(Some(file_decoder.width)).unwrap();
-    let window_height = args.height.or(Some(file_decoder.height)).unwrap();
+    let (window_width, window_height) = get_dim(file_decoder.width, file_decoder.height, args.width, args.height);
 
     let mut event_loop = EventLoop::new();
     let window = WindowBuilder::new()
