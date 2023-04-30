@@ -27,8 +27,8 @@ use ash::vk::{
 
 #[derive(clap::Parser, Debug)]
 pub struct Args {
-    #[arg(short = 'i', long = "input-file")]
-    file_path: String,
+    #[arg(value_name="input-file")]
+    input_file: String,
 
     #[arg(long)]
     width: Option<u32>,
@@ -870,7 +870,7 @@ fn main() {
     ffmpeg::init().unwrap();
     ffmpeg::log::set_level(ffmpeg::log::Level::Verbose);
 
-    let mut file_decoder = ImageFileDecoder::new(&args.file_path);
+    let mut file_decoder = ImageFileDecoder::new(&args.input_file);
 
     let (window_width, window_height) = get_dim(file_decoder.width, file_decoder.height, args.width, args.height);
 
