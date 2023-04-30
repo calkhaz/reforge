@@ -206,6 +206,12 @@ pub struct VkFrameRes {
     pub cmd_buffer: vk::CommandBuffer,
 }
 
+pub struct PipelineLayout {
+    shader_module: vk::ShaderModule,
+    vk: vk::PipelineLayout,
+    descriptor_layout: vk::DescriptorSetLayout
+}
+
 pub struct VkRes {
     pub entry: ash::Entry,
     pub instance: ash::Instance,
@@ -217,9 +223,8 @@ pub struct VkRes {
     pub debug_utils_loader: ash::extensions::ext::DebugUtils,
     pub debug_callback: ash::vk::DebugUtilsMessengerEXT,
     pub compute_pipeline: ash::vk::Pipeline,
-    pub pipeline_layout: ash::vk::PipelineLayout,
+    pub pipeline_layout: PipelineLayout,
     pub descriptor_pool: ash::vk::DescriptorPool,
-    pub descriptor_layout: ash::vk::DescriptorSetLayout,
     pub input_image: Image,
     pub allocator: gpu_alloc_vk::Allocator
 }
@@ -468,7 +473,7 @@ impl VkRes {
                 ..Default::default()
             };
             let pipeline_info = vk::ComputePipelineCreateInfo::builder()
-                .layout(self.pipeline_layout)
+                .layout(self.pipeline_layout.vk)
                 .stage(shader_stage_create_infos);
 
             let compute_pipeline = self.device.create_compute_pipelines(vk::PipelineCache::null(), &[pipeline_info.build()], None).unwrap()[0];
@@ -786,6 +791,12 @@ impl VkRes {
 
         let compute_pipeline = device.create_compute_pipelines(vk::PipelineCache::null(), &[pipeline_info.build()], None).unwrap()[0];
 
+        let pipeline_layout = PipelineLayout {
+            shader_module : shader_module.unwrap(),
+            vk: pipeline_layout,
+            descriptor_layout: descriptor_layout[0]
+        };
+
 
         /*
         allocator.free(allocation).unwrap();
@@ -807,7 +818,6 @@ impl VkRes {
             compute_pipeline: compute_pipeline,
             pipeline_layout: pipeline_layout,
             descriptor_pool: descriptor_pool,
-            descriptor_layout: descriptor_layout[0],
             input_image: input_image,
             allocator: allocator
         }
@@ -1031,7 +1041,7 @@ fn main() {
         device.cmd_bind_descriptor_sets(
             frame.cmd_buffer,
             vk::PipelineBindPoint::COMPUTE,
-            res.pipeline_layout,
+            res.pipeline_layout.vk,
             0,
             &[swap_res.descriptor_set],
             &[],
