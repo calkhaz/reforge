@@ -2,7 +2,9 @@ extern crate ash;
 extern crate shaderc;
 extern crate gpu_allocator;
 extern crate ffmpeg_next as ffmpeg;
+extern crate clap;
 
+use clap::Parser;
 use gpu_allocator as gpu_alloc;
 use gpu_allocator::vulkan as gpu_alloc_vk;
 
@@ -22,6 +24,18 @@ const SHADER_PATH: &str = "shaders/shader.comp";
 use ash::vk::{
     KhrGetPhysicalDeviceProperties2Fn, KhrPortabilityEnumerationFn, KhrPortabilitySubsetFn,
 };
+
+#[derive(clap::Parser, Debug)]
+pub struct Args {
+    #[arg(short = 'i', long = "input-file")]
+    file_path: String,
+
+    #[arg(long)]
+    width: Option<u32>,
+
+    #[arg(long)]
+    height: Option<u32>
+}
 
 pub struct SwapChain {
     pub surface_format: SurfaceFormatKHR,
@@ -831,20 +845,16 @@ fn get_modified_time(path: &str) -> u64 {
 }
 
 fn main() {
-    let args: Vec<String> = std::env::args().collect();
-
-    if args.len() < 2 {
-        eprintln!("Must provide image file as argument");
-        std::process::exit(1)
-    }
+    let args = Args::parse();
 
     ffmpeg::init().unwrap();
     ffmpeg::log::set_level(ffmpeg::log::Level::Verbose);
 
-    let mut file_decoder = ImageFileDecoder::new(&args[1]);
+    let mut file_decoder = ImageFileDecoder::new(&args.file_path);
 
-    let window_width  = file_decoder.width;
-    let window_height = file_decoder.height;
+    let window_width  = args.width.or(Some(file_decoder.width)).unwrap();
+    let window_height = args.height.or(Some(file_decoder.height)).unwrap();
+
     let mut event_loop = EventLoop::new();
     let window = WindowBuilder::new()
         .with_title("Reforge")

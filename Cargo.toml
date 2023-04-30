@@ -13,3 +13,4 @@ winit = "0.27.1"
 shaderc = "0.8"
 gpu-allocator = "0.22.0"
 ffmpeg-next = "6.0.0"
+clap = { version = "4.2.5", features = ["derive"] }
