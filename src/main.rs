@@ -9,13 +9,14 @@ use gpu_allocator as gpu_alloc;
 use gpu_allocator::vulkan as gpu_alloc_vk;
 
 use ash::{vk::{self, SurfaceFormatKHR, ImageCreateFlags}};
-use std::ffi::CStr;
+use std::{ffi::CStr};
 use ash::extensions::khr;
 use std::borrow::Cow;
 use std::default::Default;
 use std::os::raw::c_char;
 use winit::window::Window;
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
+use std::collections::HashMap;
 
 const NUM_FRAMES: u8 = 2;
 const SHADER_PATH: &str = "shaders/shader.comp";
@@ -212,24 +213,108 @@ pub struct PipelineLayout {
     descriptor_layout: vk::DescriptorSetLayout
 }
 
-pub struct VkRes {
+pub struct VkCore {
     pub entry: ash::Entry,
     pub instance: ash::Instance,
     pub device: ash::Device,
-    pub swapchain: SwapChain,
-    pub frames: Vec<VkFrameRes>,
-    pub swap_res: Vec<VkSwapRes>,
+    pub pdevice: vk::PhysicalDevice,
     pub queue: vk::Queue,
+    pub queue_family_index: u32,
     pub debug_utils_loader: ash::extensions::ext::DebugUtils,
     pub debug_callback: ash::vk::DebugUtilsMessengerEXT,
-    pub compute_pipeline: ash::vk::Pipeline,
-    pub pipeline_layout: PipelineLayout,
-    pub descriptor_pool: ash::vk::DescriptorPool,
-    pub input_image: Image,
-    pub allocator: gpu_alloc_vk::Allocator
+    pub surface: vk::SurfaceKHR,
+    pub surface_loader: khr::Surface
 }
 
-impl VkRes {
+pub struct VkRes {
+    pub swapchain: SwapChain,
+    pub frames: Vec<VkFrameRes>,
+    pub compute_pipeline: ash::vk::Pipeline,
+    pub pipeline_layout: PipelineLayout,
+    pub allocator: gpu_alloc_vk::Allocator,
+    pub images: HashMap<String, Image>
+}
+
+impl VkCore {
+    unsafe fn new(window: &Window) -> Self {
+        let mut extension_names = ash_window::enumerate_required_extensions(window.raw_display_handle())
+                    .unwrap()
+                    .to_vec();
+        extension_names.push(ash::extensions::ext::DebugUtils::name().as_ptr());
+
+        #[cfg(any(target_os = "macos", target_os = "ios"))]
+        {
+            extension_names.push(KhrPortabilityEnumerationFn::name().as_ptr());
+            // Enabling this extension is a requirement when using `VK_KHR_portability_subset`
+            extension_names.push(KhrGetPhysicalDeviceProperties2Fn::name().as_ptr());
+        }
+
+
+        let entry = ash::Entry::load().unwrap();
+        let instance = Self::create_instance(&entry, &extension_names);
+        let (debug_callback, debug_utils) = Self::create_debug_utils(&instance, &entry);
+
+        let (surface, surface_loader) = Self::create_surface(&entry, &instance, &window);
+        let (pdevice, queue_family_index) = Self::create_physical_device(&instance, surface, &surface_loader);
+
+        let device_extension_names_raw : [*const i8; 1] = [
+            khr::Swapchain::name().as_ptr(),
+            #[cfg(any(target_os = "macos", target_os = "ios"))]
+            KhrPortabilitySubsetFn::name().as_ptr(),
+        ];
+
+        let features = vk::PhysicalDeviceFeatures {
+            shader_clip_distance: 1,
+            ..Default::default()
+        };
+        let priorities = [1.0];
+
+        let queue_info = vk::DeviceQueueCreateInfo::builder()
+            .queue_family_index(queue_family_index)
+            .queue_priorities(&priorities);
+
+        let device_create_info = vk::DeviceCreateInfo::builder()
+            .queue_create_infos(std::slice::from_ref(&queue_info))
+            .enabled_extension_names(&device_extension_names_raw)
+            .enabled_features(&features);
+
+        let device: ash::Device = instance
+            .create_device(pdevice, &device_create_info, None)
+            .unwrap();
+
+        let queue = device.get_device_queue(queue_family_index, 0);
+
+
+        VkCore {
+            entry: entry,
+            instance: instance,
+            device: device,
+            pdevice: pdevice,
+            queue: queue,
+            queue_family_index: queue_family_index,
+            debug_utils_loader: debug_utils,
+            debug_callback: debug_callback,
+            surface: surface,
+            surface_loader: surface_loader
+        }
+    }
+
+
+    unsafe fn create_surface(entry: &ash::Entry, instance: &ash::Instance, window: &Window) -> (vk::SurfaceKHR, khr::Surface) {
+        let surface_loader = khr::Surface::new(&entry, &instance);
+
+        let surface = ash_window::create_surface(
+            &entry,
+            &instance,
+            window.raw_display_handle(),
+            window.raw_window_handle(),
+            None,
+        )
+        .unwrap();
+
+        return (surface, surface_loader)
+    }
+
     unsafe fn create_debug_utils(instance: &ash::Instance, entry: &ash::Entry) -> (vk::DebugUtilsMessengerEXT, ash::extensions::ext::DebugUtils) {
         let debug_info = vk::DebugUtilsMessengerCreateInfoEXT::builder()
             .message_severity(
@@ -295,40 +380,6 @@ impl VkRes {
         instance
     }
 
-    unsafe fn create_surface(entry: &ash::Entry, instance: &ash::Instance, window: &Window) -> (vk::SurfaceKHR, khr::Surface) {
-        let surface_loader = khr::Surface::new(&entry, &instance);
-
-        let surface = ash_window::create_surface(
-            &entry,
-            &instance,
-            window.raw_display_handle(),
-            window.raw_window_handle(),
-            None,
-        )
-        .unwrap();
-
-        return (surface, surface_loader)
-    }
-
-    unsafe fn create_commands(device: &ash::Device, queue_family_index: u32) -> (vk::CommandPool, vk::CommandBuffer) {
-        let pool_create_info = vk::CommandPoolCreateInfo::builder()
-            .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER)
-            .queue_family_index(queue_family_index);
-
-        let pool = device.create_command_pool(&pool_create_info, None).unwrap();
-
-        let command_buffer_allocate_info = vk::CommandBufferAllocateInfo::builder()
-            .command_buffer_count(1)
-            .command_pool(pool)
-            .level(vk::CommandBufferLevel::PRIMARY);
-
-        let command_buffer = device
-            .allocate_command_buffers(&command_buffer_allocate_info)
-            .unwrap();
-
-        (pool, command_buffer[0])
-    }
-
     unsafe fn create_physical_device(instance: &ash::Instance, surface: vk::SurfaceKHR, surface_loader: &khr::Surface) -> (vk::PhysicalDevice, u32) {
         let pdevices = instance
             .enumerate_physical_devices()
@@ -363,6 +414,29 @@ impl VkRes {
         return (pdevice, queue_family_index as u32)
     }
 
+}
+
+impl VkRes {
+
+    unsafe fn create_commands(device: &ash::Device, queue_family_index: u32) -> (vk::CommandPool, vk::CommandBuffer) {
+        let pool_create_info = vk::CommandPoolCreateInfo::builder()
+            .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER)
+            .queue_family_index(queue_family_index);
+
+        let pool = device.create_command_pool(&pool_create_info, None).unwrap();
+
+        let command_buffer_allocate_info = vk::CommandBufferAllocateInfo::builder()
+            .command_buffer_count(1)
+            .command_pool(pool)
+            .level(vk::CommandBufferLevel::PRIMARY);
+
+        let command_buffer = device
+            .allocate_command_buffers(&command_buffer_allocate_info)
+            .unwrap();
+
+        (pool, command_buffer[0])
+    }
+
     unsafe fn create_shader_module(device: &ash::Device, path: &str) -> Option<vk::ShaderModule> {
         let glsl_source = std::fs::read_to_string(path)
             .expect("Should have been able to read the file");
@@ -387,6 +461,7 @@ impl VkRes {
     }
 
     pub unsafe fn create_buffer(&mut self, 
+                                core: &VkCore,
                                 size: vk::DeviceSize,
                                 usage: vk::BufferUsageFlags,
                                 mem_type: gpu_alloc::MemoryLocation) -> Buffer {
@@ -395,11 +470,11 @@ impl VkRes {
             .usage(usage)
             .sharing_mode(vk::SharingMode::EXCLUSIVE);
 
-        let buffer = self.device.create_buffer(&info, None).unwrap();
+        let buffer = core.device.create_buffer(&info, None).unwrap();
 
         let allocation = self.allocator
             .allocate(&gpu_alloc_vk::AllocationCreateDesc {
-                requirements: self.device.get_buffer_memory_requirements(buffer),
+                requirements: core.device.get_buffer_memory_requirements(buffer),
                 location: mem_type,
                 linear: true,
                 allocation_scheme: gpu_alloc_vk::AllocationScheme::GpuAllocatorManaged,
@@ -407,12 +482,12 @@ impl VkRes {
             })
             .unwrap();
 
-        self.device.bind_buffer_memory(buffer, allocation.memory(), allocation.offset()).unwrap();
+        core.device.bind_buffer_memory(buffer, allocation.memory(), allocation.offset()).unwrap();
 
         Buffer{vk: buffer, allocation: allocation}
     }
 
-    pub unsafe fn create_input_image(device: &ash::Device, width: u32, height: u32, allocator: &mut gpu_alloc_vk::Allocator) -> Image {
+    pub unsafe fn create_image(&mut self, core: &VkCore, name: String, width: u32, height: u32) -> &Image {
         let input_image_info = vk::ImageCreateInfo::builder()
             .image_type(vk::ImageType::TYPE_2D)
             .array_layers(1)
@@ -425,11 +500,11 @@ impl VkRes {
             .usage(vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::TRANSFER_DST)
             .sharing_mode(vk::SharingMode::EXCLUSIVE);
 
-        let image = device.create_image(&input_image_info, None).unwrap();
+        let vk_image = core.device.create_image(&input_image_info, None).unwrap();
 
-        let image_allocation = allocator
+        let image_allocation = self.allocator
             .allocate(&gpu_alloc_vk::AllocationCreateDesc {
-                requirements: device.get_image_memory_requirements(image),
+                requirements: core.device.get_image_memory_requirements(vk_image),
                 location: gpu_alloc::MemoryLocation::GpuOnly,
                 linear: true,
                 allocation_scheme: gpu_alloc_vk::AllocationScheme::GpuAllocatorManaged,
@@ -438,10 +513,10 @@ impl VkRes {
             .unwrap();
 
 
-        device.bind_image_memory(image, image_allocation.memory(), image_allocation.offset()).unwrap();
+        core.device.bind_image_memory(vk_image, image_allocation.memory(), image_allocation.offset()).unwrap();
 
         let image_view_info = vk::ImageViewCreateInfo::builder()
-            .image(image)
+            .image(vk_image)
             .view_type(vk::ImageViewType::TYPE_2D)
             .format(vk::Format::R8G8B8A8_UNORM)
             .subresource_range(*vk::ImageSubresourceRange::builder()
@@ -451,17 +526,25 @@ impl VkRes {
                 .base_array_layer(0)
                 .layer_count(1));
 
-        let image_view = device.create_image_view(&image_view_info, None).unwrap();
+        let image_view = core.device.create_image_view(&image_view_info, None).unwrap();
 
-        Image {
-            vk: image,
+        let image = Image {
+            vk: vk_image,
             view: image_view,
             allocation: image_allocation
-        }
+        };
+
+        self.images.insert(name.clone(), image).unwrap();
+
+        &self.images.get(&name).unwrap()
     }
 
-    pub unsafe fn rebuild_changed_compute_pipeline(&mut self) {
-        let shader_module = Self::create_shader_module(&self.device, SHADER_PATH);
+    pub unsafe fn get_image(&self, name: String) -> &Image {
+        &self.images.get(&name).unwrap()
+    }
+
+    pub unsafe fn rebuild_changed_compute_pipeline(&mut self, core: &VkCore) {
+        let shader_module = Self::create_shader_module(&core.device, SHADER_PATH);
 
         if shader_module.is_some() {
             let shader_entry_name = CStr::from_bytes_with_nul_unchecked(b"main\0");
@@ -476,19 +559,19 @@ impl VkRes {
                 .layout(self.pipeline_layout.vk)
                 .stage(shader_stage_create_infos);
 
-            let compute_pipeline = self.device.create_compute_pipelines(vk::PipelineCache::null(), &[pipeline_info.build()], None).unwrap()[0];
+            let compute_pipeline = core.device.create_compute_pipelines(vk::PipelineCache::null(), &[pipeline_info.build()], None).unwrap()[0];
 
             self.compute_pipeline = compute_pipeline;
         }
     }
 
-    unsafe fn create_swapchain(instance: &ash::Instance, device: &ash::Device, pdevice: vk::PhysicalDevice, surface: vk::SurfaceKHR, surface_loader: &khr::Surface, width: u32, height: u32) -> SwapChain {
-        let surface_capabilities = surface_loader
-            .get_physical_device_surface_capabilities(pdevice, surface)
+    unsafe fn create_swapchain(core: &VkCore, width: u32, height: u32) -> SwapChain {
+        let surface_capabilities = core.surface_loader
+            .get_physical_device_surface_capabilities(core.pdevice, core.surface)
             .unwrap();
 
-        let surface_format = surface_loader
-            .get_physical_device_surface_formats(pdevice, surface)
+        let surface_format = core.surface_loader
+            .get_physical_device_surface_formats(core.pdevice, core.surface)
             .unwrap()[0];
 
         let mut desired_image_count = surface_capabilities.min_image_count + 1;
@@ -512,8 +595,8 @@ impl VkRes {
         } else {
             surface_capabilities.current_transform
         };
-        let present_modes = surface_loader
-            .get_physical_device_surface_present_modes(pdevice, surface)
+        let present_modes = core.surface_loader
+            .get_physical_device_surface_present_modes(core.pdevice, core.surface)
             .unwrap();
         let present_mode = present_modes
             .iter()
@@ -521,10 +604,10 @@ impl VkRes {
             .find(|&mode| mode == vk::PresentModeKHR::MAILBOX)
             .unwrap_or(vk::PresentModeKHR::FIFO);
 
-        let swapchain_loader = khr::Swapchain::new(&instance, &device);
+        let swapchain_loader = khr::Swapchain::new(&core.instance, &core.device);
 
         let swapchain_create_info = vk::SwapchainCreateInfoKHR::builder()
-            .surface(surface)
+            .surface(core.surface)
             .min_image_count(desired_image_count)
             .image_color_space(surface_format.color_space)
             .image_format(surface_format.format)
@@ -563,7 +646,7 @@ impl VkRes {
                         layer_count: 1,
                     })
                     .image(image);
-                device.create_image_view(&create_view_info, None).unwrap()
+                core.device.create_image_view(&create_view_info, None).unwrap()
            }).collect();
 
         return SwapChain {
@@ -575,148 +658,25 @@ impl VkRes {
         };
     }
 
-    unsafe fn create_resizable_res(instance: &ash::Instance,
-                                   device: &ash::Device,
-                                   pdevice: vk::PhysicalDevice,
-                                   surface: vk::SurfaceKHR,
-                                   surface_loader: &khr::Surface,
-                                   width: u32,
-                                   height: u32,
-                                   input_image: &Image,
-                                   descriptor_layout: &[vk::DescriptorSetLayout]) -> (SwapChain, Vec<VkSwapRes>, vk::DescriptorPool)
-    {
-        let swapchain = Self::create_swapchain(&instance, &device, pdevice, surface, &surface_loader, width, height);
-
-        let descriptor_sizes = [
-            vk::DescriptorPoolSize {
-                ty: vk::DescriptorType::STORAGE_IMAGE,
-                // Input + output, so 2*
-                descriptor_count: 2*swapchain.images.len() as u32,
-            },
-        ];
-        let descriptor_pool_info = vk::DescriptorPoolCreateInfo::builder()
-            .pool_sizes(&descriptor_sizes)
-            .max_sets(swapchain.images.len() as u32);
-
-        let descriptor_pool = device
-            .create_descriptor_pool(&descriptor_pool_info, None)
-            .unwrap();
-
-        let desc_alloc_info = vk::DescriptorSetAllocateInfo::builder()
-            .descriptor_pool(descriptor_pool)
-            .set_layouts(descriptor_layout);
-
-        let swap_res : Vec<VkSwapRes> = (0..swapchain.images.len()).map(|i|{
-            let descriptor_set = device
-                .allocate_descriptor_sets(&desc_alloc_info)
-                .unwrap()[0];
-
-            let input_image_descriptor = vk::DescriptorImageInfo {
-                image_layout: vk::ImageLayout::GENERAL,
-                image_view: input_image.view,
-                ..Default::default()
-            };
-
-            let output_image_descriptor = vk::DescriptorImageInfo {
-                image_layout: vk::ImageLayout::GENERAL,
-                image_view: swapchain.views[i],
-                ..Default::default()
-            };
-
-            let write_desc_sets = [
-                vk::WriteDescriptorSet {
-                    dst_set: descriptor_set,
-                    dst_binding: 0,
-                    descriptor_count: 1,
-                    descriptor_type: vk::DescriptorType::STORAGE_IMAGE,
-                    p_image_info: &input_image_descriptor,
-                    ..Default::default()
-                },
-                vk::WriteDescriptorSet {
-                    dst_set: descriptor_set,
-                    dst_binding: 1,
-                    descriptor_count: 1,
-                    descriptor_type: vk::DescriptorType::STORAGE_IMAGE,
-                    p_image_info: &output_image_descriptor,
-                    ..Default::default()
-                },
-            ];
-            device.update_descriptor_sets(&write_desc_sets, &[]);
-
-            VkSwapRes {
-                descriptor_set : descriptor_set
-            }
-        }).collect();
-
-        (swapchain, swap_res, descriptor_pool)
-    }
-
-    unsafe fn new(window: &Window) -> Self {
-
-        let mut extension_names = ash_window::enumerate_required_extensions(window.raw_display_handle())
-                    .unwrap()
-                    .to_vec();
-        extension_names.push(ash::extensions::ext::DebugUtils::name().as_ptr());
-
-        #[cfg(any(target_os = "macos", target_os = "ios"))]
-        {
-            extension_names.push(KhrPortabilityEnumerationFn::name().as_ptr());
-            // Enabling this extension is a requirement when using `VK_KHR_portability_subset`
-            extension_names.push(KhrGetPhysicalDeviceProperties2Fn::name().as_ptr());
-        }
-
-
-        let entry = ash::Entry::load().unwrap();
-        let instance = Self::create_instance(&entry, &extension_names);
-        let (debug_callback, debug_utils) = Self::create_debug_utils(&instance, &entry);
-        let (surface, surface_loader) = Self::create_surface(&entry, &instance, &window);
-
-        let (pdevice, queue_family_index) = Self::create_physical_device(&instance, surface, &surface_loader);
-
-        let device_extension_names_raw : [*const i8; 1] = [
-            khr::Swapchain::name().as_ptr(),
-            #[cfg(any(target_os = "macos", target_os = "ios"))]
-            KhrPortabilitySubsetFn::name().as_ptr(),
-        ];
-
-        let features = vk::PhysicalDeviceFeatures {
-            shader_clip_distance: 1,
-            ..Default::default()
-        };
-        let priorities = [1.0];
-
-        let queue_info = vk::DeviceQueueCreateInfo::builder()
-            .queue_family_index(queue_family_index)
-            .queue_priorities(&priorities);
-
-        let device_create_info = vk::DeviceCreateInfo::builder()
-            .queue_create_infos(std::slice::from_ref(&queue_info))
-            .enabled_extension_names(&device_extension_names_raw)
-            .enabled_features(&features);
-
-        let device: ash::Device = instance
-            .create_device(pdevice, &device_create_info, None)
-            .unwrap();
-
-
+    unsafe fn new(core: &VkCore, window: &Window) -> Self {
         let frames : Vec<VkFrameRes> = (0..NUM_FRAMES).map(|_|{
             let semaphore_create_info = vk::SemaphoreCreateInfo::default();
 
-            let present_complete_semaphore = device
+            let present_complete_semaphore = core.device
                 .create_semaphore(&semaphore_create_info, None)
                 .unwrap();
-            let render_complete_semaphore = device
+            let render_complete_semaphore = core.device
                 .create_semaphore(&semaphore_create_info, None)
                 .unwrap();
 
             let fence_create_info =
                 vk::FenceCreateInfo::builder().flags(vk::FenceCreateFlags::SIGNALED);
 
-            let fence = device
+            let fence = core.device
                 .create_fence(&fence_create_info, None)
                 .expect("Create fence failed.");
 
-            let (cmd_pool, cmd_buff) = Self::create_commands(&device, queue_family_index);
+            let (cmd_pool, cmd_buff) = Self::create_commands(&core.device, core.queue_family_index);
 
             VkFrameRes{
                 fence: fence,
@@ -727,7 +687,7 @@ impl VkRes {
             }
         }).collect();
 
-        let shader_module = Self::create_shader_module(&device, SHADER_PATH);
+        let shader_module = Self::create_shader_module(&core.device, SHADER_PATH);
 
         let shader_entry_name = CStr::from_bytes_with_nul_unchecked(b"main\0");
 
@@ -737,8 +697,6 @@ impl VkRes {
             stage: vk::ShaderStageFlags::COMPUTE,
             ..Default::default()
         };
-
-        let queue = device.get_device_queue(queue_family_index, 0);
 
         let desc_layout_bindings = [
             // input
@@ -761,7 +719,7 @@ impl VkRes {
         let descriptor_info =
             vk::DescriptorSetLayoutCreateInfo::builder().bindings(&desc_layout_bindings);
 
-        let descriptor_layout = [device
+        let descriptor_layout = [core.device
             .create_descriptor_set_layout(&descriptor_info, None)
             .unwrap()];
 
@@ -769,19 +727,17 @@ impl VkRes {
 
         // Setting up the allocator
         let mut allocator = gpu_alloc_vk::Allocator::new(&gpu_alloc_vk::AllocatorCreateDesc {
-            instance: instance.clone(),
-            device: device.clone(),
-            physical_device: pdevice,
+            instance: core.instance.clone(),
+            device: core.device.clone(),
+            physical_device: core.pdevice,
             debug_settings: Default::default(),
             buffer_device_address: false,
         }).unwrap();
 
 
-        let input_image = Self::create_input_image(&device, window_size.width, window_size.height, &mut allocator);
+        let swapchain = Self::create_swapchain(&core, window_size.width, window_size.height);
 
-        let (swapchain, swap_res, descriptor_pool) = Self::create_resizable_res(&instance, &device, pdevice, surface, &surface_loader, window_size.width, window_size.height, &input_image, &descriptor_layout);
-
-        let pipeline_layout = device.
+        let pipeline_layout = core.device.
             create_pipeline_layout(&vk::PipelineLayoutCreateInfo::builder()
                 .set_layouts(&descriptor_layout), None).unwrap();
 
@@ -789,7 +745,7 @@ impl VkRes {
             .layout(pipeline_layout)
             .stage(shader_stage_create_infos);
 
-        let compute_pipeline = device.create_compute_pipelines(vk::PipelineCache::null(), &[pipeline_info.build()], None).unwrap()[0];
+        let compute_pipeline = core.device.create_compute_pipelines(vk::PipelineCache::null(), &[pipeline_info.build()], None).unwrap()[0];
 
         let pipeline_layout = PipelineLayout {
             shader_module : shader_module.unwrap(),
@@ -806,23 +762,85 @@ impl VkRes {
         */
     
         VkRes {
-            entry: entry,
-            instance: instance,
-            device: device,
             swapchain: swapchain,
             frames: frames,
-            swap_res: swap_res,
-            queue: queue,
-            debug_utils_loader: debug_utils,
-            debug_callback: debug_callback,
             compute_pipeline: compute_pipeline,
             pipeline_layout: pipeline_layout,
-            descriptor_pool: descriptor_pool,
-            input_image: input_image,
-            allocator: allocator
+            allocator: allocator,
+            images: HashMap::new()
         }
     }
 }
+
+unsafe fn create_resizable_res(core: &VkCore,
+                               res: &VkRes,
+                               input_image: &Image) -> (Vec<VkSwapRes>, vk::DescriptorPool)
+{
+    let descriptor_sizes = [
+        vk::DescriptorPoolSize {
+            ty: vk::DescriptorType::STORAGE_IMAGE,
+            // Input + output, so 2*
+            descriptor_count: 2*res.swapchain.images.len() as u32,
+        },
+    ];
+    let descriptor_pool_info = vk::DescriptorPoolCreateInfo::builder()
+        .pool_sizes(&descriptor_sizes)
+        .max_sets(res.swapchain.images.len() as u32);
+
+    let descriptor_pool = core.device
+        .create_descriptor_pool(&descriptor_pool_info, None)
+        .unwrap();
+
+    let desc_layout = &[res.pipeline_layout.descriptor_layout];
+    let desc_alloc_info = vk::DescriptorSetAllocateInfo::builder()
+        .descriptor_pool(descriptor_pool)
+        .set_layouts(desc_layout);
+
+    let swap_res : Vec<VkSwapRes> = (0..res.swapchain.images.len()).map(|i|{
+        let descriptor_set = core.device
+            .allocate_descriptor_sets(&desc_alloc_info)
+            .unwrap()[0];
+
+        let input_image_descriptor = vk::DescriptorImageInfo {
+            image_layout: vk::ImageLayout::GENERAL,
+            image_view: input_image.view,
+            ..Default::default()
+        };
+
+        let output_image_descriptor = vk::DescriptorImageInfo {
+            image_layout: vk::ImageLayout::GENERAL,
+            image_view: res.swapchain.views[i],
+            ..Default::default()
+        };
+
+        let write_desc_sets = [
+            vk::WriteDescriptorSet {
+                dst_set: descriptor_set,
+                dst_binding: 0,
+                descriptor_count: 1,
+                descriptor_type: vk::DescriptorType::STORAGE_IMAGE,
+                p_image_info: &input_image_descriptor,
+                ..Default::default()
+            },
+            vk::WriteDescriptorSet {
+                dst_set: descriptor_set,
+                dst_binding: 1,
+                descriptor_count: 1,
+                descriptor_type: vk::DescriptorType::STORAGE_IMAGE,
+                p_image_info: &output_image_descriptor,
+                ..Default::default()
+            },
+        ];
+        core.device.update_descriptor_sets(&write_desc_sets, &[]);
+
+        VkSwapRes {
+            descriptor_set : descriptor_set
+        }
+    }).collect();
+
+    (swap_res, descriptor_pool)
+}
+
 
 
 fn render_loop<F: FnMut()>(event_loop: &mut EventLoop<()>, f: &mut F) {
@@ -896,12 +914,20 @@ fn main() {
         .unwrap();
 
     unsafe {
-    let mut res = VkRes::new(&window);
-
-    let mut last_modified_shader_time = get_modified_time(SHADER_PATH);
+    let vk_core = VkCore::new(&window);
+    let mut res = VkRes::new(&vk_core, &window);
 
     let buffer_size = (window_width as vk::DeviceSize)*(window_height as vk::DeviceSize)*4;
-    let input_image_buffer = res.create_buffer(buffer_size, vk::BufferUsageFlags::TRANSFER_SRC, gpu_alloc::MemoryLocation::CpuToGpu);
+    let input_image_buffer = res.create_buffer(&vk_core, buffer_size, vk::BufferUsageFlags::TRANSFER_SRC, gpu_alloc::MemoryLocation::CpuToGpu);
+
+    //let input_image = create_input_image(&device, window_size.width, window_size.height, &mut allocator);
+    let (swap_res, descriptor_pool) = {
+        res.create_image(&vk_core, "input".to_string(), window_width, window_height);
+        let input_image = res.get_image("input".to_string());
+        create_resizable_res(&vk_core, &res, &input_image)
+    };
+
+    let mut last_modified_shader_time = get_modified_time(SHADER_PATH);
 
     let mapped_input_image_data: *mut u8 = input_image_buffer.allocation.mapped_ptr().unwrap().as_ptr() as *mut u8;
 
@@ -915,13 +941,13 @@ fn main() {
 
         if current_modified_time != last_modified_shader_time
         {
-            res.rebuild_changed_compute_pipeline();
+            res.rebuild_changed_compute_pipeline(&vk_core);
         }
 
         last_modified_shader_time = current_modified_time;
 
         let frame = &res.frames[FRAME_INDEX as usize];
-        let device = &res.device;
+        let device = &vk_core.device;
 
         let (present_index, _) = res
             .swapchain.loader.acquire_next_image(
@@ -932,7 +958,7 @@ fn main() {
             )
             .unwrap();
 
-        let swap_res = &res.swap_res[present_index as usize];
+        let swap_res = &swap_res[present_index as usize];
 
         device
             .wait_for_fences(&[frame.fence], true, std::u64::MAX)
@@ -973,12 +999,14 @@ fn main() {
                 ..Default::default()
             };
 
+            let input_image = &res.get_image("input".to_string());
+
             let image_barrier = vk::ImageMemoryBarrier {
                 src_access_mask: vk::AccessFlags::empty(),
                 dst_access_mask: vk::AccessFlags::TRANSFER_WRITE,
                 old_layout: vk::ImageLayout::UNDEFINED,
                 new_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-                image: res.input_image.vk,
+                image: input_image.vk,
                 subresource_range: vk::ImageSubresourceRange {
                     aspect_mask: vk::ImageAspectFlags::COLOR,
                     level_count: 1,
@@ -992,14 +1020,14 @@ fn main() {
                                         vk::PipelineStageFlags::TOP_OF_PIPE,
                                         vk::PipelineStageFlags::TRANSFER, vk::DependencyFlags::empty(), &[], &[], &[image_barrier]);
 
-            device.cmd_copy_buffer_to_image(frame.cmd_buffer, input_image_buffer.vk, res.input_image.vk, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &[regions]);
+            device.cmd_copy_buffer_to_image(frame.cmd_buffer, input_image_buffer.vk, input_image.vk, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &[regions]);
 
             let image_barrier = vk::ImageMemoryBarrier {
                 src_access_mask: vk::AccessFlags::TRANSFER_WRITE,
                 dst_access_mask: vk::AccessFlags::SHADER_READ,
                 old_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
                 new_layout: vk::ImageLayout::GENERAL,
-                image: res.input_image.vk,
+                image: input_image.vk,
                 subresource_range: vk::ImageSubresourceRange {
                     aspect_mask: vk::ImageAspectFlags::COLOR,
                     level_count: 1,
@@ -1086,8 +1114,8 @@ fn main() {
             .command_buffers(cmd_buffers)
             .signal_semaphores(signal_semaphores);
 
-        device.queue_submit(
-            res.queue,
+        vk_core.device.queue_submit(
+            vk_core.queue,
             &[submit_info.build()],
             frame.fence,
         )
@@ -1102,7 +1130,7 @@ fn main() {
             .image_indices(&image_indices);
 
         res.swapchain.loader
-            .queue_present(res.queue, &present_info)
+            .queue_present(vk_core.queue, &present_info)
             .unwrap();
 
         FRAME_INDEX = (FRAME_INDEX+1)%NUM_FRAMES;
