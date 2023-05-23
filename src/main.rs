@@ -534,7 +534,7 @@ impl VkRes {
             allocation: image_allocation
         };
 
-        self.images.insert(name.clone(), image).unwrap();
+        self.images.insert(name.clone(), image);
 
         &self.images.get(&name).unwrap()
     }
