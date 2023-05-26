@@ -8,9 +8,11 @@ use gpu_allocator as gpu_alloc;
 
 use ash::vk;
 use std::default::Default;
+use std::rc::Rc;
 
 mod vulkan;
 use vulkan::core::VkCore;
+use vulkan::pipeline_factory::PipelineInfo;
 use vulkan::pipeline_factory::PipelineFactory;
 use vulkan::pipeline_factory::Image;
 use vulkan::pipeline_factory::NUM_FRAMES;
@@ -18,7 +20,6 @@ use vulkan::pipeline_factory::SHADER_PATH;
 
 mod imagefileio;
 use imagefileio::ImageFileDecoder;
-
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 use ash::vk::{
@@ -189,15 +190,24 @@ fn main() {
         .unwrap();
 
     unsafe {
-    let vk_core = VkCore::new(&window);
-    let mut res = PipelineFactory::new(&vk_core, &window);
+    let vk_core = Rc::new(VkCore::new(&window));
+    let mut res = PipelineFactory::new(Rc::clone(&vk_core), &window);
+
+    let info = PipelineInfo {
+        shader_path: "shaders/shader.comp".to_string(),
+        input_images: [(0, "file-input".to_string())].to_vec(),
+        output_images: [(1, "swapchain".to_string())].to_vec(),
+    };
+
+    res.add("test-pipeline", info);
+
 
     let buffer_size = (window_width as vk::DeviceSize)*(window_height as vk::DeviceSize)*4;
-    let input_image_buffer = res.create_buffer(&vk_core, buffer_size, vk::BufferUsageFlags::TRANSFER_SRC, gpu_alloc::MemoryLocation::CpuToGpu);
+    let input_image_buffer = res.create_buffer(buffer_size, vk::BufferUsageFlags::TRANSFER_SRC, gpu_alloc::MemoryLocation::CpuToGpu);
 
     //let input_image = create_input_image(&device, window_size.width, window_size.height, &mut allocator);
     let (swap_res, descriptor_pool) = {
-        res.create_image(&vk_core, "input".to_string(), window_width, window_height);
+        res.create_image("input".to_string(), window_width, window_height);
         let input_image = res.get_image("input".to_string());
         create_resizable_res(&vk_core, &res, &input_image)
     };
@@ -216,7 +226,7 @@ fn main() {
 
         if current_modified_time != last_modified_shader_time
         {
-            res.rebuild_changed_compute_pipeline(&vk_core);
+            res.rebuild_changed_compute_pipeline();
         }
 
         last_modified_shader_time = current_modified_time;

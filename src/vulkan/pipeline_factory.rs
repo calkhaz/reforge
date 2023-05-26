@@ -11,6 +11,7 @@ use ash::extensions::khr;
 use std::default::Default;
 use winit::window::Window;
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use crate::vulkan::core::VkCore;
 
@@ -51,17 +52,47 @@ pub struct PipelineLayout {
     pub descriptor_layout: vk::DescriptorSetLayout
 }
 
+#[derive(Default)]
+pub struct PipelineInfo {
+    pub shader_path: String,
+    pub input_images: Vec<(u32, String)>,
+    pub output_images: Vec<(u32, String)>
+}
 
 pub struct PipelineFactory {
+    core: Rc<VkCore>,
     pub swapchain: SwapChain,
     pub frames: Vec<VkFrameRes>,
     pub compute_pipeline: ash::vk::Pipeline,
     pub pipeline_layout: PipelineLayout,
     pub allocator: gpu_alloc_vk::Allocator,
-    pub images: HashMap<String, Image>
+    pub images: HashMap<String, Image>,
+    pipeline_infos: HashMap<String, PipelineInfo>
 }
 
 impl PipelineFactory {
+
+    /*(
+    pub unsafe fn add(&mut self, name: &str) -> &mut PipelineInfo {
+        //self.pipeline_infos.insert(name, PipelineInfo());
+        let info : PipelineInfo = Default::default();
+        self.pipeline_infos.entry(name.to_string()).or_insert_with(|| info)
+    }
+    */
+
+    pub unsafe fn add(&mut self, name: &str, info: PipelineInfo)  {
+        self.pipeline_infos.insert(name.to_string(), info);
+    }
+
+    pub unsafe fn build(&mut self) {
+        for (key, info) in &self.pipeline_infos {
+            for (key, value) in &info.input_images {
+
+            }
+            for (key, value) in &info.output_images {
+            }
+        }
+    }
 
     unsafe fn create_commands(device: &ash::Device, queue_family_index: u32) -> (vk::CommandPool, vk::CommandBuffer) {
         let pool_create_info = vk::CommandPoolCreateInfo::builder()
@@ -106,7 +137,6 @@ impl PipelineFactory {
     }
 
     pub unsafe fn create_buffer(&mut self,
-                                core: &VkCore,
                                 size: vk::DeviceSize,
                                 usage: vk::BufferUsageFlags,
                                 mem_type: gpu_alloc::MemoryLocation) -> Buffer {
@@ -115,11 +145,11 @@ impl PipelineFactory {
             .usage(usage)
             .sharing_mode(vk::SharingMode::EXCLUSIVE);
 
-        let buffer = core.device.create_buffer(&info, None).unwrap();
+        let buffer = self.core.device.create_buffer(&info, None).unwrap();
 
         let allocation = self.allocator
             .allocate(&gpu_alloc_vk::AllocationCreateDesc {
-                requirements: core.device.get_buffer_memory_requirements(buffer),
+                requirements: self.core.device.get_buffer_memory_requirements(buffer),
                 location: mem_type,
                 linear: true,
                 allocation_scheme: gpu_alloc_vk::AllocationScheme::GpuAllocatorManaged,
@@ -127,12 +157,12 @@ impl PipelineFactory {
             })
             .unwrap();
 
-        core.device.bind_buffer_memory(buffer, allocation.memory(), allocation.offset()).unwrap();
+        self.core.device.bind_buffer_memory(buffer, allocation.memory(), allocation.offset()).unwrap();
 
         Buffer{vk: buffer, allocation: allocation}
     }
 
-    pub unsafe fn create_image(&mut self, core: &VkCore, name: String, width: u32, height: u32) -> &Image {
+    pub unsafe fn create_image(&mut self, name: String, width: u32, height: u32) -> &Image {
         let input_image_info = vk::ImageCreateInfo::builder()
             .image_type(vk::ImageType::TYPE_2D)
             .array_layers(1)
@@ -145,20 +175,20 @@ impl PipelineFactory {
             .usage(vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::TRANSFER_DST)
             .sharing_mode(vk::SharingMode::EXCLUSIVE);
 
-        let vk_image = core.device.create_image(&input_image_info, None).unwrap();
+        let vk_image = self.core.device.create_image(&input_image_info, None).unwrap();
 
         let image_allocation = self.allocator
             .allocate(&gpu_alloc_vk::AllocationCreateDesc {
-                requirements: core.device.get_image_memory_requirements(vk_image),
+                requirements: self.core.device.get_image_memory_requirements(vk_image),
                 location: gpu_alloc::MemoryLocation::GpuOnly,
                 linear: true,
                 allocation_scheme: gpu_alloc_vk::AllocationScheme::GpuAllocatorManaged,
-                name: "input-image",
+                name: &name
             })
             .unwrap();
 
 
-        core.device.bind_image_memory(vk_image, image_allocation.memory(), image_allocation.offset()).unwrap();
+        self.core.device.bind_image_memory(vk_image, image_allocation.memory(), image_allocation.offset()).unwrap();
 
         let image_view_info = vk::ImageViewCreateInfo::builder()
             .image(vk_image)
@@ -171,7 +201,7 @@ impl PipelineFactory {
                 .base_array_layer(0)
                 .layer_count(1));
 
-        let image_view = core.device.create_image_view(&image_view_info, None).unwrap();
+        let image_view = self.core.device.create_image_view(&image_view_info, None).unwrap();
 
         let image = Image {
             vk: vk_image,
@@ -188,8 +218,8 @@ impl PipelineFactory {
         &self.images.get(&name).unwrap()
     }
 
-    pub unsafe fn rebuild_changed_compute_pipeline(&mut self, core: &VkCore) {
-        let shader_module = Self::create_shader_module(&core.device, SHADER_PATH);
+    pub unsafe fn rebuild_changed_compute_pipeline(&mut self) {
+        let shader_module = Self::create_shader_module(&self.core.device, SHADER_PATH);
 
         if shader_module.is_some() {
             let shader_entry_name = CStr::from_bytes_with_nul_unchecked(b"main\0");
@@ -204,7 +234,7 @@ impl PipelineFactory {
                 .layout(self.pipeline_layout.vk)
                 .stage(shader_stage_create_infos);
 
-            let compute_pipeline = core.device.create_compute_pipelines(vk::PipelineCache::null(), &[pipeline_info.build()], None).unwrap()[0];
+            let compute_pipeline = self.core.device.create_compute_pipelines(vk::PipelineCache::null(), &[pipeline_info.build()], None).unwrap()[0];
 
             self.compute_pipeline = compute_pipeline;
         }
@@ -303,7 +333,7 @@ impl PipelineFactory {
         };
     }
 
-    pub unsafe fn new(core: &VkCore, window: &Window) -> Self {
+    pub unsafe fn new(core: Rc<VkCore>, window: &Window) -> Self {
         let frames : Vec<VkFrameRes> = (0..NUM_FRAMES).map(|_|{
             let semaphore_create_info = vk::SemaphoreCreateInfo::default();
 
@@ -407,12 +437,14 @@ impl PipelineFactory {
         */
     
         PipelineFactory {
+            core: core,
             swapchain: swapchain,
             frames: frames,
             compute_pipeline: compute_pipeline,
             pipeline_layout: pipeline_layout,
             allocator: allocator,
-            images: HashMap::new()
+            images: HashMap::new(),
+            pipeline_infos : HashMap::new()
         }
     }
 }
