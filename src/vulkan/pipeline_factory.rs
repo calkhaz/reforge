@@ -44,6 +44,8 @@ pub struct VkFrameRes {
     pub render_complete_semaphore: vk::Semaphore,
     pub cmd_pool: vk::CommandPool,
     pub cmd_buffer: vk::CommandBuffer,
+    pub images: HashMap<String, Image>,
+    pub descriptor_set: vk::DescriptorSet
 }
 
 pub struct PipelineLayout {
@@ -59,6 +61,11 @@ pub struct PipelineInfo {
     pub output_images: Vec<(u32, String)>
 }
 
+struct Pipeline {
+    descriptor_layout: vk::DescriptorSetLayout
+
+}
+
 pub struct PipelineFactory {
     core: Rc<VkCore>,
     pub swapchain: SwapChain,
@@ -69,7 +76,9 @@ pub struct PipelineFactory {
     pub images: HashMap<String, Image>,
     pipeline_infos: HashMap<String, PipelineInfo>,
     width: u32,
-    height: u32
+    height: u32,
+    pipelines: HashMap<String, Pipeline>,
+    descriptor_pool: vk::DescriptorPool
 }
 
 impl PipelineFactory {
@@ -107,9 +116,8 @@ impl PipelineFactory {
         // Move data out to not borrow &self mutably/immutably at the same time
         let infos = std::mem::replace(&mut self.pipeline_infos, HashMap::new());
 
-        let mut descriptor_layout_bindings: Vec<vk::DescriptorSetLayoutBinding> = Vec::with_capacity(infos.len());
+        // Track descriptor pool sizes by descriptor type
         let mut descriptor_size_map : HashMap<vk::DescriptorType, u32> = HashMap::new();
-
         let mut found_swapchain_image = false;
 
         let mut image_binding = vk::DescriptorSetLayoutBinding {
@@ -120,48 +128,128 @@ impl PipelineFactory {
             ..Default::default()
         };
 
-        for (_, info) in &infos {
-            for (desc_idx, image_name) in &info.input_images {
-                *descriptor_size_map.entry(vk::DescriptorType::STORAGE_IMAGE).or_insert(0) += 1;
-                self.create_image(image_name.to_string(), self.width, self.height);
+        // descriptor layouts, add descriptor pool sizes, and add pipelines to hashmap
+        for (pipeline_name, info) in &infos {
+            let mut descriptor_layout_bindings: Vec<vk::DescriptorSetLayoutBinding> = Vec::with_capacity(infos.len());
 
+            // Input images
+            for (desc_idx, _) in &info.input_images {
+                *descriptor_size_map.entry(vk::DescriptorType::STORAGE_IMAGE).or_insert(0) += 1;
                 image_binding.binding = *desc_idx;
                 descriptor_layout_bindings.push(image_binding);
             }
+
+            // Output images
             for (desc_idx, image_name) in &info.output_images {
                 if image_name == "swapchain"  {
                     found_swapchain_image = true;
-                    *descriptor_size_map.entry(vk::DescriptorType::STORAGE_IMAGE).or_insert(0) += self.swapchain.images.len() as u32;
-                }
-                else {
-                    self.create_image(image_name.to_string(), self.width, self.height);
-                    *descriptor_size_map.entry(vk::DescriptorType::STORAGE_IMAGE).or_insert(0) += 1;
                 }
 
+                *descriptor_size_map.entry(vk::DescriptorType::STORAGE_IMAGE).or_insert(0) += 1;
                 image_binding.binding = *desc_idx;
                 descriptor_layout_bindings.push(image_binding);
             }
+
+            let descriptor_info = vk::DescriptorSetLayoutCreateInfo::builder().bindings(&descriptor_layout_bindings);
+            let descriptor_layout = [self.core.device
+                .create_descriptor_set_layout(&descriptor_info, None)
+                .unwrap()];
+
+            self.pipelines.insert(pipeline_name.to_string(), Pipeline {
+                descriptor_layout: descriptor_layout[0]
+            });
         }
 
+        if !found_swapchain_image  {
+            eprintln!("No output named \"swapchain\", which is currently required");
+            std::process::exit(1);
+        }
+
+        // Create descriptor pool
         let descriptor_size_vec = Self::map_to_desc_size(&descriptor_size_map);
 
         // We determine number of sets by the number of pipelines
         // Generally, each pipeline will have NUM_FRAMES amount of descriptor copies
         // However, if there is a set of swapchain images being used for one pipeline, we will include that
-        let num_max_sets = if found_swapchain_image {
-            NUM_FRAMES as u32*(infos.len()-1) as u32 + self.swapchain.images.len() as u32
-        }
-        else {
-            NUM_FRAMES as u32*infos.len() as u32
-        };
+        let num_max_sets = NUM_FRAMES as u32*infos.len() as u32;
 
         let descriptor_pool_info = vk::DescriptorPoolCreateInfo::builder()
             .pool_sizes(&descriptor_size_vec)
             .max_sets(num_max_sets);
 
-        let descriptor_pool = self.core.device
+        self.descriptor_pool = self.core.device
             .create_descriptor_pool(&descriptor_pool_info, None)
             .unwrap();
+
+        // Create per-frame images, descriptor sets
+        for (pipeline_name, info) in &infos {
+
+            let pipeline = &self.pipelines.get(pipeline_name).unwrap();
+
+            let layout_info = &[pipeline.descriptor_layout];
+            let desc_alloc_info = vk::DescriptorSetAllocateInfo::builder()
+                .descriptor_pool(self.descriptor_pool)
+                .set_layouts(layout_info);
+
+            for i in 0..self.frames.len() {
+                let mut images: HashMap<String, Image> = HashMap::new();
+
+                let descriptor_set = self.core.device
+                    .allocate_descriptor_sets(&desc_alloc_info)
+                    .unwrap()[0];
+
+                let mut descriptor_writes: Vec<vk::WriteDescriptorSet> =
+                    Vec::with_capacity(info.input_images.len() + info.output_images.len());
+
+                // Input images
+                for (desc_idx, image_name) in &info.input_images {
+                    let image = self.create_image2(image_name.to_string(), self.width, self.height);
+
+                    let input_image_descriptor = vk::DescriptorImageInfo {
+                        image_layout: vk::ImageLayout::GENERAL,
+                        image_view: image.view,
+                        ..Default::default()
+                    };
+
+                    descriptor_writes.push(vk::WriteDescriptorSet {
+                        dst_set: descriptor_set,
+                        dst_binding: *desc_idx,
+                        descriptor_count: 1,
+                        descriptor_type: vk::DescriptorType::STORAGE_IMAGE,
+                        p_image_info: &input_image_descriptor,
+                        ..Default::default()
+                    });
+
+                    images.insert(image_name.to_string(), image);
+                }
+
+                // Output images
+                for (desc_idx, image_name) in &info.output_images {
+                    let image = self.create_image2(image_name.to_string(), self.width, self.height);
+
+                    let input_image_descriptor = vk::DescriptorImageInfo {
+                        image_layout: vk::ImageLayout::GENERAL,
+                        image_view: image.view,
+                        ..Default::default()
+                    };
+
+                    descriptor_writes.push(vk::WriteDescriptorSet {
+                        dst_set: descriptor_set,
+                        dst_binding: *desc_idx,
+                        descriptor_count: 1,
+                        descriptor_type: vk::DescriptorType::STORAGE_IMAGE,
+                        p_image_info: &input_image_descriptor,
+                        ..Default::default()
+                    });
+
+                    images.insert(image_name.to_string(), image);
+                }
+
+                self.core.device.update_descriptor_sets(&descriptor_writes, &[]);
+                self.frames[i].descriptor_set = descriptor_set;
+                self.frames[i].images = images;
+            }
+        }
 
         // Put data back
         self.pipeline_infos = infos;
@@ -233,6 +321,55 @@ impl PipelineFactory {
         self.core.device.bind_buffer_memory(buffer, allocation.memory(), allocation.offset()).unwrap();
 
         Buffer{vk: buffer, allocation: allocation}
+    }
+
+    // TODO: This is temporary for the transition - rename and remove this  after
+    pub unsafe fn create_image2(&mut self, name: String, width: u32, height: u32) -> Image {
+        let input_image_info = vk::ImageCreateInfo::builder()
+            .image_type(vk::ImageType::TYPE_2D)
+            .array_layers(1)
+            .samples(vk::SampleCountFlags::TYPE_1)
+            .tiling(vk::ImageTiling::OPTIMAL)
+            .initial_layout(vk::ImageLayout::UNDEFINED)
+            .format(vk::Format::R8G8B8A8_UNORM)
+            .mip_levels(1)
+            .extent(vk::Extent3D{width: width, height: height, depth: 1})
+            .usage(vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::TRANSFER_DST)
+            .sharing_mode(vk::SharingMode::EXCLUSIVE);
+
+        let vk_image = self.core.device.create_image(&input_image_info, None).unwrap();
+
+        let image_allocation = self.allocator
+            .allocate(&gpu_alloc_vk::AllocationCreateDesc {
+                requirements: self.core.device.get_image_memory_requirements(vk_image),
+                location: gpu_alloc::MemoryLocation::GpuOnly,
+                linear: true,
+                allocation_scheme: gpu_alloc_vk::AllocationScheme::GpuAllocatorManaged,
+                name: &name
+            })
+            .unwrap();
+
+
+        self.core.device.bind_image_memory(vk_image, image_allocation.memory(), image_allocation.offset()).unwrap();
+
+        let image_view_info = vk::ImageViewCreateInfo::builder()
+            .image(vk_image)
+            .view_type(vk::ImageViewType::TYPE_2D)
+            .format(vk::Format::R8G8B8A8_UNORM)
+            .subresource_range(*vk::ImageSubresourceRange::builder()
+                .aspect_mask(vk::ImageAspectFlags::COLOR)
+                .base_mip_level(0)
+                .level_count(1)
+                .base_array_layer(0)
+                .layer_count(1));
+
+        let image_view = self.core.device.create_image_view(&image_view_info, None).unwrap();
+
+        Image {
+            vk: vk_image,
+            view: image_view,
+            allocation: image_allocation
+        }
     }
 
     pub unsafe fn create_image(&mut self, name: String, width: u32, height: u32) -> &Image {
@@ -431,7 +568,9 @@ impl PipelineFactory {
                 present_complete_semaphore: present_complete_semaphore,
                 render_complete_semaphore: render_complete_semaphore,
                 cmd_pool: cmd_pool,
-                cmd_buffer: cmd_buff
+                cmd_buffer: cmd_buff,
+                images: HashMap::new(),
+                descriptor_set: vk::DescriptorSet::null()
             }
         }).collect();
 
@@ -519,7 +658,9 @@ impl PipelineFactory {
             images: HashMap::new(),
             pipeline_infos : HashMap::new(),
             width: window_size.width,
-            height: window_size.height
+            height: window_size.height,
+            pipelines: HashMap::new(),
+            descriptor_pool: vk::DescriptorPool::null()
         }
     }
 }
