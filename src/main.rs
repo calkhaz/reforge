@@ -200,6 +200,7 @@ fn main() {
     };
 
     res.add("test-pipeline", info);
+    res.build();
 
 
     let buffer_size = (window_width as vk::DeviceSize)*(window_height as vk::DeviceSize)*4;

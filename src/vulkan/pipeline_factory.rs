@@ -67,7 +67,9 @@ pub struct PipelineFactory {
     pub pipeline_layout: PipelineLayout,
     pub allocator: gpu_alloc_vk::Allocator,
     pub images: HashMap<String, Image>,
-    pipeline_infos: HashMap<String, PipelineInfo>
+    pipeline_infos: HashMap<String, PipelineInfo>,
+    width: u32,
+    height: u32
 }
 
 impl PipelineFactory {
@@ -84,14 +86,85 @@ impl PipelineFactory {
         self.pipeline_infos.insert(name.to_string(), info);
     }
 
-    pub unsafe fn build(&mut self) {
-        for (key, info) in &self.pipeline_infos {
-            for (key, value) in &info.input_images {
+    pub fn map_to_desc_size(map: &HashMap<vk::DescriptorType, u32>) -> Vec<vk::DescriptorPoolSize> {
+        let mut sizes: Vec<vk::DescriptorPoolSize> = Vec::with_capacity(map.keys().len());
 
+        for (desc_type, count) in map {
+            sizes.push(vk::DescriptorPoolSize {
+                ty: *desc_type,
+                descriptor_count: *count
+            });
+        }
+
+        sizes
+    }
+
+    pub unsafe fn build(&mut self) {
+        if self.pipeline_infos.len() == 0  {
+            return;
+        }
+
+        // Move data out to not borrow &self mutably/immutably at the same time
+        let infos = std::mem::replace(&mut self.pipeline_infos, HashMap::new());
+
+        let mut descriptor_layout_bindings: Vec<vk::DescriptorSetLayoutBinding> = Vec::with_capacity(infos.len());
+        let mut descriptor_size_map : HashMap<vk::DescriptorType, u32> = HashMap::new();
+
+        let mut found_swapchain_image = false;
+
+        let mut image_binding = vk::DescriptorSetLayoutBinding {
+            descriptor_type: vk::DescriptorType::STORAGE_IMAGE,
+            descriptor_count: 1,
+            stage_flags: vk::ShaderStageFlags::COMPUTE,
+            binding: 0,
+            ..Default::default()
+        };
+
+        for (_, info) in &infos {
+            for (desc_idx, image_name) in &info.input_images {
+                *descriptor_size_map.entry(vk::DescriptorType::STORAGE_IMAGE).or_insert(0) += 1;
+                self.create_image(image_name.to_string(), self.width, self.height);
+
+                image_binding.binding = *desc_idx;
+                descriptor_layout_bindings.push(image_binding);
             }
-            for (key, value) in &info.output_images {
+            for (desc_idx, image_name) in &info.output_images {
+                if image_name == "swapchain"  {
+                    found_swapchain_image = true;
+                    *descriptor_size_map.entry(vk::DescriptorType::STORAGE_IMAGE).or_insert(0) += self.swapchain.images.len() as u32;
+                }
+                else {
+                    self.create_image(image_name.to_string(), self.width, self.height);
+                    *descriptor_size_map.entry(vk::DescriptorType::STORAGE_IMAGE).or_insert(0) += 1;
+                }
+
+                image_binding.binding = *desc_idx;
+                descriptor_layout_bindings.push(image_binding);
             }
         }
+
+        let descriptor_size_vec = Self::map_to_desc_size(&descriptor_size_map);
+
+        // We determine number of sets by the number of pipelines
+        // Generally, each pipeline will have NUM_FRAMES amount of descriptor copies
+        // However, if there is a set of swapchain images being used for one pipeline, we will include that
+        let num_max_sets = if found_swapchain_image {
+            NUM_FRAMES as u32*(infos.len()-1) as u32 + self.swapchain.images.len() as u32
+        }
+        else {
+            NUM_FRAMES as u32*infos.len() as u32
+        };
+
+        let descriptor_pool_info = vk::DescriptorPoolCreateInfo::builder()
+            .pool_sizes(&descriptor_size_vec)
+            .max_sets(num_max_sets);
+
+        let descriptor_pool = self.core.device
+            .create_descriptor_pool(&descriptor_pool_info, None)
+            .unwrap();
+
+        // Put data back
+        self.pipeline_infos = infos;
     }
 
     unsafe fn create_commands(device: &ash::Device, queue_family_index: u32) -> (vk::CommandPool, vk::CommandBuffer) {
@@ -444,7 +517,9 @@ impl PipelineFactory {
             pipeline_layout: pipeline_layout,
             allocator: allocator,
             images: HashMap::new(),
-            pipeline_infos : HashMap::new()
+            pipeline_infos : HashMap::new(),
+            width: window_size.width,
+            height: window_size.height
         }
     }
 }
