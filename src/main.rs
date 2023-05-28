@@ -47,80 +47,6 @@ use winit::{
     window::WindowBuilder,
 };
 
-pub struct VkSwapRes {
-    pub descriptor_set: ash::vk::DescriptorSet,
-}
-
-unsafe fn create_resizable_res(core: &VkCore,
-                               res: &PipelineFactory,
-                               input_image: &Image) -> (Vec<VkSwapRes>, vk::DescriptorPool)
-{
-    let descriptor_sizes = [
-        vk::DescriptorPoolSize {
-            ty: vk::DescriptorType::STORAGE_IMAGE,
-            // Input + output, so 2*
-            descriptor_count: 2*res.swapchain.images.len() as u32,
-        },
-    ];
-    let descriptor_pool_info = vk::DescriptorPoolCreateInfo::builder()
-        .pool_sizes(&descriptor_sizes)
-        .max_sets(res.swapchain.images.len() as u32);
-
-    let descriptor_pool = core.device
-        .create_descriptor_pool(&descriptor_pool_info, None)
-        .unwrap();
-
-    let desc_layout = &[res.pipeline_layout.descriptor_layout];
-    let desc_alloc_info = vk::DescriptorSetAllocateInfo::builder()
-        .descriptor_pool(descriptor_pool)
-        .set_layouts(desc_layout);
-
-    let swap_res : Vec<VkSwapRes> = (0..res.swapchain.images.len()).map(|i|{
-        let descriptor_set = core.device
-            .allocate_descriptor_sets(&desc_alloc_info)
-            .unwrap()[0];
-
-        let input_image_descriptor = vk::DescriptorImageInfo {
-            image_layout: vk::ImageLayout::GENERAL,
-            image_view: input_image.view,
-            ..Default::default()
-        };
-
-        let output_image_descriptor = vk::DescriptorImageInfo {
-            image_layout: vk::ImageLayout::GENERAL,
-            image_view: res.swapchain.views[i],
-            ..Default::default()
-        };
-
-        let write_desc_sets = [
-            vk::WriteDescriptorSet {
-                dst_set: descriptor_set,
-                dst_binding: 0,
-                descriptor_count: 1,
-                descriptor_type: vk::DescriptorType::STORAGE_IMAGE,
-                p_image_info: &input_image_descriptor,
-                ..Default::default()
-            },
-            vk::WriteDescriptorSet {
-                dst_set: descriptor_set,
-                dst_binding: 1,
-                descriptor_count: 1,
-                descriptor_type: vk::DescriptorType::STORAGE_IMAGE,
-                p_image_info: &output_image_descriptor,
-                ..Default::default()
-            },
-        ];
-        core.device.update_descriptor_sets(&write_desc_sets, &[]);
-
-        VkSwapRes {
-            descriptor_set : descriptor_set
-        }
-    }).collect();
-
-    (swap_res, descriptor_pool)
-}
-
-
 
 fn render_loop<F: FnMut()>(event_loop: &mut EventLoop<()>, f: &mut F) {
     event_loop
@@ -212,16 +138,8 @@ fn main() {
     res.add("test-pipeline", info);
     res.build();
 
-
     let buffer_size = (window_width as vk::DeviceSize)*(window_height as vk::DeviceSize)*4;
     let input_image_buffer = res.create_buffer(buffer_size, vk::BufferUsageFlags::TRANSFER_SRC, gpu_alloc::MemoryLocation::CpuToGpu);
-
-    //let input_image = create_input_image(&device, window_size.width, window_size.height, &mut allocator);
-    let (swap_res, descriptor_pool) = {
-        res.create_image("input".to_string(), window_width, window_height);
-        let input_image = res.get_image("input".to_string());
-        create_resizable_res(&vk_core, &res, &input_image)
-    };
 
     // Pipeline-name -> timestamp
     let mut last_modified_shader_times: HashMap<String, u64>  = get_modified_times(&res.pipeline_infos);
@@ -255,8 +173,6 @@ fn main() {
                 vk::Fence::null(),
             )
             .unwrap();
-
-        let swap_res = &swap_res[present_index as usize];
 
         device
             .wait_for_fences(&[frame.fence], true, std::u64::MAX)
@@ -371,7 +287,6 @@ fn main() {
             //res.pipeline_layout.vk,
             res.pipelines.get("test-pipeline").unwrap().layout.vk,
             0,
-            //&[swap_res.descriptor_set],
             &[frame.descriptor_set],
             &[],
         );

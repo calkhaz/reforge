@@ -71,10 +71,7 @@ pub struct PipelineFactory {
     core: Rc<VkCore>,
     pub swapchain: SwapChain,
     pub frames: Vec<VkFrameRes>,
-    pub compute_pipeline: ash::vk::Pipeline,
-    pub pipeline_layout: PipelineLayout,
     pub allocator: gpu_alloc_vk::Allocator,
-    pub images: HashMap<String, Image>,
     pub pipeline_infos: HashMap<String, PipelineInfo>,
     width: u32,
     height: u32,
@@ -106,7 +103,7 @@ impl PipelineFactory {
                 ..Default::default()
             };
             let pipeline_info = vk::ComputePipelineCreateInfo::builder()
-                .layout(self.pipeline_layout.vk)
+                .layout(pipeline.layout.vk)
                 .stage(shader_stage_create_infos);
 
             pipeline.vk_pipeline = self.core.device.create_compute_pipelines(vk::PipelineCache::null(), &[pipeline_info.build()], None).unwrap()[0];
@@ -283,7 +280,7 @@ impl PipelineFactory {
                         let image = &self.frames[0].images.get("file").unwrap();
                         descriptor_writes.push(Self::storage_image_write(&image, &mut desc_image_infos, *desc_idx, descriptor_set));
                     } else {
-                        let image = self.create_image2(image_name.to_string(), self.width, self.height);
+                        let image = self.create_image(image_name.to_string(), self.width, self.height);
                         descriptor_writes.push(Self::storage_image_write(&image, &mut desc_image_infos, *desc_idx, descriptor_set));
                         images.insert(image_name.to_string(), image);
                     }
@@ -291,7 +288,7 @@ impl PipelineFactory {
 
                 // Output images
                 for (desc_idx, image_name) in &info.output_images {
-                    let image = self.create_image2(image_name.to_string(), self.width, self.height);
+                    let image = self.create_image(image_name.to_string(), self.width, self.height);
                     descriptor_writes.push(Self::storage_image_write(&image, &mut desc_image_infos, *desc_idx, descriptor_set));
                     images.insert(image_name.to_string(), image);
                 }
@@ -376,8 +373,7 @@ impl PipelineFactory {
         Buffer{vk: buffer, allocation: allocation}
     }
 
-    // TODO: This is temporary for the transition - rename and remove this  after
-    pub unsafe fn create_image2(&mut self, name: String, width: u32, height: u32) -> Image {
+    pub unsafe fn create_image(&mut self, name: String, width: u32, height: u32) -> Image {
         let input_image_info = vk::ImageCreateInfo::builder()
             .image_type(vk::ImageType::TYPE_2D)
             .array_layers(1)
@@ -424,62 +420,6 @@ impl PipelineFactory {
             view: image_view,
             allocation: image_allocation
         }
-    }
-
-    pub unsafe fn create_image(&mut self, name: String, width: u32, height: u32) -> &Image {
-        let input_image_info = vk::ImageCreateInfo::builder()
-            .image_type(vk::ImageType::TYPE_2D)
-            .array_layers(1)
-            .samples(vk::SampleCountFlags::TYPE_1)
-            .tiling(vk::ImageTiling::OPTIMAL)
-            .initial_layout(vk::ImageLayout::UNDEFINED)
-            .format(vk::Format::R8G8B8A8_UNORM)
-            .mip_levels(1)
-            .extent(vk::Extent3D{width: width, height: height, depth: 1})
-            .usage(vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::TRANSFER_DST)
-            .sharing_mode(vk::SharingMode::EXCLUSIVE);
-
-        let vk_image = self.core.device.create_image(&input_image_info, None).unwrap();
-
-        let image_allocation = self.allocator
-            .allocate(&gpu_alloc_vk::AllocationCreateDesc {
-                requirements: self.core.device.get_image_memory_requirements(vk_image),
-                location: gpu_alloc::MemoryLocation::GpuOnly,
-                linear: true,
-                allocation_scheme: gpu_alloc_vk::AllocationScheme::GpuAllocatorManaged,
-                name: &name
-            })
-            .unwrap();
-
-
-        self.core.device.bind_image_memory(vk_image, image_allocation.memory(), image_allocation.offset()).unwrap();
-
-        let image_view_info = vk::ImageViewCreateInfo::builder()
-            .image(vk_image)
-            .view_type(vk::ImageViewType::TYPE_2D)
-            .format(vk::Format::R8G8B8A8_UNORM)
-            .subresource_range(*vk::ImageSubresourceRange::builder()
-                .aspect_mask(vk::ImageAspectFlags::COLOR)
-                .base_mip_level(0)
-                .level_count(1)
-                .base_array_layer(0)
-                .layer_count(1));
-
-        let image_view = self.core.device.create_image_view(&image_view_info, None).unwrap();
-
-        let image = Image {
-            vk: vk_image,
-            view: image_view,
-            allocation: image_allocation
-        };
-
-        self.images.insert(name.clone(), image);
-
-        &self.images.get(&name).unwrap()
-    }
-
-    pub unsafe fn get_image(&self, name: String) -> &Image {
-        &self.images.get(&name).unwrap()
     }
 
     unsafe fn create_swapchain(core: &VkCore, width: u32, height: u32) -> SwapChain {
@@ -606,46 +546,10 @@ impl PipelineFactory {
             }
         }).collect();
 
-        let shader_module = Self::create_shader_module(&core.device, SHADER_PATH);
-
-        let shader_entry_name = CStr::from_bytes_with_nul_unchecked(b"main\0");
-
-        let shader_stage_create_infos = vk::PipelineShaderStageCreateInfo {
-            module: shader_module.unwrap(),
-            p_name: shader_entry_name.as_ptr(),
-            stage: vk::ShaderStageFlags::COMPUTE,
-            ..Default::default()
-        };
-
-        let desc_layout_bindings = [
-            // input
-            vk::DescriptorSetLayoutBinding {
-                descriptor_type: vk::DescriptorType::STORAGE_IMAGE,
-                descriptor_count: 1,
-                stage_flags: vk::ShaderStageFlags::COMPUTE,
-                binding: 0,
-                ..Default::default()
-            },
-            // output
-            vk::DescriptorSetLayoutBinding {
-                descriptor_type: vk::DescriptorType::STORAGE_IMAGE,
-                descriptor_count: 1,
-                stage_flags: vk::ShaderStageFlags::COMPUTE,
-                binding: 1,
-                ..Default::default()
-            }
-        ];
-        let descriptor_info =
-            vk::DescriptorSetLayoutCreateInfo::builder().bindings(&desc_layout_bindings);
-
-        let descriptor_layout = [core.device
-            .create_descriptor_set_layout(&descriptor_info, None)
-            .unwrap()];
-
         let window_size = window.inner_size();
 
         // Setting up the allocator
-        let mut allocator = gpu_alloc_vk::Allocator::new(&gpu_alloc_vk::AllocatorCreateDesc {
+        let allocator = gpu_alloc_vk::Allocator::new(&gpu_alloc_vk::AllocatorCreateDesc {
             instance: core.instance.clone(),
             device: core.device.clone(),
             physical_device: core.pdevice,
@@ -655,22 +559,6 @@ impl PipelineFactory {
 
 
         let swapchain = Self::create_swapchain(&core, window_size.width, window_size.height);
-
-        let pipeline_layout = core.device.
-            create_pipeline_layout(&vk::PipelineLayoutCreateInfo::builder()
-                .set_layouts(&descriptor_layout), None).unwrap();
-
-        let pipeline_info = vk::ComputePipelineCreateInfo::builder()
-            .layout(pipeline_layout)
-            .stage(shader_stage_create_infos);
-
-        let compute_pipeline = core.device.create_compute_pipelines(vk::PipelineCache::null(), &[pipeline_info.build()], None).unwrap()[0];
-
-        let pipeline_layout = PipelineLayout {
-            vk: pipeline_layout,
-            descriptor_layout: descriptor_layout[0]
-        };
-
 
         /*
         allocator.free(allocation).unwrap();
@@ -683,10 +571,7 @@ impl PipelineFactory {
             core: core,
             swapchain: swapchain,
             frames: frames,
-            compute_pipeline: compute_pipeline,
-            pipeline_layout: pipeline_layout,
             allocator: allocator,
-            images: HashMap::new(),
             pipeline_infos : HashMap::new(),
             width: window_size.width,
             height: window_size.height,
