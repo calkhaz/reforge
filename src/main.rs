@@ -13,6 +13,7 @@ use std::default::Default;
 use std::rc::Rc;
 
 mod vulkan;
+use vulkan::command;
 use vulkan::core::VkCore;
 use vulkan::pipeline_factory::PipelineInfo;
 use vulkan::pipeline_factory::PipelineFactory;
@@ -215,68 +216,15 @@ fn main() {
 
             let input_image = &res.get_input_image();
 
-            let image_barrier = vk::ImageMemoryBarrier {
-                src_access_mask: vk::AccessFlags::empty(),
-                dst_access_mask: vk::AccessFlags::TRANSFER_WRITE,
-                old_layout: vk::ImageLayout::UNDEFINED,
-                new_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-                image: input_image.vk,
-                subresource_range: vk::ImageSubresourceRange {
-                    aspect_mask: vk::ImageAspectFlags::COLOR,
-                    level_count: 1,
-                    layer_count: 1,
-                    ..Default::default()
-                },
-                ..Default::default()
-            };
-
-            device.cmd_pipeline_barrier(frame.cmd_buffer,
-                                        vk::PipelineStageFlags::TOP_OF_PIPE,
-                                        vk::PipelineStageFlags::TRANSFER, vk::DependencyFlags::empty(), &[], &[], &[image_barrier]);
-
+            // Copy user-input image from vk buffer to the input image
+            command::transition_image_layout(&device, frame.cmd_buffer, input_image.vk, vk::ImageLayout::UNDEFINED, vk::ImageLayout::TRANSFER_DST_OPTIMAL);
             device.cmd_copy_buffer_to_image(frame.cmd_buffer, input_image_buffer.vk, input_image.vk, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &[regions]);
-
-            let image_barrier = vk::ImageMemoryBarrier {
-                src_access_mask: vk::AccessFlags::TRANSFER_WRITE,
-                dst_access_mask: vk::AccessFlags::SHADER_READ,
-                old_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-                new_layout: vk::ImageLayout::GENERAL,
-                image: input_image.vk,
-                subresource_range: vk::ImageSubresourceRange {
-                    aspect_mask: vk::ImageAspectFlags::COLOR,
-                    level_count: 1,
-                    layer_count: 1,
-                    ..Default::default()
-                        },
-                ..Default::default()
-            };
-
-            device.cmd_pipeline_barrier(frame.cmd_buffer,
-                                        vk::PipelineStageFlags::TRANSFER,
-                                        vk::PipelineStageFlags::COMPUTE_SHADER, vk::DependencyFlags::empty(), &[], &[], &[image_barrier]);
+            command::transition_image_layout(&device, frame.cmd_buffer, input_image.vk, vk::ImageLayout::TRANSFER_DST_OPTIMAL, vk::ImageLayout::GENERAL);
 
             FIRST_RUN = false;
         }
 
-        let image_barrier = vk::ImageMemoryBarrier {
-            src_access_mask: vk::AccessFlags::empty(),
-            dst_access_mask: vk::AccessFlags::SHADER_WRITE,
-            old_layout: vk::ImageLayout::UNDEFINED,
-            new_layout: vk::ImageLayout::GENERAL,
-            //image: res.swapchain.images[present_index as usize],
-            image: frame.images.get("swapchain").unwrap().vk,
-            subresource_range: vk::ImageSubresourceRange {
-                aspect_mask: vk::ImageAspectFlags::COLOR,
-                level_count: 1,
-                layer_count: 1,
-                ..Default::default()
-                    },
-            ..Default::default()
-        };
-
-        device.cmd_pipeline_barrier(frame.cmd_buffer,
-                                    vk::PipelineStageFlags::TOP_OF_PIPE,
-                                    vk::PipelineStageFlags::COMPUTE_SHADER, vk::DependencyFlags::empty(), &[], &[], &[image_barrier]);
+        command::transition_image_layout(&device, frame.cmd_buffer, frame.images.get("swapchain").unwrap().vk, vk::ImageLayout::UNDEFINED, vk::ImageLayout::GENERAL);
 
         let dispatch_x = (window_width as f32/16.0).ceil() as u32;
         let dispatch_y = (window_height as f32/16.0).ceil() as u32;
@@ -299,44 +247,9 @@ fn main() {
         device.cmd_dispatch(frame.cmd_buffer, dispatch_x, dispatch_y, 1);
 
 
-        let image_barrier_swap_transfer = vk::ImageMemoryBarrier {
-            src_access_mask: vk::AccessFlags::SHADER_WRITE,
-            dst_access_mask: vk::AccessFlags::TRANSFER_WRITE,
-            old_layout: vk::ImageLayout::GENERAL,
-            new_layout: vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
-            image: frame.images.get("swapchain").unwrap().vk,
-            subresource_range: vk::ImageSubresourceRange {
-                aspect_mask: vk::ImageAspectFlags::COLOR,
-                level_count: 1,
-                layer_count: 1,
-                ..Default::default()
-                    },
-            ..Default::default()
-        };
+        command::transition_image_layout(&device, frame.cmd_buffer, frame.images.get("swapchain").unwrap().vk, vk::ImageLayout::GENERAL, vk::ImageLayout::TRANSFER_SRC_OPTIMAL);
 
-        device.cmd_pipeline_barrier(frame.cmd_buffer,
-                                    vk::PipelineStageFlags::COMPUTE_SHADER,
-                                    vk::PipelineStageFlags::TRANSFER, vk::DependencyFlags::empty(), &[], &[], &[image_barrier_swap_transfer]);
-
-
-        let image_barrier_transfer = vk::ImageMemoryBarrier {
-            src_access_mask: vk::AccessFlags::NONE,
-            dst_access_mask: vk::AccessFlags::TRANSFER_WRITE,
-            old_layout: vk::ImageLayout::UNDEFINED,
-            new_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-            image: res.swapchain.images[present_index as usize],
-            subresource_range: vk::ImageSubresourceRange {
-                aspect_mask: vk::ImageAspectFlags::COLOR,
-                level_count: 1,
-                layer_count: 1,
-                ..Default::default()
-                    },
-            ..Default::default()
-        };
-
-        device.cmd_pipeline_barrier(frame.cmd_buffer,
-                                    vk::PipelineStageFlags::TOP_OF_PIPE,
-                                    vk::PipelineStageFlags::TRANSFER, vk::DependencyFlags::empty(), &[], &[], &[image_barrier_transfer]);
+        command::transition_image_layout(&device, frame.cmd_buffer, res.swapchain.images[present_index as usize], vk::ImageLayout::UNDEFINED, vk::ImageLayout::TRANSFER_DST_OPTIMAL);
 
         let copy_subresource = vk::ImageSubresourceLayers {
             aspect_mask: vk::ImageAspectFlags::COLOR,
@@ -371,28 +284,9 @@ fn main() {
                               &[blit],
                               vk::Filter::LINEAR);
 
-        let image_barrier_present = vk::ImageMemoryBarrier {
-            src_access_mask: vk::AccessFlags::TRANSFER_WRITE,
-            dst_access_mask: vk::AccessFlags::COLOR_ATTACHMENT_READ,
-            old_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-            new_layout: vk::ImageLayout::PRESENT_SRC_KHR,
-            image: res.swapchain.images[present_index as usize],
-            subresource_range: vk::ImageSubresourceRange {
-                aspect_mask: vk::ImageAspectFlags::COLOR,
-                level_count: 1,
-                layer_count: 1,
-                ..Default::default()
-                    },
-            ..Default::default()
-        };
-
-        device.cmd_pipeline_barrier(frame.cmd_buffer,
-                                    vk::PipelineStageFlags::TRANSFER,
-                                    vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT, vk::DependencyFlags::empty(), &[], &[], &[image_barrier_present]);
-
+        command::transition_image_layout(&device, frame.cmd_buffer, res.swapchain.images[present_index as usize], vk::ImageLayout::TRANSFER_DST_OPTIMAL, vk::ImageLayout::PRESENT_SRC_KHR);
 
         device.end_command_buffer(frame.cmd_buffer);
-
 
         let present_complete_semaphore = &[frame.present_complete_semaphore];
         let cmd_buffers = &[frame.cmd_buffer];
