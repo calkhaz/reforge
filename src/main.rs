@@ -16,9 +16,7 @@ use vulkan::command;
 use vulkan::core::VkCore;
 use vulkan::pipeline_factory::PipelineInfo;
 use vulkan::pipeline_factory::PipelineFactory;
-use vulkan::pipeline_factory::Image;
 use vulkan::pipeline_factory::NUM_FRAMES;
-use vulkan::pipeline_factory::SHADER_PATH;
 
 mod imagefileio;
 use imagefileio::ImageFileDecoder;
@@ -231,7 +229,6 @@ fn main() {
         device.cmd_bind_descriptor_sets(
             frame.cmd_buffer,
             vk::PipelineBindPoint::COMPUTE,
-            //res.pipeline_layout.vk,
             res.pipelines.get("test-pipeline").unwrap().layout.vk,
             0,
             &[frame.descriptor_set],
@@ -240,7 +237,6 @@ fn main() {
         device.cmd_bind_pipeline(
             frame.cmd_buffer,
             vk::PipelineBindPoint::COMPUTE,
-            //res.compute_pipeline,
             res.pipelines.get("test-pipeline").unwrap().vk_pipeline
         );
         device.cmd_dispatch(frame.cmd_buffer, dispatch_x, dispatch_y, 1);
@@ -265,7 +261,7 @@ fn main() {
 
         command::transition_image_layout(&device, frame.cmd_buffer, res.swapchain.images[present_index as usize], vk::ImageLayout::TRANSFER_DST_OPTIMAL, vk::ImageLayout::PRESENT_SRC_KHR);
 
-        device.end_command_buffer(frame.cmd_buffer);
+        device.end_command_buffer(frame.cmd_buffer).unwrap();
 
         let present_complete_semaphore = &[frame.present_complete_semaphore];
         let cmd_buffers = &[frame.cmd_buffer];

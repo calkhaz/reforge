@@ -16,7 +16,6 @@ use std::rc::Rc;
 use crate::vulkan::core::VkCore;
 
 pub const NUM_FRAMES: u8 = 2;
-pub const SHADER_PATH: &str = "shaders/shader.comp";
 
 pub struct SwapChain {
     pub surface_format: vk::SurfaceFormatKHR,
