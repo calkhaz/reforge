@@ -49,7 +49,6 @@ pub struct VkFrameRes {
 }
 
 pub struct PipelineLayout {
-    shader_module: vk::ShaderModule,
     pub vk: vk::PipelineLayout,
     pub descriptor_layout: vk::DescriptorSetLayout
 }
@@ -62,6 +61,8 @@ pub struct PipelineInfo {
 }
 
 pub struct Pipeline {
+    shader_path: String,
+    shader_module: vk::ShaderModule,
     pub layout: PipelineLayout,
     pub vk_pipeline: ash::vk::Pipeline
 }
@@ -74,7 +75,7 @@ pub struct PipelineFactory {
     pub pipeline_layout: PipelineLayout,
     pub allocator: gpu_alloc_vk::Allocator,
     pub images: HashMap<String, Image>,
-    pipeline_infos: HashMap<String, PipelineInfo>,
+    pub pipeline_infos: HashMap<String, PipelineInfo>,
     width: u32,
     height: u32,
     pub pipelines: HashMap<String, Pipeline>,
@@ -90,6 +91,28 @@ impl PipelineFactory {
         self.pipeline_infos.entry(name.to_string()).or_insert_with(|| info)
     }
     */
+
+    pub unsafe fn rebuild_pipeline(&mut self, name: &str) {
+        let mut pipeline = self.pipelines.get_mut(name).unwrap();
+        let shader_module = Self::create_shader_module(&self.core.device, &pipeline.shader_path);
+
+        if shader_module.is_some() {
+            let shader_entry_name = CStr::from_bytes_with_nul_unchecked(b"main\0");
+
+            let shader_stage_create_infos = vk::PipelineShaderStageCreateInfo {
+                module: shader_module.unwrap(),
+                p_name: shader_entry_name.as_ptr(),
+                stage: vk::ShaderStageFlags::COMPUTE,
+                ..Default::default()
+            };
+            let pipeline_info = vk::ComputePipelineCreateInfo::builder()
+                .layout(self.pipeline_layout.vk)
+                .stage(shader_stage_create_infos);
+
+            pipeline.vk_pipeline = self.core.device.create_compute_pipelines(vk::PipelineCache::null(), &[pipeline_info.build()], None).unwrap()[0];
+            pipeline.shader_module = shader_module.unwrap();
+        }
+    }
 
     pub unsafe fn add(&mut self, name: &str, info: PipelineInfo)  {
         self.pipeline_infos.insert(name.to_string(), info);
@@ -197,12 +220,13 @@ impl PipelineFactory {
             let compute_pipeline = self.core.device.create_compute_pipelines(vk::PipelineCache::null(), &[pipeline_info.build()], None).unwrap()[0];
 
             let pipeline_layout = PipelineLayout {
-                shader_module : shader_module.unwrap(),
                 vk: pipeline_layout,
                 descriptor_layout: descriptor_layout[0]
             };
 
             self.pipelines.insert(pipeline_name.to_string(), Pipeline {
+                shader_path: info.shader_path.clone(),
+                shader_module : shader_module.unwrap(),
                 layout: pipeline_layout,
                 vk_pipeline: compute_pipeline
             });
@@ -458,28 +482,6 @@ impl PipelineFactory {
         &self.images.get(&name).unwrap()
     }
 
-    pub unsafe fn rebuild_changed_compute_pipeline(&mut self) {
-        let shader_module = Self::create_shader_module(&self.core.device, SHADER_PATH);
-
-        if shader_module.is_some() {
-            let shader_entry_name = CStr::from_bytes_with_nul_unchecked(b"main\0");
-
-            let shader_stage_create_infos = vk::PipelineShaderStageCreateInfo {
-                module: shader_module.unwrap(),
-                p_name: shader_entry_name.as_ptr(),
-                stage: vk::ShaderStageFlags::COMPUTE,
-                ..Default::default()
-            };
-            let pipeline_info = vk::ComputePipelineCreateInfo::builder()
-                .layout(self.pipeline_layout.vk)
-                .stage(shader_stage_create_infos);
-
-            let compute_pipeline = self.core.device.create_compute_pipelines(vk::PipelineCache::null(), &[pipeline_info.build()], None).unwrap()[0];
-
-            self.compute_pipeline = compute_pipeline;
-        }
-    }
-
     unsafe fn create_swapchain(core: &VkCore, width: u32, height: u32) -> SwapChain {
         let surface_capabilities = core.surface_loader
             .get_physical_device_surface_capabilities(core.pdevice, core.surface)
@@ -665,7 +667,6 @@ impl PipelineFactory {
         let compute_pipeline = core.device.create_compute_pipelines(vk::PipelineCache::null(), &[pipeline_info.build()], None).unwrap()[0];
 
         let pipeline_layout = PipelineLayout {
-            shader_module : shader_module.unwrap(),
             vk: pipeline_layout,
             descriptor_layout: descriptor_layout[0]
         };

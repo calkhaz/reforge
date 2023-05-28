@@ -8,6 +8,7 @@ use clap::Parser;
 use gpu_allocator as gpu_alloc;
 
 use ash::vk;
+use std::collections::HashMap;
 use std::default::Default;
 use std::rc::Rc;
 
@@ -146,8 +147,16 @@ fn render_loop<F: FnMut()>(event_loop: &mut EventLoop<()>, f: &mut F) {
         });
 }
 
-fn get_modified_time(path: &str) -> u64 {
-    std::fs::metadata(path).unwrap().modified().unwrap().duration_since(std::time::SystemTime::UNIX_EPOCH).unwrap().as_secs()
+fn get_modified_times(pipeline_infos: &HashMap<String, PipelineInfo>) -> HashMap<String, u64> {
+    let mut timestamps: HashMap<String, u64> = HashMap::new();
+
+    for (name, info) in pipeline_infos {
+        let timestamp = std::fs::metadata(&info.shader_path).unwrap().modified().unwrap().duration_since(std::time::SystemTime::UNIX_EPOCH).unwrap().as_secs();
+
+        timestamps.insert(name.to_string(), timestamp);
+    }
+
+    timestamps
 }
 
 fn get_dim(width: u32, height: u32, new_width: Option<u32>, new_height: Option<u32>) -> (u32, u32) {
@@ -214,7 +223,8 @@ fn main() {
         create_resizable_res(&vk_core, &res, &input_image)
     };
 
-    let mut last_modified_shader_time = get_modified_time(SHADER_PATH);
+    // Pipeline-name -> timestamp
+    let mut last_modified_shader_times: HashMap<String, u64>  = get_modified_times(&res.pipeline_infos);
 
     let mapped_input_image_data: *mut u8 = input_image_buffer.allocation.mapped_ptr().unwrap().as_ptr() as *mut u8;
 
@@ -224,14 +234,15 @@ fn main() {
         static mut FIRST_RUN: bool = true;
         static mut FRAME_INDEX: u8 = 0;
 
-        let current_modified_time = get_modified_time(SHADER_PATH);
+        let current_modified_shader_times: HashMap<String, u64>  = get_modified_times(&res.pipeline_infos);
 
-        if current_modified_time != last_modified_shader_time
-        {
-            res.rebuild_changed_compute_pipeline();
+        for (name, timestamp) in &last_modified_shader_times {
+            if *current_modified_shader_times.get(name).unwrap() != *timestamp {
+                res.rebuild_pipeline(name);
+            }
         }
 
-        last_modified_shader_time = current_modified_time;
+        last_modified_shader_times = current_modified_shader_times;
 
         let frame = &res.frames[FRAME_INDEX as usize];
         let device = &vk_core.device;
