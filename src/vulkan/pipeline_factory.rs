@@ -62,8 +62,8 @@ pub struct PipelineInfo {
 }
 
 struct Pipeline {
-    descriptor_layout: vk::DescriptorSetLayout
-
+    layout: PipelineLayout,
+    vk_pipeline: ash::vk::Pipeline
 }
 
 pub struct PipelineFactory {
@@ -155,8 +155,34 @@ impl PipelineFactory {
                 .create_descriptor_set_layout(&descriptor_info, None)
                 .unwrap()];
 
-            self.pipelines.insert(pipeline_name.to_string(), Pipeline {
+            let pipeline_layout = self.core.device.
+                create_pipeline_layout(&vk::PipelineLayoutCreateInfo::builder()
+                    .set_layouts(&descriptor_layout), None).unwrap();
+
+            let shader_module = Self::create_shader_module(&self.core.device, &info.shader_path);
+            let shader_entry_name = CStr::from_bytes_with_nul_unchecked(b"main\0");
+            let shader_stage_create_infos = vk::PipelineShaderStageCreateInfo {
+                module: shader_module.unwrap(),
+                p_name: shader_entry_name.as_ptr(),
+                stage: vk::ShaderStageFlags::COMPUTE,
+                ..Default::default()
+            };
+
+            let pipeline_info = vk::ComputePipelineCreateInfo::builder()
+                .layout(pipeline_layout)
+                .stage(shader_stage_create_infos);
+
+            let compute_pipeline = self.core.device.create_compute_pipelines(vk::PipelineCache::null(), &[pipeline_info.build()], None).unwrap()[0];
+
+            let pipeline_layout = PipelineLayout {
+                shader_module : shader_module.unwrap(),
+                vk: pipeline_layout,
                 descriptor_layout: descriptor_layout[0]
+            };
+
+            self.pipelines.insert(pipeline_name.to_string(), Pipeline {
+                layout: pipeline_layout,
+                vk_pipeline: compute_pipeline
             });
         }
 
@@ -186,7 +212,7 @@ impl PipelineFactory {
 
             let pipeline = &self.pipelines.get(pipeline_name).unwrap();
 
-            let layout_info = &[pipeline.descriptor_layout];
+            let layout_info = &[pipeline.layout.descriptor_layout];
             let desc_alloc_info = vk::DescriptorSetAllocateInfo::builder()
                 .descriptor_pool(self.descriptor_pool)
                 .set_layouts(layout_info);
@@ -249,7 +275,9 @@ impl PipelineFactory {
                 self.frames[i].descriptor_set = descriptor_set;
                 self.frames[i].images = images;
             }
+
         }
+
 
         // Put data back
         self.pipeline_infos = infos;
