@@ -3,7 +3,6 @@ extern crate shaderc;
 extern crate gpu_allocator;
 extern crate clap;
 
-use ash::vk::Offset3D;
 use clap::Parser;
 use gpu_allocator as gpu_alloc;
 
@@ -251,38 +250,18 @@ fn main() {
 
         command::transition_image_layout(&device, frame.cmd_buffer, res.swapchain.images[present_index as usize], vk::ImageLayout::UNDEFINED, vk::ImageLayout::TRANSFER_DST_OPTIMAL);
 
-        let copy_subresource = vk::ImageSubresourceLayers {
-            aspect_mask: vk::ImageAspectFlags::COLOR,
-            mip_level: 0,
-            base_array_layer: 0,
-            layer_count: 1
-        };
-
-        let begin_offset = Offset3D {
-            x: 0, y: 0, z: 0
-        };
-        let end_offset = Offset3D {
-            x: window_width as i32, y: window_height as i32, z: 1
-        };
-
-        let blit = vk::ImageBlit {
-            src_subresource: copy_subresource,
-            src_offsets: [begin_offset, end_offset],
-            dst_subresource: copy_subresource,
-            dst_offsets: [begin_offset, end_offset]
-        };
-
         /* TODO?: Currently, we are using blit_image because it will do the format
          * conversion for us. However, another alternative is to do copy_image
          * after specifying th final compute shader destination image as the same
          * format as the swapchain format. Maybe worth measuring perf difference later */
-        device.cmd_blit_image(frame.cmd_buffer,
-                              frame.images.get("swapchain").unwrap().vk,
-                              vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
-                              res.swapchain.images[present_index as usize],
-                              vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-                              &[blit],
-                              vk::Filter::LINEAR);
+        command::blit_copy(device, frame.cmd_buffer, &command::BlitCopy {
+            width: window_width,
+            height: window_height,
+            src_image: frame.images.get("swapchain").unwrap().vk,
+            dst_image: res.swapchain.images[present_index as usize],
+            src_layout: vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+            dst_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL
+        });
 
         command::transition_image_layout(&device, frame.cmd_buffer, res.swapchain.images[present_index as usize], vk::ImageLayout::TRANSFER_DST_OPTIMAL, vk::ImageLayout::PRESENT_SRC_KHR);
 
