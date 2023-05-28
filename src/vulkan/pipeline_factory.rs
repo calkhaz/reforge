@@ -61,9 +61,9 @@ pub struct PipelineInfo {
     pub output_images: Vec<(u32, String)>
 }
 
-struct Pipeline {
-    layout: PipelineLayout,
-    vk_pipeline: ash::vk::Pipeline
+pub struct Pipeline {
+    pub layout: PipelineLayout,
+    pub vk_pipeline: ash::vk::Pipeline
 }
 
 pub struct PipelineFactory {
@@ -77,7 +77,7 @@ pub struct PipelineFactory {
     pipeline_infos: HashMap<String, PipelineInfo>,
     width: u32,
     height: u32,
-    pipelines: HashMap<String, Pipeline>,
+    pub pipelines: HashMap<String, Pipeline>,
     descriptor_pool: vk::DescriptorPool
 }
 
@@ -95,6 +95,10 @@ impl PipelineFactory {
         self.pipeline_infos.insert(name.to_string(), info);
     }
 
+    pub fn get_input_image(&self) -> &Image {
+        &self.frames[0].images.get("file").unwrap()
+    }
+
     pub fn map_to_desc_size(map: &HashMap<vk::DescriptorType, u32>) -> Vec<vk::DescriptorPoolSize> {
         let mut sizes: Vec<vk::DescriptorPoolSize> = Vec::with_capacity(map.keys().len());
 
@@ -106,6 +110,24 @@ impl PipelineFactory {
         }
 
         sizes
+    }
+
+    unsafe fn storage_image_write(image: &Image, infos: &mut Vec<vk::DescriptorImageInfo>, desc_idx: u32, set: vk::DescriptorSet) -> vk::WriteDescriptorSet {
+
+        infos.push(vk::DescriptorImageInfo {
+            image_layout: vk::ImageLayout::GENERAL,
+            image_view: image.view,
+            ..Default::default()
+        });
+
+        vk::WriteDescriptorSet {
+            dst_set: set,
+            dst_binding: desc_idx,
+            descriptor_count: 1,
+            descriptor_type: vk::DescriptorType::STORAGE_IMAGE,
+            p_image_info: infos.last().unwrap(),
+            ..Default::default()
+        }
     }
 
     pub unsafe fn build(&mut self) {
@@ -134,7 +156,7 @@ impl PipelineFactory {
 
             // Input images
             for (desc_idx, _) in &info.input_images {
-                *descriptor_size_map.entry(vk::DescriptorType::STORAGE_IMAGE).or_insert(0) += 1;
+                *descriptor_size_map.entry(vk::DescriptorType::STORAGE_IMAGE).or_insert(0) += 1*NUM_FRAMES as u32;
                 image_binding.binding = *desc_idx;
                 descriptor_layout_bindings.push(image_binding);
             }
@@ -145,7 +167,7 @@ impl PipelineFactory {
                     found_swapchain_image = true;
                 }
 
-                *descriptor_size_map.entry(vk::DescriptorType::STORAGE_IMAGE).or_insert(0) += 1;
+                *descriptor_size_map.entry(vk::DescriptorType::STORAGE_IMAGE).or_insert(0) += 1*NUM_FRAMES as u32;
                 image_binding.binding = *desc_idx;
                 descriptor_layout_bindings.push(image_binding);
             }
@@ -220,54 +242,33 @@ impl PipelineFactory {
             for i in 0..self.frames.len() {
                 let mut images: HashMap<String, Image> = HashMap::new();
 
+
                 let descriptor_set = self.core.device
                     .allocate_descriptor_sets(&desc_alloc_info)
                     .unwrap()[0];
 
+                let mut desc_image_infos: Vec<vk::DescriptorImageInfo> =
+                    Vec::with_capacity(info.input_images.len() + info.output_images.len());
                 let mut descriptor_writes: Vec<vk::WriteDescriptorSet> =
                     Vec::with_capacity(info.input_images.len() + info.output_images.len());
 
                 // Input images
                 for (desc_idx, image_name) in &info.input_images {
-                    let image = self.create_image2(image_name.to_string(), self.width, self.height);
-
-                    let input_image_descriptor = vk::DescriptorImageInfo {
-                        image_layout: vk::ImageLayout::GENERAL,
-                        image_view: image.view,
-                        ..Default::default()
-                    };
-
-                    descriptor_writes.push(vk::WriteDescriptorSet {
-                        dst_set: descriptor_set,
-                        dst_binding: *desc_idx,
-                        descriptor_count: 1,
-                        descriptor_type: vk::DescriptorType::STORAGE_IMAGE,
-                        p_image_info: &input_image_descriptor,
-                        ..Default::default()
-                    });
-
-                    images.insert(image_name.to_string(), image);
+                    // We only want one "file" input image across frames as it will never change
+                    if i > 0 && image_name == "file" {
+                        let image = &self.frames[0].images.get("file").unwrap();
+                        descriptor_writes.push(Self::storage_image_write(&image, &mut desc_image_infos, *desc_idx, descriptor_set));
+                    } else {
+                        let image = self.create_image2(image_name.to_string(), self.width, self.height);
+                        descriptor_writes.push(Self::storage_image_write(&image, &mut desc_image_infos, *desc_idx, descriptor_set));
+                        images.insert(image_name.to_string(), image);
+                    }
                 }
 
                 // Output images
                 for (desc_idx, image_name) in &info.output_images {
                     let image = self.create_image2(image_name.to_string(), self.width, self.height);
-
-                    let input_image_descriptor = vk::DescriptorImageInfo {
-                        image_layout: vk::ImageLayout::GENERAL,
-                        image_view: image.view,
-                        ..Default::default()
-                    };
-
-                    descriptor_writes.push(vk::WriteDescriptorSet {
-                        dst_set: descriptor_set,
-                        dst_binding: *desc_idx,
-                        descriptor_count: 1,
-                        descriptor_type: vk::DescriptorType::STORAGE_IMAGE,
-                        p_image_info: &input_image_descriptor,
-                        ..Default::default()
-                    });
-
+                    descriptor_writes.push(Self::storage_image_write(&image, &mut desc_image_infos, *desc_idx, descriptor_set));
                     images.insert(image_name.to_string(), image);
                 }
 
@@ -362,7 +363,8 @@ impl PipelineFactory {
             .format(vk::Format::R8G8B8A8_UNORM)
             .mip_levels(1)
             .extent(vk::Extent3D{width: width, height: height, depth: 1})
-            .usage(vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::TRANSFER_DST)
+            // TOOD: Optimize for what is actually needed
+            .usage(vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::TRANSFER_SRC)
             .sharing_mode(vk::SharingMode::EXCLUSIVE);
 
         let vk_image = self.core.device.create_image(&input_image_info, None).unwrap();
@@ -525,7 +527,7 @@ impl PipelineFactory {
             .image_color_space(surface_format.color_space)
             .image_format(surface_format.format)
             .image_extent(surface_resolution)
-            .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::STORAGE)
+            .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::STORAGE| vk::ImageUsageFlags::TRANSFER_DST)
             .image_sharing_mode(vk::SharingMode::EXCLUSIVE)
             .pre_transform(pre_transform)
             .composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE)

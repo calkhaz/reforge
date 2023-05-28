@@ -3,6 +3,7 @@ extern crate shaderc;
 extern crate gpu_allocator;
 extern crate clap;
 
+use ash::vk::Offset3D;
 use clap::Parser;
 use gpu_allocator as gpu_alloc;
 
@@ -195,7 +196,7 @@ fn main() {
 
     let info = PipelineInfo {
         shader_path: "shaders/shader.comp".to_string(),
-        input_images: [(0, "file-input".to_string())].to_vec(),
+        input_images: [(0, "file".to_string())].to_vec(),
         output_images: [(1, "swapchain".to_string())].to_vec(),
     };
 
@@ -285,7 +286,7 @@ fn main() {
                 ..Default::default()
             };
 
-            let input_image = &res.get_image("input".to_string());
+            let input_image = &res.get_input_image();
 
             let image_barrier = vk::ImageMemoryBarrier {
                 src_access_mask: vk::AccessFlags::empty(),
@@ -335,7 +336,8 @@ fn main() {
             dst_access_mask: vk::AccessFlags::SHADER_WRITE,
             old_layout: vk::ImageLayout::UNDEFINED,
             new_layout: vk::ImageLayout::GENERAL,
-            image: res.swapchain.images[present_index as usize],
+            //image: res.swapchain.images[present_index as usize],
+            image: frame.images.get("swapchain").unwrap().vk,
             subresource_range: vk::ImageSubresourceRange {
                 aspect_mask: vk::ImageAspectFlags::COLOR,
                 level_count: 1,
@@ -355,22 +357,98 @@ fn main() {
         device.cmd_bind_descriptor_sets(
             frame.cmd_buffer,
             vk::PipelineBindPoint::COMPUTE,
-            res.pipeline_layout.vk,
+            //res.pipeline_layout.vk,
+            res.pipelines.get("test-pipeline").unwrap().layout.vk,
             0,
-            &[swap_res.descriptor_set],
+            //&[swap_res.descriptor_set],
+            &[frame.descriptor_set],
             &[],
         );
         device.cmd_bind_pipeline(
             frame.cmd_buffer,
             vk::PipelineBindPoint::COMPUTE,
-            res.compute_pipeline,
+            //res.compute_pipeline,
+            res.pipelines.get("test-pipeline").unwrap().vk_pipeline
         );
         device.cmd_dispatch(frame.cmd_buffer, dispatch_x, dispatch_y, 1);
 
-        let image_barrier = vk::ImageMemoryBarrier {
+
+        let image_barrier_swap_transfer = vk::ImageMemoryBarrier {
             src_access_mask: vk::AccessFlags::SHADER_WRITE,
-            dst_access_mask: vk::AccessFlags::COLOR_ATTACHMENT_READ,
+            dst_access_mask: vk::AccessFlags::TRANSFER_WRITE,
             old_layout: vk::ImageLayout::GENERAL,
+            new_layout: vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+            image: frame.images.get("swapchain").unwrap().vk,
+            subresource_range: vk::ImageSubresourceRange {
+                aspect_mask: vk::ImageAspectFlags::COLOR,
+                level_count: 1,
+                layer_count: 1,
+                ..Default::default()
+                    },
+            ..Default::default()
+        };
+
+        device.cmd_pipeline_barrier(frame.cmd_buffer,
+                                    vk::PipelineStageFlags::COMPUTE_SHADER,
+                                    vk::PipelineStageFlags::TRANSFER, vk::DependencyFlags::empty(), &[], &[], &[image_barrier_swap_transfer]);
+
+
+        let image_barrier_transfer = vk::ImageMemoryBarrier {
+            src_access_mask: vk::AccessFlags::NONE,
+            dst_access_mask: vk::AccessFlags::TRANSFER_WRITE,
+            old_layout: vk::ImageLayout::UNDEFINED,
+            new_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+            image: res.swapchain.images[present_index as usize],
+            subresource_range: vk::ImageSubresourceRange {
+                aspect_mask: vk::ImageAspectFlags::COLOR,
+                level_count: 1,
+                layer_count: 1,
+                ..Default::default()
+                    },
+            ..Default::default()
+        };
+
+        device.cmd_pipeline_barrier(frame.cmd_buffer,
+                                    vk::PipelineStageFlags::TOP_OF_PIPE,
+                                    vk::PipelineStageFlags::TRANSFER, vk::DependencyFlags::empty(), &[], &[], &[image_barrier_transfer]);
+
+        let copy_subresource = vk::ImageSubresourceLayers {
+            aspect_mask: vk::ImageAspectFlags::COLOR,
+            mip_level: 0,
+            base_array_layer: 0,
+            layer_count: 1
+        };
+
+        let begin_offset = Offset3D {
+            x: 0, y: 0, z: 0
+        };
+        let end_offset = Offset3D {
+            x: window_width as i32, y: window_height as i32, z: 1
+        };
+
+        let blit = vk::ImageBlit {
+            src_subresource: copy_subresource,
+            src_offsets: [begin_offset, end_offset],
+            dst_subresource: copy_subresource,
+            dst_offsets: [begin_offset, end_offset]
+        };
+
+        /* TODO?: Currently, we are using blit_image because it will do the format
+         * conversion for us. However, another alternative is to do copy_image
+         * after specifying th final compute shader destination image as the same
+         * format as the swapchain format. Maybe worth measuring perf difference later */
+        device.cmd_blit_image(frame.cmd_buffer,
+                              frame.images.get("swapchain").unwrap().vk,
+                              vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+                              res.swapchain.images[present_index as usize],
+                              vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                              &[blit],
+                              vk::Filter::LINEAR);
+
+        let image_barrier_present = vk::ImageMemoryBarrier {
+            src_access_mask: vk::AccessFlags::TRANSFER_WRITE,
+            dst_access_mask: vk::AccessFlags::COLOR_ATTACHMENT_READ,
+            old_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
             new_layout: vk::ImageLayout::PRESENT_SRC_KHR,
             image: res.swapchain.images[present_index as usize],
             subresource_range: vk::ImageSubresourceRange {
@@ -383,8 +461,8 @@ fn main() {
         };
 
         device.cmd_pipeline_barrier(frame.cmd_buffer,
-                                    vk::PipelineStageFlags::COMPUTE_SHADER,
-                                    vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT, vk::DependencyFlags::empty(), &[], &[], &[image_barrier]);
+                                    vk::PipelineStageFlags::TRANSFER,
+                                    vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT, vk::DependencyFlags::empty(), &[], &[], &[image_barrier_present]);
 
 
         device.end_command_buffer(frame.cmd_buffer);
