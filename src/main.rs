@@ -248,6 +248,19 @@ fn main() {
         );
         device.cmd_dispatch(frame.cmd_buffer, dispatch_x, dispatch_y, 1);
 
+
+        let mem_barrier = vk::MemoryBarrier {
+            src_access_mask: vk::AccessFlags::SHADER_READ,
+            dst_access_mask: vk::AccessFlags::SHADER_WRITE,
+            ..Default::default()
+        };
+
+        device.cmd_pipeline_barrier(frame.cmd_buffer,
+                                    vk::PipelineStageFlags::COMPUTE_SHADER,
+                                    vk::PipelineStageFlags::COMPUTE_SHADER,
+                                    vk::DependencyFlags::empty(), &[mem_barrier], &[], &[]);
+
+
         device.cmd_bind_descriptor_sets(
             frame.cmd_buffer,
             vk::PipelineBindPoint::COMPUTE,
