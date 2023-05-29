@@ -13,6 +13,7 @@ use std::default::Default;
 use winit::window::Window;
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::cell::RefCell;
 
 use crate::vulkan::core::VkCore;
 
@@ -67,6 +68,16 @@ pub struct Pipeline {
     pub vk_pipeline: ash::vk::Pipeline
 }
 
+pub struct PipelineNode {
+    pub pipeline: Rc<RefCell<Pipeline>>,
+    pub name    : String,
+    pub outputs : Vec<Rc<PipelineNode>>
+}
+
+pub struct PipelineGraph {
+    pub roots: Vec<Rc<PipelineNode>>
+}
+
 pub struct PipelineFactory {
     core: Rc<VkCore>,
     pub swapchain: SwapChain,
@@ -75,8 +86,62 @@ pub struct PipelineFactory {
     pub pipeline_infos: HashMap<String, PipelineInfo>,
     width: u32,
     height: u32,
-    pub pipelines: HashMap<String, Pipeline>,
+    pub pipelines: HashMap<String, Rc<RefCell<Pipeline>>>,
     descriptor_pool: vk::DescriptorPool
+}
+
+impl PipelineNode {
+    pub fn new(name     : String,
+               pipeline : Rc<RefCell<Pipeline>>,
+               info     : &PipelineInfo,
+               pipelines: &HashMap<String, Rc<RefCell<Pipeline>>>,
+               infos    : &HashMap<String, PipelineInfo>) -> PipelineNode {
+
+        let mut outputs: Vec<Rc<PipelineNode>> = Vec::new();
+
+        for (_, output_name) in &info.output_images {
+            let matching_input_pipelines = PipelineGraph::get_pipelines_with_input(&output_name, &pipelines, &infos);
+
+            for (name, info, matching_pipeline) in &matching_input_pipelines {
+                outputs.push(Rc::new(PipelineNode::new(name.to_string(), Rc::clone(matching_pipeline), info, pipelines, infos)));
+            }
+        }
+
+        PipelineNode { pipeline, name, outputs }
+    }
+}
+
+impl PipelineGraph {
+    pub fn get_pipelines_with_input<'a>(name     : &str,
+                                        pipelines: &HashMap<String, Rc<RefCell<Pipeline>>>,
+                                        infos    : &'a HashMap<String, PipelineInfo>) -> Vec<(String, &'a PipelineInfo, Rc<RefCell<Pipeline>>)> {
+
+        let mut matching_pipelines: Vec<(String, &PipelineInfo, Rc<RefCell<Pipeline>>)> = Vec::new();
+
+        for (pipeline_name, info) in infos {
+            for (_, image_name) in &info.input_images {
+                if image_name == name {
+                    matching_pipelines.push((pipeline_name.to_string(), &info, Rc::clone(pipelines.get(pipeline_name).unwrap())));
+                }
+            }
+        }
+
+        matching_pipelines
+    }
+
+    pub fn new(pipelines: &HashMap<String, Rc<RefCell<Pipeline>>>,
+               infos    : &HashMap<String, PipelineInfo>) -> PipelineGraph {
+
+        let mut roots: Vec<Rc<PipelineNode>> = Vec::new();
+
+        let matching_root_pipelines = Self::get_pipelines_with_input("file", &pipelines, &infos);
+
+        for (name, info, pipeline) in &matching_root_pipelines {
+            roots.push(Rc::new(PipelineNode::new(name.to_string(), Rc::clone(pipeline), info, pipelines, infos)));
+        }
+
+        PipelineGraph { roots }
+    }
 }
 
 impl PipelineFactory {
@@ -90,7 +155,7 @@ impl PipelineFactory {
     */
 
     pub unsafe fn rebuild_pipeline(&mut self, name: &str) {
-        let mut pipeline = self.pipelines.get_mut(name).unwrap();
+        let mut pipeline = self.pipelines.get_mut(name).unwrap().borrow_mut();
         let shader_module = Self::create_shader_module(&self.core.device, &pipeline.shader_path);
 
         if shader_module.is_some() {
@@ -221,12 +286,12 @@ impl PipelineFactory {
                 descriptor_layout: descriptor_layout[0]
             };
 
-            self.pipelines.insert(pipeline_name.to_string(), Pipeline {
+            self.pipelines.insert(pipeline_name.to_string(), Rc::new(RefCell::new(Pipeline {
                 shader_path: info.shader_path.clone(),
                 shader_module : shader_module.unwrap(),
                 layout: pipeline_layout,
                 vk_pipeline: compute_pipeline
-            });
+            })));
         }
 
         if !found_swapchain_image  {
@@ -255,7 +320,7 @@ impl PipelineFactory {
 
             let pipeline = &self.pipelines.get(pipeline_name).unwrap();
 
-            let layout_info = &[pipeline.layout.descriptor_layout];
+            let layout_info = &[pipeline.borrow().layout.descriptor_layout];
             let desc_alloc_info = vk::DescriptorSetAllocateInfo::builder()
                 .descriptor_pool(self.descriptor_pool)
                 .set_layouts(layout_info);
@@ -313,6 +378,8 @@ impl PipelineFactory {
             }
 
         }
+
+        let graph = PipelineGraph::new(&self.pipelines, &self.pipeline_infos);
 
 
         // Put data back

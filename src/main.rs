@@ -236,7 +236,7 @@ fn main() {
         device.cmd_bind_descriptor_sets(
             frame.cmd_buffer,
             vk::PipelineBindPoint::COMPUTE,
-            res.pipelines.get("contrast-pipeline").unwrap().layout.vk,
+            res.pipelines.get("contrast-pipeline").unwrap().borrow().layout.vk,
             0,
             &[*frame.descriptor_sets.get("contrast-pipeline").unwrap()],
             &[],
@@ -244,7 +244,7 @@ fn main() {
         device.cmd_bind_pipeline(
             frame.cmd_buffer,
             vk::PipelineBindPoint::COMPUTE,
-            res.pipelines.get("contrast-pipeline").unwrap().vk_pipeline
+            res.pipelines.get("contrast-pipeline").unwrap().borrow().vk_pipeline
         );
         device.cmd_dispatch(frame.cmd_buffer, dispatch_x, dispatch_y, 1);
 
@@ -264,7 +264,7 @@ fn main() {
         device.cmd_bind_descriptor_sets(
             frame.cmd_buffer,
             vk::PipelineBindPoint::COMPUTE,
-            res.pipelines.get("brightness-pipeline").unwrap().layout.vk,
+            res.pipelines.get("brightness-pipeline").unwrap().borrow().layout.vk,
             0,
             &[*frame.descriptor_sets.get("brightness-pipeline").unwrap()],
             &[],
@@ -272,7 +272,7 @@ fn main() {
         device.cmd_bind_pipeline(
             frame.cmd_buffer,
             vk::PipelineBindPoint::COMPUTE,
-            res.pipelines.get("brightness-pipeline").unwrap().vk_pipeline
+            res.pipelines.get("brightness-pipeline").unwrap().borrow().vk_pipeline
         );
         device.cmd_dispatch(frame.cmd_buffer, dispatch_x, dispatch_y, 1);
 
