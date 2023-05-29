@@ -7,13 +7,13 @@ use gpu_allocator::vulkan as gpu_alloc_vk;
 
 use ash::vk;
 use std::ffi::CStr;
-use std::hash::Hash;
 use ash::extensions::khr;
 use std::default::Default;
 use winit::window::Window;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::cell::RefCell;
+use std::fmt;
 
 use crate::vulkan::core::VkCore;
 
@@ -141,6 +141,29 @@ impl PipelineGraph {
         }
 
         PipelineGraph { roots }
+    }
+}
+
+impl fmt::Debug for PipelineGraph {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fn traverse(node: &PipelineNode, f: &mut fmt::Formatter<'_>) { 
+            f.write_fmt(format_args!("{}", node.name)).unwrap();
+
+            for output in &node.outputs {
+                f.write_str(" -> ").unwrap();
+                traverse(&output, f);
+            }
+        }
+
+        for node in &self.roots {
+            traverse(node, f);
+
+            if self.roots.len() > 1 {
+                f.write_str("\n").unwrap();
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -379,7 +402,8 @@ impl PipelineFactory {
 
         }
 
-        let graph = PipelineGraph::new(&self.pipelines, &self.pipeline_infos);
+        let graph = PipelineGraph::new(&self.pipelines, &infos);
+        println!("graph: {:?}", graph);
 
 
         // Put data back
