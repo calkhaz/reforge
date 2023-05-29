@@ -7,6 +7,7 @@ use gpu_allocator::vulkan as gpu_alloc_vk;
 
 use ash::vk;
 use std::ffi::CStr;
+use std::hash::Hash;
 use ash::extensions::khr;
 use std::default::Default;
 use winit::window::Window;
@@ -44,7 +45,7 @@ pub struct VkFrameRes {
     pub cmd_pool: vk::CommandPool,
     pub cmd_buffer: vk::CommandBuffer,
     pub images: HashMap<String, Image>,
-    pub descriptor_set: vk::DescriptorSet
+    pub descriptor_sets: HashMap<String, vk::DescriptorSet>
 }
 
 pub struct PipelineLayout {
@@ -279,22 +280,36 @@ impl PipelineFactory {
                         let image = &self.frames[0].images.get("file").unwrap();
                         descriptor_writes.push(Self::storage_image_write(&image, &mut desc_image_infos, *desc_idx, descriptor_set));
                     } else {
-                        let image = self.create_image(image_name.to_string(), self.width, self.height);
-                        descriptor_writes.push(Self::storage_image_write(&image, &mut desc_image_infos, *desc_idx, descriptor_set));
-                        images.insert(image_name.to_string(), image);
+                        match self.frames[i].images.get(image_name) {
+                            Some(image) => {
+                                descriptor_writes.push(Self::storage_image_write(&image, &mut desc_image_infos, *desc_idx, descriptor_set));
+                            }
+                            None => {
+                                let image = self.create_image(image_name.to_string(), self.width, self.height);
+                                descriptor_writes.push(Self::storage_image_write(&image, &mut desc_image_infos, *desc_idx, descriptor_set));
+                                images.insert(image_name.to_string(), image);
+                            }
+                        }
                     }
                 }
 
                 // Output images
                 for (desc_idx, image_name) in &info.output_images {
-                    let image = self.create_image(image_name.to_string(), self.width, self.height);
-                    descriptor_writes.push(Self::storage_image_write(&image, &mut desc_image_infos, *desc_idx, descriptor_set));
-                    images.insert(image_name.to_string(), image);
+                    match self.frames[i].images.get(image_name) {
+                        Some(image) => {
+                            descriptor_writes.push(Self::storage_image_write(&image, &mut desc_image_infos, *desc_idx, descriptor_set));
+                        }
+                        None => {
+                            let image = self.create_image(image_name.to_string(), self.width, self.height);
+                            descriptor_writes.push(Self::storage_image_write(&image, &mut desc_image_infos, *desc_idx, descriptor_set));
+                            images.insert(image_name.to_string(), image);
+                        }
+                    }
                 }
 
                 self.core.device.update_descriptor_sets(&descriptor_writes, &[]);
-                self.frames[i].descriptor_set = descriptor_set;
-                self.frames[i].images = images;
+                self.frames[i].descriptor_sets.insert(pipeline_name.to_string(), descriptor_set);
+                self.frames[i].images.extend(images);
             }
 
         }
@@ -541,7 +556,7 @@ impl PipelineFactory {
                 cmd_pool: cmd_pool,
                 cmd_buffer: cmd_buff,
                 images: HashMap::new(),
-                descriptor_set: vk::DescriptorSet::null()
+                descriptor_sets: HashMap::new()
             }
         }).collect();
 

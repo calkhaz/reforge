@@ -127,13 +127,18 @@ fn main() {
     let vk_core = Rc::new(VkCore::new(&window));
     let mut res = PipelineFactory::new(Rc::clone(&vk_core), &window);
 
-    let info = PipelineInfo {
-        shader_path: "shaders/shader.comp".to_string(),
+    res.add("contrast-pipeline", PipelineInfo {
+        shader_path: "shaders/contrast.comp".to_string(),
         input_images: [(0, "file".to_string())].to_vec(),
-        output_images: [(1, "swapchain".to_string())].to_vec(),
-    };
+        output_images: [(1, "contrast".to_string())].to_vec(),
+    });
 
-    res.add("test-pipeline", info);
+    res.add("brightness-pipeline", PipelineInfo {
+        shader_path: "shaders/brightness.comp".to_string(),
+        input_images: [(0, "contrast".to_string())].to_vec(),
+        output_images: [(1, "swapchain".to_string())].to_vec(),
+    });
+
     res.build();
 
     let buffer_size = (window_width as vk::DeviceSize)*(window_height as vk::DeviceSize)*4;
@@ -218,9 +223,11 @@ fn main() {
             device.cmd_copy_buffer_to_image(frame.cmd_buffer, input_image_buffer.vk, input_image.vk, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &[regions]);
             command::transition_image_layout(&device, frame.cmd_buffer, input_image.vk, vk::ImageLayout::TRANSFER_DST_OPTIMAL, vk::ImageLayout::GENERAL);
 
+
             FIRST_RUN = false;
         }
 
+        command::transition_image_layout(&device, frame.cmd_buffer, frame.images.get("contrast").unwrap().vk, vk::ImageLayout::UNDEFINED, vk::ImageLayout::GENERAL);
         command::transition_image_layout(&device, frame.cmd_buffer, frame.images.get("swapchain").unwrap().vk, vk::ImageLayout::UNDEFINED, vk::ImageLayout::GENERAL);
 
         let dispatch_x = (window_width as f32/16.0).ceil() as u32;
@@ -229,17 +236,33 @@ fn main() {
         device.cmd_bind_descriptor_sets(
             frame.cmd_buffer,
             vk::PipelineBindPoint::COMPUTE,
-            res.pipelines.get("test-pipeline").unwrap().layout.vk,
+            res.pipelines.get("contrast-pipeline").unwrap().layout.vk,
             0,
-            &[frame.descriptor_set],
+            &[*frame.descriptor_sets.get("contrast-pipeline").unwrap()],
             &[],
         );
         device.cmd_bind_pipeline(
             frame.cmd_buffer,
             vk::PipelineBindPoint::COMPUTE,
-            res.pipelines.get("test-pipeline").unwrap().vk_pipeline
+            res.pipelines.get("contrast-pipeline").unwrap().vk_pipeline
         );
         device.cmd_dispatch(frame.cmd_buffer, dispatch_x, dispatch_y, 1);
+
+        device.cmd_bind_descriptor_sets(
+            frame.cmd_buffer,
+            vk::PipelineBindPoint::COMPUTE,
+            res.pipelines.get("brightness-pipeline").unwrap().layout.vk,
+            0,
+            &[*frame.descriptor_sets.get("brightness-pipeline").unwrap()],
+            &[],
+        );
+        device.cmd_bind_pipeline(
+            frame.cmd_buffer,
+            vk::PipelineBindPoint::COMPUTE,
+            res.pipelines.get("brightness-pipeline").unwrap().vk_pipeline
+        );
+        device.cmd_dispatch(frame.cmd_buffer, dispatch_x, dispatch_y, 1);
+
 
 
         command::transition_image_layout(&device, frame.cmd_buffer, frame.images.get("swapchain").unwrap().vk, vk::ImageLayout::GENERAL, vk::ImageLayout::TRANSFER_SRC_OPTIMAL);
