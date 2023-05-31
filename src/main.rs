@@ -152,8 +152,8 @@ fn main() {
     file_decoder.decode(mapped_input_image_data, window_width, window_height);
 
     render_loop(&mut event_loop, &mut || {
-        static mut FIRST_RUN: bool = true;
-        static mut FRAME_INDEX: u8 = 0;
+        static mut FIRST_RUN: [bool;NUM_FRAMES] = [true ; NUM_FRAMES];
+        static mut FRAME_INDEX: usize = 0;
 
         let current_modified_shader_times: HashMap<String, u64>  = get_modified_times(&res.pipeline_infos);
 
@@ -165,7 +165,7 @@ fn main() {
 
         last_modified_shader_times = current_modified_shader_times;
 
-        let frame = &res.frames[FRAME_INDEX as usize];
+        let frame = &res.frames[FRAME_INDEX];
         let device = &vk_core.device;
 
         let (present_index, _) = res
@@ -198,42 +198,46 @@ fn main() {
         device.begin_command_buffer(frame.cmd_buffer, &command_buffer_begin_info)
             .expect("Begin commandbuffer");
 
-
-
-        if FIRST_RUN {
-            let regions = vk::BufferImageCopy {
-                buffer_offset: input_image_buffer.allocation.offset(),
-                image_subresource: vk::ImageSubresourceLayers {
-                    aspect_mask: vk::ImageAspectFlags::COLOR,
-                    layer_count: 1,
+        if FIRST_RUN[FRAME_INDEX] {
+            if FRAME_INDEX == 0 {
+                let regions = vk::BufferImageCopy {
+                    buffer_offset: input_image_buffer.allocation.offset(),
+                    image_subresource: vk::ImageSubresourceLayers {
+                        aspect_mask: vk::ImageAspectFlags::COLOR,
+                        layer_count: 1,
+                        ..Default::default()
+                    },
+                    image_extent: vk::Extent3D {
+                        width: window_width as u32,
+                        height: window_height as u32,
+                        depth: 1
+                    },
                     ..Default::default()
-                },
-                image_extent: vk::Extent3D {
-                    width: window_width as u32,
-                    height: window_height as u32,
-                    depth: 1
-                },
-                ..Default::default()
-            };
+                };
 
-            let input_image = &res.get_input_image();
+                let input_image = &res.get_input_image();
 
-            // Copy user-input image from vk buffer to the input image
-            command::transition_image_layout(&device, frame.cmd_buffer, input_image.vk, vk::ImageLayout::UNDEFINED, vk::ImageLayout::TRANSFER_DST_OPTIMAL);
-            device.cmd_copy_buffer_to_image(frame.cmd_buffer, input_image_buffer.vk, input_image.vk, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &[regions]);
-            command::transition_image_layout(&device, frame.cmd_buffer, input_image.vk, vk::ImageLayout::TRANSFER_DST_OPTIMAL, vk::ImageLayout::GENERAL);
+                // Copy user-input image from vk buffer to the input image
+                command::transition_image_layout(&device, frame.cmd_buffer, input_image.vk, vk::ImageLayout::UNDEFINED, vk::ImageLayout::TRANSFER_DST_OPTIMAL);
+                device.cmd_copy_buffer_to_image(frame.cmd_buffer, input_image_buffer.vk, input_image.vk, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &[regions]);
+                command::transition_image_layout(&device, frame.cmd_buffer, input_image.vk, vk::ImageLayout::TRANSFER_DST_OPTIMAL, vk::ImageLayout::GENERAL);
+            }
 
+            // Transition all intermediate compute images to general
+            for (name, image) in &frame.images {
+                if name != "swapchain" && name != "file" {
+                    command::transition_image_layout(&device, frame.cmd_buffer, image.vk, vk::ImageLayout::UNDEFINED, vk::ImageLayout::GENERAL);
+                }
+            }
 
-            FIRST_RUN = false;
+            FIRST_RUN[FRAME_INDEX] = false;
         }
 
-        command::transition_image_layout(&device, frame.cmd_buffer, frame.images.get("contrast").unwrap().vk, vk::ImageLayout::UNDEFINED, vk::ImageLayout::GENERAL);
         command::transition_image_layout(&device, frame.cmd_buffer, frame.images.get("swapchain").unwrap().vk, vk::ImageLayout::UNDEFINED, vk::ImageLayout::GENERAL);
 
         command::execute_pipeline_graph(&device, frame, &graph, window_width, window_height);
 
         command::transition_image_layout(&device, frame.cmd_buffer, frame.images.get("swapchain").unwrap().vk, vk::ImageLayout::GENERAL, vk::ImageLayout::TRANSFER_SRC_OPTIMAL);
-
         command::transition_image_layout(&device, frame.cmd_buffer, res.swapchain.images[present_index as usize], vk::ImageLayout::UNDEFINED, vk::ImageLayout::TRANSFER_DST_OPTIMAL);
 
         /* TODO?: Currently, we are using blit_image because it will do the format

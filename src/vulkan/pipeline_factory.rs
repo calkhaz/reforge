@@ -17,7 +17,7 @@ use std::fmt;
 
 use crate::vulkan::core::VkCore;
 
-pub const NUM_FRAMES: u8 = 2;
+pub const NUM_FRAMES: usize = 2;
 
 pub struct SwapChain {
     pub surface_format: vk::SurfaceFormatKHR,
