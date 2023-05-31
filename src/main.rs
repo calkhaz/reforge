@@ -104,6 +104,14 @@ fn get_dim(width: u32, height: u32, new_width: Option<u32>, new_height: Option<u
     (w, h)
 }
 
+fn moving_avg(mut avg: f64, next_value: f64) -> f64 {
+
+    avg -= avg / 60.0;
+    avg += next_value / 60.0;
+
+    return avg;
+}
+
 fn main() {
     let args = Args::parse();
 
@@ -160,9 +168,13 @@ fn main() {
 
     let swapchain = SwapChain::new(&vk_core, window_width, window_height);
 
+    let mut timer: std::time::Instant = std::time::Instant::now();
+    let mut avg_ms = 0.0;
+
     render_loop(&mut event_loop, &mut || {
         static mut FIRST_RUN: [bool;NUM_FRAMES] = [true ; NUM_FRAMES];
         static mut FRAME_INDEX: usize = 0;
+
 
         let current_modified_shader_times: HashMap<String, u64>  = get_modified_times(&res.pipeline_infos);
 
@@ -189,6 +201,12 @@ fn main() {
             .wait_for_fences(&[frame.fence], true, std::u64::MAX)
             .expect("Wait for fence failed.");
 
+
+        let elapsed_ms = (timer.elapsed().as_nanos() as f64)/1e6 as f64;
+        avg_ms = moving_avg(avg_ms, elapsed_ms);
+        print!("\rFrame: {:.2?}ms , Avg: {:.2?}ms ", elapsed_ms, avg_ms);
+        timer = std::time::Instant::now();
+
         device
             .reset_fences(&[frame.fence])
             .expect("Reset fences failed.");
@@ -199,6 +217,7 @@ fn main() {
                 vk::CommandBufferResetFlags::RELEASE_RESOURCES,
             )
             .expect("Reset command buffer failed.");
+
 
 
         let command_buffer_begin_info = vk::CommandBufferBeginInfo::default();
