@@ -112,6 +112,10 @@ fn moving_avg(mut avg: f64, next_value: f64) -> f64 {
     return avg;
 }
 
+fn get_elapsed_ms(inst: &std::time::Instant) -> f64{
+    return (inst.elapsed().as_nanos() as f64)/1e6 as f64;
+}
+
 fn main() {
     let args = Args::parse();
 
@@ -163,12 +167,14 @@ fn main() {
     let mut last_modified_shader_times: HashMap<String, u64>  = get_modified_times(&res.pipeline_infos);
 
     let mapped_input_image_data: *mut u8 = input_image_buffer.allocation.mapped_ptr().unwrap().as_ptr() as *mut u8;
+    let mut timer: std::time::Instant = std::time::Instant::now();
 
     file_decoder.decode(mapped_input_image_data, window_width, window_height);
+    let elapsed_ms = get_elapsed_ms(&timer);
+    println!("File Decode and resize: {:.2?}ms", elapsed_ms);
 
     let swapchain = SwapChain::new(&vk_core, window_width, window_height);
 
-    let mut timer: std::time::Instant = std::time::Instant::now();
     let mut avg_ms = 0.0;
 
     render_loop(&mut event_loop, &mut || {
@@ -202,7 +208,7 @@ fn main() {
             .expect("Wait for fence failed.");
 
 
-        let elapsed_ms = (timer.elapsed().as_nanos() as f64)/1e6 as f64;
+        let elapsed_ms = get_elapsed_ms(&timer);
         avg_ms = moving_avg(avg_ms, elapsed_ms);
         print!("\rFrame: {:.2?}ms , Avg: {:.2?}ms ", elapsed_ms, avg_ms);
         timer = std::time::Instant::now();
