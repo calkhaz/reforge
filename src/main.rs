@@ -13,6 +13,7 @@ use std::rc::Rc;
 
 mod vulkan;
 use vulkan::command;
+use vulkan::swapchain::SwapChain;
 use vulkan::core::VkCore;
 use vulkan::pipeline_factory::PipelineInfo;
 use vulkan::pipeline_factory::PipelineFactory;
@@ -133,9 +134,15 @@ fn main() {
         output_images: [(1, "contrast".to_string())].to_vec(),
     });
 
+    res.add("contrast-pipeline2", PipelineInfo {
+        shader_path: "shaders/contrast.comp".to_string(),
+        input_images: [(0, "contrast".to_string())].to_vec(),
+        output_images: [(1, "contrast2".to_string())].to_vec(),
+    });
+
     res.add("brightness-pipeline", PipelineInfo {
         shader_path: "shaders/brightness.comp".to_string(),
-        input_images: [(0, "contrast".to_string())].to_vec(),
+        input_images: [(0, "contrast2".to_string())].to_vec(),
         output_images: [(1, "swapchain".to_string())].to_vec(),
     });
 
@@ -150,6 +157,8 @@ fn main() {
     let mapped_input_image_data: *mut u8 = input_image_buffer.allocation.mapped_ptr().unwrap().as_ptr() as *mut u8;
 
     file_decoder.decode(mapped_input_image_data, window_width, window_height);
+
+    let swapchain = SwapChain::new(&vk_core, window_width, window_height);
 
     render_loop(&mut event_loop, &mut || {
         static mut FIRST_RUN: [bool;NUM_FRAMES] = [true ; NUM_FRAMES];
@@ -168,9 +177,8 @@ fn main() {
         let frame = &res.frames[FRAME_INDEX];
         let device = &vk_core.device;
 
-        let (present_index, _) = res
-            .swapchain.loader.acquire_next_image(
-                res.swapchain.vk,
+        let (present_index, _) = swapchain.loader.acquire_next_image(
+                swapchain.vk,
                 std::u64::MAX,
                 frame.present_complete_semaphore, // Semaphore to signal
                 vk::Fence::null(),
@@ -238,7 +246,7 @@ fn main() {
         command::execute_pipeline_graph(&device, frame, &graph, window_width, window_height);
 
         command::transition_image_layout(&device, frame.cmd_buffer, frame.images.get("swapchain").unwrap().vk, vk::ImageLayout::GENERAL, vk::ImageLayout::TRANSFER_SRC_OPTIMAL);
-        command::transition_image_layout(&device, frame.cmd_buffer, res.swapchain.images[present_index as usize], vk::ImageLayout::UNDEFINED, vk::ImageLayout::TRANSFER_DST_OPTIMAL);
+        command::transition_image_layout(&device, frame.cmd_buffer, swapchain.images[present_index as usize], vk::ImageLayout::UNDEFINED, vk::ImageLayout::TRANSFER_DST_OPTIMAL);
 
         /* TODO?: Currently, we are using blit_image because it will do the format
          * conversion for us. However, another alternative is to do copy_image
@@ -248,12 +256,12 @@ fn main() {
             width: window_width,
             height: window_height,
             src_image: frame.images.get("swapchain").unwrap().vk,
-            dst_image: res.swapchain.images[present_index as usize],
+            dst_image: swapchain.images[present_index as usize],
             src_layout: vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
             dst_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL
         });
 
-        command::transition_image_layout(&device, frame.cmd_buffer, res.swapchain.images[present_index as usize], vk::ImageLayout::TRANSFER_DST_OPTIMAL, vk::ImageLayout::PRESENT_SRC_KHR);
+        command::transition_image_layout(&device, frame.cmd_buffer, swapchain.images[present_index as usize], vk::ImageLayout::TRANSFER_DST_OPTIMAL, vk::ImageLayout::PRESENT_SRC_KHR);
 
         device.end_command_buffer(frame.cmd_buffer).unwrap();
 
@@ -275,14 +283,14 @@ fn main() {
         .expect("queue submit failed.");
 
         let wait_semaphores = [frame.render_complete_semaphore];
-        let swapchains = [res.swapchain.vk];
+        let swapchains = [swapchain.vk];
         let image_indices = [present_index];
         let present_info = vk::PresentInfoKHR::builder()
             .wait_semaphores(&wait_semaphores)
             .swapchains(&swapchains)
             .image_indices(&image_indices);
 
-        res.swapchain.loader
+        swapchain.loader
             .queue_present(vk_core.queue, &present_info)
             .unwrap();
 
