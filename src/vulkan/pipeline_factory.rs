@@ -238,9 +238,9 @@ impl PipelineFactory {
         }
     }
 
-    pub unsafe fn build(&mut self) {
+    pub unsafe fn build(&mut self) -> PipelineGraph {
         if self.pipeline_infos.len() == 0  {
-            return;
+            return PipelineGraph::new(&self.pipelines, &self.pipeline_infos);
         }
 
         // Move data out to not borrow &self mutably/immutably at the same time
@@ -402,12 +402,10 @@ impl PipelineFactory {
 
         }
 
-        let graph = PipelineGraph::new(&self.pipelines, &infos);
-        println!("graph: {:?}", graph);
-
-
-        // Put data back
+        // Put pipeline info data back
         self.pipeline_infos = infos;
+
+        PipelineGraph::new(&self.pipelines, &self.pipeline_infos)
     }
 
     unsafe fn create_commands(device: &ash::Device, queue_family_index: u32) -> (vk::CommandPool, vk::CommandBuffer) {

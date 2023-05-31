@@ -1,6 +1,9 @@
 extern crate ash;
-
 use ash::vk;
+
+use crate::vulkan::pipeline_factory::VkFrameRes;
+use crate::vulkan::pipeline_factory::PipelineNode;
+use crate::vulkan::pipeline_factory::PipelineGraph;
 
 pub fn transition_image_layout(device: &ash::Device, cmd: vk::CommandBuffer, image: vk::Image, src_layout: vk::ImageLayout, dst_layout: vk::ImageLayout) {
 
@@ -109,4 +112,50 @@ pub fn blit_copy(device: &ash::Device, cmd: vk::CommandBuffer, info: &BlitCopy) 
                               &[blit],
                               vk::Filter::LINEAR);
         }
+}
+
+
+pub fn execute_pipeline_graph(device: &ash::Device, frame: &VkFrameRes, graph: &PipelineGraph, width: u32, height: u32) {
+
+    fn dispatch_node(node: &PipelineNode, device: &ash::Device, frame: &VkFrameRes, dispatch_x: u32, dispatch_y: u32) {
+        unsafe {
+        device.cmd_bind_descriptor_sets(
+            frame.cmd_buffer,
+            vk::PipelineBindPoint::COMPUTE,
+            node.pipeline.borrow().layout.vk,
+            0,
+            &[*frame.descriptor_sets.get(&node.name).unwrap()],
+            &[],
+        );
+        device.cmd_bind_pipeline(
+            frame.cmd_buffer,
+            vk::PipelineBindPoint::COMPUTE,
+            node.pipeline.borrow().vk_pipeline
+        );
+        device.cmd_dispatch(frame.cmd_buffer, dispatch_x, dispatch_y, 1);
+
+        for output_node in &node.outputs {
+            let mem_barrier = vk::MemoryBarrier {
+                src_access_mask: vk::AccessFlags::SHADER_READ,
+                dst_access_mask: vk::AccessFlags::SHADER_WRITE,
+                ..Default::default()
+            };
+
+            device.cmd_pipeline_barrier(frame.cmd_buffer,
+                                        vk::PipelineStageFlags::COMPUTE_SHADER,
+                                        vk::PipelineStageFlags::COMPUTE_SHADER,
+                                        vk::DependencyFlags::empty(), &[mem_barrier], &[], &[]);
+
+            dispatch_node(output_node, device, frame, dispatch_x, dispatch_y);
+        }
+        }
+    }
+
+
+    let dispatch_x = (width as f32/16.0).ceil() as u32;
+    let dispatch_y = (height as f32/16.0).ceil() as u32;
+
+    for node in &graph.roots {
+        dispatch_node(node, device, frame, dispatch_x, dispatch_y);
+    }
 }

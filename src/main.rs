@@ -139,7 +139,7 @@ fn main() {
         output_images: [(1, "swapchain".to_string())].to_vec(),
     });
 
-    res.build();
+    let graph = res.build();
 
     let buffer_size = (window_width as vk::DeviceSize)*(window_height as vk::DeviceSize)*4;
     let input_image_buffer = res.create_buffer(buffer_size, vk::BufferUsageFlags::TRANSFER_SRC, gpu_alloc::MemoryLocation::CpuToGpu);
@@ -230,53 +230,7 @@ fn main() {
         command::transition_image_layout(&device, frame.cmd_buffer, frame.images.get("contrast").unwrap().vk, vk::ImageLayout::UNDEFINED, vk::ImageLayout::GENERAL);
         command::transition_image_layout(&device, frame.cmd_buffer, frame.images.get("swapchain").unwrap().vk, vk::ImageLayout::UNDEFINED, vk::ImageLayout::GENERAL);
 
-        let dispatch_x = (window_width as f32/16.0).ceil() as u32;
-        let dispatch_y = (window_height as f32/16.0).ceil() as u32;
-
-        device.cmd_bind_descriptor_sets(
-            frame.cmd_buffer,
-            vk::PipelineBindPoint::COMPUTE,
-            res.pipelines.get("contrast-pipeline").unwrap().borrow().layout.vk,
-            0,
-            &[*frame.descriptor_sets.get("contrast-pipeline").unwrap()],
-            &[],
-        );
-        device.cmd_bind_pipeline(
-            frame.cmd_buffer,
-            vk::PipelineBindPoint::COMPUTE,
-            res.pipelines.get("contrast-pipeline").unwrap().borrow().vk_pipeline
-        );
-        device.cmd_dispatch(frame.cmd_buffer, dispatch_x, dispatch_y, 1);
-
-
-        let mem_barrier = vk::MemoryBarrier {
-            src_access_mask: vk::AccessFlags::SHADER_READ,
-            dst_access_mask: vk::AccessFlags::SHADER_WRITE,
-            ..Default::default()
-        };
-
-        device.cmd_pipeline_barrier(frame.cmd_buffer,
-                                    vk::PipelineStageFlags::COMPUTE_SHADER,
-                                    vk::PipelineStageFlags::COMPUTE_SHADER,
-                                    vk::DependencyFlags::empty(), &[mem_barrier], &[], &[]);
-
-
-        device.cmd_bind_descriptor_sets(
-            frame.cmd_buffer,
-            vk::PipelineBindPoint::COMPUTE,
-            res.pipelines.get("brightness-pipeline").unwrap().borrow().layout.vk,
-            0,
-            &[*frame.descriptor_sets.get("brightness-pipeline").unwrap()],
-            &[],
-        );
-        device.cmd_bind_pipeline(
-            frame.cmd_buffer,
-            vk::PipelineBindPoint::COMPUTE,
-            res.pipelines.get("brightness-pipeline").unwrap().borrow().vk_pipeline
-        );
-        device.cmd_dispatch(frame.cmd_buffer, dispatch_x, dispatch_y, 1);
-
-
+        command::execute_pipeline_graph(&device, frame, &graph, window_width, window_height);
 
         command::transition_image_layout(&device, frame.cmd_buffer, frame.images.get("swapchain").unwrap().vk, vk::ImageLayout::GENERAL, vk::ImageLayout::TRANSFER_SRC_OPTIMAL);
 
