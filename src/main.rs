@@ -18,6 +18,7 @@ use vulkan::core::VkCore;
 use vulkan::pipeline_graph::PipelineInfo;
 use vulkan::pipeline_graph::PipelineGraph;
 use vulkan::pipeline_graph::NUM_FRAMES;
+use vulkan::frame::Frame;
 
 mod imagefileio;
 use imagefileio::ImageFileDecoder;
@@ -160,6 +161,10 @@ fn main() {
     ]);
 
     let mut graph = PipelineGraph::new(Rc::clone(&vk_core), &pipeline_infos, &window);
+    let frames : Vec<Frame> = (0..NUM_FRAMES).map(|_|{
+        Frame::new(&vk_core)
+    }).collect();
+
 
     let buffer_size = (window_width as vk::DeviceSize)*(window_height as vk::DeviceSize)*4;
     let input_image_buffer = graph.create_buffer(buffer_size, vk::BufferUsageFlags::TRANSFER_SRC, gpu_alloc::MemoryLocation::CpuToGpu);
@@ -193,7 +198,8 @@ fn main() {
 
         last_modified_shader_times = current_modified_shader_times;
 
-        let frame = &graph.frames[FRAME_INDEX];
+        let graph_frame = &graph.frames[FRAME_INDEX];
+        let frame = &frames[FRAME_INDEX];
         let device = &vk_core.device;
 
         let (present_index, _) = swapchain.loader.acquire_next_image(
@@ -258,7 +264,7 @@ fn main() {
             }
 
             // Transition all intermediate compute images to general
-            for (name, image) in &frame.images {
+            for (name, image) in &graph_frame.images {
                 if name != "swapchain" && name != "file" {
                     command::transition_image_layout(&device, frame.cmd_buffer, image.vk, vk::ImageLayout::UNDEFINED, vk::ImageLayout::GENERAL);
                 }
@@ -267,11 +273,11 @@ fn main() {
             FIRST_RUN[FRAME_INDEX] = false;
         }
 
-        command::transition_image_layout(&device, frame.cmd_buffer, frame.images.get("swapchain").unwrap().vk, vk::ImageLayout::UNDEFINED, vk::ImageLayout::GENERAL);
+        command::transition_image_layout(&device, frame.cmd_buffer, graph_frame.images.get("swapchain").unwrap().vk, vk::ImageLayout::UNDEFINED, vk::ImageLayout::GENERAL);
 
-        command::execute_pipeline_graph(&device, frame, &graph, window_width, window_height);
+        command::execute_pipeline_graph(&device, frame, graph_frame, &graph);
 
-        command::transition_image_layout(&device, frame.cmd_buffer, frame.images.get("swapchain").unwrap().vk, vk::ImageLayout::GENERAL, vk::ImageLayout::TRANSFER_SRC_OPTIMAL);
+        command::transition_image_layout(&device, frame.cmd_buffer, graph_frame.images.get("swapchain").unwrap().vk, vk::ImageLayout::GENERAL, vk::ImageLayout::TRANSFER_SRC_OPTIMAL);
         command::transition_image_layout(&device, frame.cmd_buffer, swapchain.images[present_index as usize], vk::ImageLayout::UNDEFINED, vk::ImageLayout::TRANSFER_DST_OPTIMAL);
 
         /* TODO?: Currently, we are using blit_image because it will do the format
@@ -281,7 +287,7 @@ fn main() {
         command::blit_copy(device, frame.cmd_buffer, &command::BlitCopy {
             width: window_width,
             height: window_height,
-            src_image: frame.images.get("swapchain").unwrap().vk,
+            src_image: graph_frame.images.get("swapchain").unwrap().vk,
             dst_image: swapchain.images[present_index as usize],
             src_layout: vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
             dst_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL
