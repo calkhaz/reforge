@@ -66,14 +66,10 @@ pub struct PipelineNode {
 }
 
 pub struct PipelineGraph {
-    pub roots: Vec<Rc<PipelineNode>>
-}
-
-pub struct PipelineFactory {
+    pub roots: Vec<Rc<PipelineNode>>,
     core: Rc<VkCore>,
     pub frames: Vec<VkFrameRes>,
-    pub allocator: gpu_alloc_vk::Allocator,
-    pub pipeline_infos: HashMap<String, PipelineInfo>,
+    allocator: gpu_alloc_vk::Allocator,
     width: u32,
     height: u32,
     pub pipelines: HashMap<String, Rc<RefCell<Pipeline>>>,
@@ -85,7 +81,7 @@ impl PipelineNode {
                pipeline : Rc<RefCell<Pipeline>>,
                info     : &PipelineInfo,
                pipelines: &HashMap<String, Rc<RefCell<Pipeline>>>,
-               infos    : &HashMap<String, PipelineInfo>) -> PipelineNode {
+               infos    : &HashMap<&str, PipelineInfo>) -> PipelineNode {
 
         let mut outputs: Vec<Rc<PipelineNode>> = Vec::new();
 
@@ -98,39 +94,6 @@ impl PipelineNode {
         }
 
         PipelineNode { pipeline, name, outputs }
-    }
-}
-
-impl PipelineGraph {
-    pub fn get_pipelines_with_input<'a>(name     : &str,
-                                        pipelines: &HashMap<String, Rc<RefCell<Pipeline>>>,
-                                        infos    : &'a HashMap<String, PipelineInfo>) -> Vec<(String, &'a PipelineInfo, Rc<RefCell<Pipeline>>)> {
-
-        let mut matching_pipelines: Vec<(String, &PipelineInfo, Rc<RefCell<Pipeline>>)> = Vec::new();
-
-        for (pipeline_name, info) in infos {
-            for (_, image_name) in &info.input_images {
-                if image_name == name {
-                    matching_pipelines.push((pipeline_name.to_string(), &info, Rc::clone(pipelines.get(pipeline_name).unwrap())));
-                }
-            }
-        }
-
-        matching_pipelines
-    }
-
-    pub fn new(pipelines: &HashMap<String, Rc<RefCell<Pipeline>>>,
-               infos    : &HashMap<String, PipelineInfo>) -> PipelineGraph {
-
-        let mut roots: Vec<Rc<PipelineNode>> = Vec::new();
-
-        let matching_root_pipelines = Self::get_pipelines_with_input("file", &pipelines, &infos);
-
-        for (name, info, pipeline) in &matching_root_pipelines {
-            roots.push(Rc::new(PipelineNode::new(name.to_string(), Rc::clone(pipeline), info, pipelines, infos)));
-        }
-
-        PipelineGraph { roots }
     }
 }
 
@@ -157,7 +120,7 @@ impl fmt::Debug for PipelineGraph {
     }
 }
 
-impl PipelineFactory {
+impl PipelineGraph {
 
     /*(
     pub unsafe fn add(&mut self, name: &str) -> &mut PipelineInfo {
@@ -166,6 +129,34 @@ impl PipelineFactory {
         self.pipeline_infos.entry(name.to_string()).or_insert_with(|| info)
     }
     */
+
+    pub fn get_pipelines_with_input<'a>(name     : &str,
+                                        pipelines: &HashMap<String, Rc<RefCell<Pipeline>>>,
+                                        infos    : &'a HashMap<&str, PipelineInfo>) -> Vec<(String, &'a PipelineInfo, Rc<RefCell<Pipeline>>)> {
+
+        let mut matching_pipelines: Vec<(String, &PipelineInfo, Rc<RefCell<Pipeline>>)> = Vec::new();
+
+        for (pipeline_name, info) in infos {
+            for (_, image_name) in &info.input_images {
+                if image_name == name {
+                    matching_pipelines.push((pipeline_name.to_string(), &info, Rc::clone(pipelines.get(&pipeline_name.to_string()).unwrap())));
+                }
+            }
+        }
+
+        matching_pipelines
+    }
+
+    pub fn create_nodes(&mut self, pipeline_infos: &HashMap<&str, PipelineInfo>) {
+        let mut roots: Vec<Rc<PipelineNode>> = Vec::new();
+
+        let matching_root_pipelines = Self::get_pipelines_with_input("file", &self.pipelines, &pipeline_infos);
+
+        for (name, info, pipeline) in &matching_root_pipelines {
+            self.roots.push(Rc::new(PipelineNode::new(name.to_string(), Rc::clone(pipeline), info, &self.pipelines, pipeline_infos)));
+        }
+    }
+
 
     pub unsafe fn rebuild_pipeline(&mut self, name: &str) {
         let mut pipeline = self.pipelines.get_mut(name).unwrap().borrow_mut();
@@ -187,10 +178,6 @@ impl PipelineFactory {
             pipeline.vk_pipeline = self.core.device.create_compute_pipelines(vk::PipelineCache::null(), &[pipeline_info.build()], None).unwrap()[0];
             pipeline.shader_module = shader_module.unwrap();
         }
-    }
-
-    pub unsafe fn add(&mut self, name: &str, info: PipelineInfo)  {
-        self.pipeline_infos.insert(name.to_string(), info);
     }
 
     pub fn get_input_image(&self) -> &Image {
@@ -228,13 +215,10 @@ impl PipelineFactory {
         }
     }
 
-    pub unsafe fn build(&mut self) -> PipelineGraph {
-        if self.pipeline_infos.len() == 0  {
-            return PipelineGraph::new(&self.pipelines, &self.pipeline_infos);
+    pub unsafe fn build_pipelines(&mut self, infos: &HashMap<&str, PipelineInfo>) {
+        if infos.len() == 0  {
+            return;
         }
-
-        // Move data out to not borrow &self mutably/immutably at the same time
-        let infos = std::mem::replace(&mut self.pipeline_infos, HashMap::new());
 
         // Track descriptor pool sizes by descriptor type
         let mut descriptor_size_map : HashMap<vk::DescriptorType, u32> = HashMap::new();
@@ -249,7 +233,7 @@ impl PipelineFactory {
         };
 
         // descriptor layouts, add descriptor pool sizes, and add pipelines to hashmap
-        for (pipeline_name, info) in &infos {
+        for (pipeline_name, info) in infos {
             let mut descriptor_layout_bindings: Vec<vk::DescriptorSetLayoutBinding> = Vec::with_capacity(infos.len());
 
             // Input images
@@ -329,9 +313,9 @@ impl PipelineFactory {
             .unwrap();
 
         // Create per-frame images, descriptor sets
-        for (pipeline_name, info) in &infos {
+        for (pipeline_name, info) in infos {
 
-            let pipeline = &self.pipelines.get(pipeline_name).unwrap();
+            let pipeline = &self.pipelines.get(&pipeline_name.to_string()).unwrap();
 
             let layout_info = &[pipeline.borrow().layout.descriptor_layout];
             let desc_alloc_info = vk::DescriptorSetAllocateInfo::builder()
@@ -391,11 +375,6 @@ impl PipelineFactory {
             }
 
         }
-
-        // Put pipeline info data back
-        self.pipeline_infos = infos;
-
-        PipelineGraph::new(&self.pipelines, &self.pipeline_infos)
     }
 
     unsafe fn create_commands(device: &ash::Device, queue_family_index: u32) -> (vk::CommandPool, vk::CommandBuffer) {
@@ -515,7 +494,7 @@ impl PipelineFactory {
         }
     }
 
-    pub unsafe fn new(core: Rc<VkCore>, window: &Window) -> Self {
+    pub unsafe fn new(core: Rc<VkCore>, pipeline_infos: &HashMap<&str, PipelineInfo>, window: &Window) -> Self {
         let frames : Vec<VkFrameRes> = (0..NUM_FRAMES).map(|_|{
             let semaphore_create_info = vk::SemaphoreCreateInfo::default();
 
@@ -565,16 +544,22 @@ impl PipelineFactory {
         device.destroy_image(test_image, None);
         */
     
-        PipelineFactory {
+
+        let mut graph = PipelineGraph {
             core: core,
             frames: frames,
             allocator: allocator,
-            pipeline_infos : HashMap::new(),
             width: window_size.width,
             height: window_size.height,
             pipelines: HashMap::new(),
-            descriptor_pool: vk::DescriptorPool::null()
-        }
+            descriptor_pool: vk::DescriptorPool::null(),
+            roots: Vec::new()
+        };
+
+        graph.build_pipelines(&pipeline_infos);
+        graph.create_nodes(&pipeline_infos);
+
+        graph
     }
 }
 

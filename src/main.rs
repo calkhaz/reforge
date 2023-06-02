@@ -1,7 +1,7 @@
 extern crate ash;
 extern crate shaderc;
-extern crate gpu_allocator;
 extern crate clap;
+extern crate gpu_allocator;
 
 use clap::Parser;
 use gpu_allocator as gpu_alloc;
@@ -15,9 +15,9 @@ mod vulkan;
 use vulkan::command;
 use vulkan::swapchain::SwapChain;
 use vulkan::core::VkCore;
-use vulkan::pipeline_factory::PipelineInfo;
-use vulkan::pipeline_factory::PipelineFactory;
-use vulkan::pipeline_factory::NUM_FRAMES;
+use vulkan::pipeline_graph::PipelineInfo;
+use vulkan::pipeline_graph::PipelineGraph;
+use vulkan::pipeline_graph::NUM_FRAMES;
 
 mod imagefileio;
 use imagefileio::ImageFileDecoder;
@@ -72,7 +72,7 @@ fn render_loop<F: FnMut()>(event_loop: &mut EventLoop<()>, f: &mut F) {
         });
 }
 
-fn get_modified_times(pipeline_infos: &HashMap<String, PipelineInfo>) -> HashMap<String, u64> {
+fn get_modified_times(pipeline_infos: &HashMap<&str, PipelineInfo>) -> HashMap<String, u64> {
     let mut timestamps: HashMap<String, u64> = HashMap::new();
 
     for (name, info) in pipeline_infos {
@@ -138,33 +138,34 @@ fn main() {
 
     unsafe {
     let vk_core = Rc::new(VkCore::new(&window));
-    let mut res = PipelineFactory::new(Rc::clone(&vk_core), &window);
 
-    res.add("contrast-pipeline", PipelineInfo {
-        shader_path: "shaders/contrast.comp".to_string(),
-        input_images: [(0, "file".to_string())].to_vec(),
-        output_images: [(1, "contrast".to_string())].to_vec(),
-    });
+    let pipeline_infos = HashMap::from([
+        ("contrast-pipeline", PipelineInfo {
+            shader_path: "shaders/contrast.comp".to_string(),
+            input_images: [(0, "file".to_string())].to_vec(),
+            output_images: [(1, "contrast".to_string())].to_vec()
+        }),
 
-    res.add("contrast-pipeline2", PipelineInfo {
-        shader_path: "shaders/contrast.comp".to_string(),
-        input_images: [(0, "contrast".to_string())].to_vec(),
-        output_images: [(1, "contrast2".to_string())].to_vec(),
-    });
+        ("contrast-pipeline2", PipelineInfo {
+            shader_path: "shaders/contrast.comp".to_string(),
+            input_images: [(0, "contrast".to_string())].to_vec(),
+            output_images: [(1, "contrast2".to_string())].to_vec(),
+        }),
 
-    res.add("brightness-pipeline", PipelineInfo {
-        shader_path: "shaders/brightness.comp".to_string(),
-        input_images: [(0, "contrast2".to_string())].to_vec(),
-        output_images: [(1, "swapchain".to_string())].to_vec(),
-    });
+        ("brightness-pipeline", PipelineInfo {
+            shader_path: "shaders/brightness.comp".to_string(),
+            input_images: [(0, "contrast2".to_string())].to_vec(),
+            output_images: [(1, "swapchain".to_string())].to_vec(),
+        })
+    ]);
 
-    let graph = res.build();
+    let mut graph = PipelineGraph::new(Rc::clone(&vk_core), &pipeline_infos, &window);
 
     let buffer_size = (window_width as vk::DeviceSize)*(window_height as vk::DeviceSize)*4;
-    let input_image_buffer = res.create_buffer(buffer_size, vk::BufferUsageFlags::TRANSFER_SRC, gpu_alloc::MemoryLocation::CpuToGpu);
+    let input_image_buffer = graph.create_buffer(buffer_size, vk::BufferUsageFlags::TRANSFER_SRC, gpu_alloc::MemoryLocation::CpuToGpu);
 
     // Pipeline-name -> timestamp
-    let mut last_modified_shader_times: HashMap<String, u64>  = get_modified_times(&res.pipeline_infos);
+    let mut last_modified_shader_times: HashMap<String, u64>  = get_modified_times(&pipeline_infos);
 
     let mapped_input_image_data: *mut u8 = input_image_buffer.allocation.mapped_ptr().unwrap().as_ptr() as *mut u8;
     let mut timer: std::time::Instant = std::time::Instant::now();
@@ -182,17 +183,17 @@ fn main() {
         static mut FRAME_INDEX: usize = 0;
 
 
-        let current_modified_shader_times: HashMap<String, u64>  = get_modified_times(&res.pipeline_infos);
+        let current_modified_shader_times: HashMap<String, u64>  = get_modified_times(&pipeline_infos);
 
         for (name, timestamp) in &last_modified_shader_times {
             if *current_modified_shader_times.get(name).unwrap() != *timestamp {
-                res.rebuild_pipeline(name);
+                graph.rebuild_pipeline(name);
             }
         }
 
         last_modified_shader_times = current_modified_shader_times;
 
-        let frame = &res.frames[FRAME_INDEX];
+        let frame = &graph.frames[FRAME_INDEX];
         let device = &vk_core.device;
 
         let (present_index, _) = swapchain.loader.acquire_next_image(
@@ -248,7 +249,7 @@ fn main() {
                     ..Default::default()
                 };
 
-                let input_image = &res.get_input_image();
+                let input_image = &graph.get_input_image();
 
                 // Copy user-input image from vk buffer to the input image
                 command::transition_image_layout(&device, frame.cmd_buffer, input_image.vk, vk::ImageLayout::UNDEFINED, vk::ImageLayout::TRANSFER_DST_OPTIMAL);

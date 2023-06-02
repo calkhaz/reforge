@@ -1,9 +1,9 @@
 extern crate ash;
 use ash::vk;
 
-use crate::vulkan::pipeline_factory::VkFrameRes;
-use crate::vulkan::pipeline_factory::PipelineNode;
-use crate::vulkan::pipeline_factory::PipelineGraph;
+use crate::vulkan::pipeline_graph::VkFrameRes;
+use crate::vulkan::pipeline_graph::PipelineNode;
+use crate::vulkan::pipeline_graph::PipelineGraph;
 
 pub fn transition_image_layout(device: &ash::Device, cmd: vk::CommandBuffer, image: vk::Image, src_layout: vk::ImageLayout, dst_layout: vk::ImageLayout) {
 
