@@ -2,7 +2,6 @@ extern crate ash;
 extern crate shaderc;
 extern crate gpu_allocator;
 
-use gpu_allocator as gpu_alloc;
 use gpu_allocator::vulkan as gpu_alloc_vk;
 
 use ash::vk;
@@ -15,20 +14,10 @@ use std::cell::RefCell;
 use std::fmt;
 
 use crate::vulkan::core::VkCore;
+use crate::vulkan::utils;
+use crate::vulkan::utils::Image;
 
 pub const NUM_FRAMES: usize = 2;
-
-pub struct Image {
-    pub vk: vk::Image,
-    pub view: vk::ImageView,
-    pub allocation: gpu_alloc_vk::Allocation
-}
-
-pub struct Buffer {
-    pub vk: vk::Buffer,
-    pub allocation: gpu_alloc_vk::Allocation
-}
-
 
 pub struct PipelineLayout {
     pub vk: vk::PipelineLayout,
@@ -64,7 +53,6 @@ pub struct PipelineGraph {
     pub roots: Vec<Rc<PipelineNode>>,
     core: Rc<VkCore>,
     pub frames: Vec<PipelineGraphFrame>,
-    allocator: gpu_alloc_vk::Allocator,
     pub width: u32,
     pub height: u32,
     pipelines: HashMap<String, Rc<RefCell<Pipeline>>>,
@@ -166,7 +154,7 @@ impl PipelineGraphFrame {
                                 descriptor_writes.push(PipelineGraph::storage_image_write(&image, &mut desc_image_infos, *desc_idx, descriptor_set));
                             }
                             None => {
-                                let image = PipelineGraph::create_image(device, image_name.to_string(), frame_info.width, frame_info.height, allocator);
+                                let image = utils::create_image(device, image_name.to_string(), frame_info.width, frame_info.height, allocator);
                                 descriptor_writes.push(PipelineGraph::storage_image_write(&image, &mut desc_image_infos, *desc_idx, descriptor_set));
                                 images.insert(image_name.to_string(), image);
                             }
@@ -181,7 +169,7 @@ impl PipelineGraphFrame {
                             descriptor_writes.push(PipelineGraph::storage_image_write(&image, &mut desc_image_infos, *desc_idx, descriptor_set));
                         }
                         None => {
-                            let image = PipelineGraph::create_image(device, image_name.to_string(), frame_info.width, frame_info.height, allocator);
+                            let image = utils::create_image(device, image_name.to_string(), frame_info.width, frame_info.height, allocator);
                             descriptor_writes.push(PipelineGraph::storage_image_write(&image, &mut desc_image_infos, *desc_idx, descriptor_set));
                             images.insert(image_name.to_string(), image);
                         }
@@ -230,7 +218,6 @@ impl PipelineGraph {
 
         roots
     }
-
 
     pub unsafe fn rebuild_pipeline(&mut self, name: &str) {
         let mut pipeline = self.pipelines.get_mut(name).unwrap().borrow_mut();
@@ -415,92 +402,8 @@ impl PipelineGraph {
         }
     }
 
-    pub unsafe fn create_buffer(&mut self,
-                                size: vk::DeviceSize,
-                                usage: vk::BufferUsageFlags,
-                                mem_type: gpu_alloc::MemoryLocation) -> Buffer {
-        let info = vk::BufferCreateInfo::builder()
-            .size(size)
-            .usage(usage)
-            .sharing_mode(vk::SharingMode::EXCLUSIVE);
-
-        let buffer = self.core.device.create_buffer(&info, None).unwrap();
-
-        let allocation = self.allocator
-            .allocate(&gpu_alloc_vk::AllocationCreateDesc {
-                requirements: self.core.device.get_buffer_memory_requirements(buffer),
-                location: mem_type,
-                linear: true,
-                allocation_scheme: gpu_alloc_vk::AllocationScheme::GpuAllocatorManaged,
-                name: "input-image-staging-buffer",
-            })
-            .unwrap();
-
-        self.core.device.bind_buffer_memory(buffer, allocation.memory(), allocation.offset()).unwrap();
-
-        Buffer{vk: buffer, allocation: allocation}
-    }
-
-    pub unsafe fn create_image(device: &ash::Device, name: String, width: u32, height: u32, allocator: &mut gpu_alloc_vk::Allocator) -> Image {
-        let input_image_info = vk::ImageCreateInfo::builder()
-            .image_type(vk::ImageType::TYPE_2D)
-            .array_layers(1)
-            .samples(vk::SampleCountFlags::TYPE_1)
-            .tiling(vk::ImageTiling::OPTIMAL)
-            .initial_layout(vk::ImageLayout::UNDEFINED)
-            .format(vk::Format::R8G8B8A8_UNORM)
-            .mip_levels(1)
-            .extent(vk::Extent3D{width: width, height: height, depth: 1})
-            // TOOD: Optimize for what is actually needed
-            .usage(vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::TRANSFER_SRC)
-            .sharing_mode(vk::SharingMode::EXCLUSIVE);
-
-        let vk_image = device.create_image(&input_image_info, None).unwrap();
-
-        let image_allocation = allocator
-            .allocate(&gpu_alloc_vk::AllocationCreateDesc {
-                requirements: device.get_image_memory_requirements(vk_image),
-                location: gpu_alloc::MemoryLocation::GpuOnly,
-                linear: true,
-                allocation_scheme: gpu_alloc_vk::AllocationScheme::GpuAllocatorManaged,
-                name: &name
-            })
-            .unwrap();
-
-
-        device.bind_image_memory(vk_image, image_allocation.memory(), image_allocation.offset()).unwrap();
-
-        let image_view_info = vk::ImageViewCreateInfo::builder()
-            .image(vk_image)
-            .view_type(vk::ImageViewType::TYPE_2D)
-            .format(vk::Format::R8G8B8A8_UNORM)
-            .subresource_range(*vk::ImageSubresourceRange::builder()
-                .aspect_mask(vk::ImageAspectFlags::COLOR)
-                .base_mip_level(0)
-                .level_count(1)
-                .base_array_layer(0)
-                .layer_count(1));
-
-        let image_view = device.create_image_view(&image_view_info, None).unwrap();
-
-        Image {
-            vk: vk_image,
-            view: image_view,
-            allocation: image_allocation
-        }
-    }
-
-    pub unsafe fn new(core: Rc<VkCore>, pipeline_infos: &HashMap<&str, PipelineInfo>, window: &Window) -> Self {
+    pub unsafe fn new(core: Rc<VkCore>, allocator: &mut gpu_alloc_vk::Allocator, pipeline_infos: &HashMap<&str, PipelineInfo>, window: &Window) -> Self {
         let (pipelines, descriptor_pool) = Self::build_global_pipeline_data(&core.device, &pipeline_infos);
-
-        // setting up the allocator
-        let mut allocator = gpu_alloc_vk::Allocator::new(&gpu_alloc_vk::AllocatorCreateDesc {
-            instance: core.instance.clone(),
-            device: core.device.clone(),
-            physical_device: core.pdevice,
-            debug_settings: Default::default(),
-            buffer_device_address: false,
-        }).unwrap();
 
         let window_size = window.inner_size();
 
@@ -521,12 +424,11 @@ impl PipelineGraph {
         */
     
         let roots = Self::create_nodes(&pipelines, pipeline_infos);
-        let frames = PipelineGraphFrame::new_vec(&core.device, &mut allocator, &graph_frame_info);
+        let frames = PipelineGraphFrame::new_vec(&core.device, allocator, &graph_frame_info);
 
         PipelineGraph {
             core: core,
             frames: frames,
-            allocator: allocator,
             width: window_size.width,
             height: window_size.height,
             pipelines: pipelines,
