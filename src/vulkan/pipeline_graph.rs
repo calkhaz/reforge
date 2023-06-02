@@ -113,6 +113,24 @@ struct PipelineGraphFrameInfo<'a> {
 }
 
 impl PipelineGraphFrame {
+    unsafe fn storage_image_write(image: &Image, infos: &mut Vec<vk::DescriptorImageInfo>, desc_idx: u32, set: vk::DescriptorSet) -> vk::WriteDescriptorSet {
+
+        infos.push(vk::DescriptorImageInfo {
+            image_layout: vk::ImageLayout::GENERAL,
+            image_view: image.view,
+            ..Default::default()
+        });
+
+        vk::WriteDescriptorSet {
+            dst_set: set,
+            dst_binding: desc_idx,
+            descriptor_count: 1,
+            descriptor_type: vk::DescriptorType::STORAGE_IMAGE,
+            p_image_info: infos.last().unwrap(),
+            ..Default::default()
+        }
+    }
+
     unsafe fn new_vec(device: &ash::Device, allocator: &mut gpu_alloc_vk::Allocator, frame_info: &PipelineGraphFrameInfo) -> Vec<PipelineGraphFrame> {
         let mut frames: Vec<PipelineGraphFrame> = Vec::with_capacity(frame_info.num_frames);
 
@@ -147,15 +165,15 @@ impl PipelineGraphFrame {
                     // We only want one "file" input image across frames as it will never change
                     if i > 0 && image_name == "file" {
                         let image = &frames[0].images.get("file").unwrap();
-                        descriptor_writes.push(PipelineGraph::storage_image_write(&image, &mut desc_image_infos, *desc_idx, descriptor_set));
+                        descriptor_writes.push(Self::storage_image_write(&image, &mut desc_image_infos, *desc_idx, descriptor_set));
                     } else {
                         match images.get(image_name) {
                             Some(image) => {
-                                descriptor_writes.push(PipelineGraph::storage_image_write(&image, &mut desc_image_infos, *desc_idx, descriptor_set));
+                                descriptor_writes.push(Self::storage_image_write(&image, &mut desc_image_infos, *desc_idx, descriptor_set));
                             }
                             None => {
                                 let image = utils::create_image(device, image_name.to_string(), frame_info.width, frame_info.height, allocator);
-                                descriptor_writes.push(PipelineGraph::storage_image_write(&image, &mut desc_image_infos, *desc_idx, descriptor_set));
+                                descriptor_writes.push(Self::storage_image_write(&image, &mut desc_image_infos, *desc_idx, descriptor_set));
                                 images.insert(image_name.to_string(), image);
                             }
                         }
@@ -166,11 +184,11 @@ impl PipelineGraphFrame {
                 for (desc_idx, image_name) in &info.output_images {
                     match images.get(image_name) {
                         Some(image) => {
-                            descriptor_writes.push(PipelineGraph::storage_image_write(&image, &mut desc_image_infos, *desc_idx, descriptor_set));
+                            descriptor_writes.push(Self::storage_image_write(&image, &mut desc_image_infos, *desc_idx, descriptor_set));
                         }
                         None => {
                             let image = utils::create_image(device, image_name.to_string(), frame_info.width, frame_info.height, allocator);
-                            descriptor_writes.push(PipelineGraph::storage_image_write(&image, &mut desc_image_infos, *desc_idx, descriptor_set));
+                            descriptor_writes.push(Self::storage_image_write(&image, &mut desc_image_infos, *desc_idx, descriptor_set));
                             images.insert(image_name.to_string(), image);
                         }
                     }
@@ -256,24 +274,6 @@ impl PipelineGraph {
         }
 
         sizes
-    }
-
-    unsafe fn storage_image_write(image: &Image, infos: &mut Vec<vk::DescriptorImageInfo>, desc_idx: u32, set: vk::DescriptorSet) -> vk::WriteDescriptorSet {
-
-        infos.push(vk::DescriptorImageInfo {
-            image_layout: vk::ImageLayout::GENERAL,
-            image_view: image.view,
-            ..Default::default()
-        });
-
-        vk::WriteDescriptorSet {
-            dst_set: set,
-            dst_binding: desc_idx,
-            descriptor_count: 1,
-            descriptor_type: vk::DescriptorType::STORAGE_IMAGE,
-            p_image_info: infos.last().unwrap(),
-            ..Default::default()
-        }
     }
 
     pub unsafe fn build_global_pipeline_data(device: &ash::Device, infos: &HashMap<&str, PipelineInfo>) -> (HashMap<String, Rc<RefCell<Pipeline>>>, vk::DescriptorPool) {
