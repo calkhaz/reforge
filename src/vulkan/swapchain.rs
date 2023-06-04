@@ -3,14 +3,17 @@ extern crate ash;
 use ash::vk;
 use ash::extensions::khr;
 
+use std::rc::Rc;
+
 use crate::vulkan::core::VkCore;
 
 pub struct SwapChain {
-    pub surface_format: vk::SurfaceFormatKHR,
+    surface_format: vk::SurfaceFormatKHR,
     pub vk: vk::SwapchainKHR,
     pub loader: khr::Swapchain,
     pub images: Vec<vk::Image>,
-    pub views: Vec<vk::ImageView>
+    pub views: Vec<vk::ImageView>,
+    device: Rc<ash::Device>
 }
 
 impl SwapChain {
@@ -99,11 +102,24 @@ impl SwapChain {
            }).collect();
 
         return SwapChain {
+            device: Rc::clone(&core.device),
             surface_format: surface_format,
             vk: swapchain,
             loader: swapchain_loader,
             images: present_images,
             views: present_image_views
         };
+    }
+}
+
+impl Drop for SwapChain {
+    fn drop(&mut self) {
+        unsafe {
+            self.device.device_wait_idle().unwrap();
+            for &view in &self.views {
+                self.device.destroy_image_view(view, None);
+            }
+            self.loader.destroy_swapchain(self.vk, None);
+        }
     }
 }

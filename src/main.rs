@@ -4,14 +4,12 @@ extern crate clap;
 extern crate gpu_allocator;
 
 use gpu_allocator as gpu_alloc;
-use gpu_allocator::vulkan as gpu_alloc_vk;
 
 use clap::Parser;
 
 use ash::vk;
 use std::collections::HashMap;
 use std::default::Default;
-use std::rc::Rc;
 
 mod vulkan;
 use vulkan::command;
@@ -143,15 +141,6 @@ fn main() {
     unsafe {
     let vk_core = VkCore::new(&window);
 
-    // setting up the allocator
-    let mut allocator = gpu_alloc_vk::Allocator::new(&gpu_alloc_vk::AllocatorCreateDesc {
-        instance: vk_core.instance.clone(),
-        device: (*vk_core.device).clone(),
-        physical_device: vk_core.pdevice,
-        debug_settings: Default::default(),
-        buffer_device_address: false,
-    }).unwrap();
-
     let pipeline_infos = HashMap::from([
         ("contrast-pipeline", PipelineInfo {
             shader_path: "shaders/contrast.comp".to_string(),
@@ -172,18 +161,17 @@ fn main() {
         })
     ]);
 
-    let mut graph = PipelineGraph::new(Rc::clone(&vk_core.device), &mut allocator, &pipeline_infos, &window);
+    let mut graph = PipelineGraph::new(&vk_core, &pipeline_infos, &window);
     let frames : Vec<Frame> = (0..NUM_FRAMES).map(|_|{
         Frame::new(&vk_core)
     }).collect();
 
 
     let buffer_size = (window_width as vk::DeviceSize)*(window_height as vk::DeviceSize)*4;
-    let input_image_buffer = utils::create_buffer(&vk_core.device,
+    let input_image_buffer = utils::create_buffer(&vk_core,
                                                   buffer_size,
                                                   vk::BufferUsageFlags::TRANSFER_SRC,
-                                                  gpu_alloc::MemoryLocation::CpuToGpu,
-                                                  &mut allocator);
+                                                  gpu_alloc::MemoryLocation::CpuToGpu);
 
     // Pipeline-name -> timestamp
     let mut last_modified_shader_times: HashMap<String, u64>  = get_modified_times(&pipeline_infos);

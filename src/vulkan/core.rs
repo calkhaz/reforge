@@ -1,4 +1,6 @@
 extern crate ash;
+extern crate gpu_allocator;
+
 
 use ash::{vk::{self }};
 use std::{ffi::CStr};
@@ -7,8 +9,10 @@ use std::borrow::Cow;
 use std::default::Default;
 use std::os::raw::c_char;
 use std::rc::Rc;
+use std::cell::RefCell;
 use winit::window::Window;
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
+use gpu_allocator::vulkan as gpu_alloc_vk;
 
 unsafe extern "system" fn vulkan_debug_callback(
     message_severity: vk::DebugUtilsMessageSeverityFlagsEXT,
@@ -41,6 +45,10 @@ unsafe extern "system" fn vulkan_debug_callback(
 
 
 pub struct VkCore {
+    // Allocator is always created, but we need to be able to 
+    // move this out of a mutable reference during drop and gpu_alloc_vk::Allocator
+    // has no default, so Option<> was the workaround
+    pub allocator: Option<Rc<RefCell<gpu_alloc_vk::Allocator>>>,
     pub entry: ash::Entry,
     pub instance: ash::Instance,
     pub device: Rc<ash::Device>,
@@ -103,6 +111,13 @@ impl VkCore {
 
         let queue = device.get_device_queue(queue_family_index, 0);
 
+        let allocator = Rc::new(RefCell::new(gpu_alloc_vk::Allocator::new(&gpu_alloc_vk::AllocatorCreateDesc {
+            instance: instance.clone(),
+            device: device.clone(),
+            physical_device: pdevice,
+            debug_settings: Default::default(),
+            buffer_device_address: false,
+        }).unwrap()));
 
         VkCore {
             entry: entry,
@@ -114,7 +129,8 @@ impl VkCore {
             debug_utils_loader: debug_utils,
             debug_callback: debug_callback,
             surface: surface,
-            surface_loader: surface_loader
+            surface_loader: surface_loader,
+            allocator: Some(allocator)
         }
     }
 
@@ -235,3 +251,23 @@ impl VkCore {
 
 }
 
+impl Drop for VkCore {
+    fn drop(&mut self) {
+        unsafe {
+            // unwrap option and move the data from the struct
+            let allocator_opt = std::mem::take(&mut self.allocator).unwrap();
+
+            // Pull the allocator out of the rc and refcell
+            let allocator = Rc::try_unwrap(allocator_opt).unwrap().into_inner();
+
+            // Drop allocator before device destruction
+            drop(allocator);
+
+            self.device.device_wait_idle().unwrap();
+            self.device.destroy_device(None);
+            self.surface_loader.destroy_surface(self.surface, None);
+            self.debug_utils_loader.destroy_debug_utils_messenger(self.debug_callback, None);
+            self.instance.destroy_instance(None);
+        }
+    }
+}

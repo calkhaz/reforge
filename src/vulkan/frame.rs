@@ -4,7 +4,10 @@ extern crate ash;
 use ash::vk;
 use crate::vulkan::core::VkCore;
 
+use std::rc::Rc;
+
 pub struct Frame {
+    device: Rc<ash::Device>,
     pub fence: vk::Fence,
     pub present_complete_semaphore: vk::Semaphore,
     pub render_complete_semaphore: vk::Semaphore,
@@ -41,12 +44,24 @@ impl Frame {
             let (cmd_pool, cmd_buff) = Self::create_commands(&core.device, core.queue_family_index);
 
             Frame {
+                device: Rc::clone(&core.device),
                 fence: core.device.create_fence(&fence_create_info, None).expect("Create fence failed."),
                 present_complete_semaphore: core.device.create_semaphore(&semaphore_create_info, None).unwrap(),
                 render_complete_semaphore: core.device.create_semaphore(&semaphore_create_info, None).unwrap(),
                 cmd_pool: cmd_pool,
                 cmd_buffer: cmd_buff
             }
+        }
+    }
+}
+
+impl Drop for Frame {
+    fn drop(&mut self) {
+        unsafe {
+            self.device.destroy_fence(self.fence, None);
+            self.device.destroy_semaphore(self.render_complete_semaphore, None);
+            self.device.destroy_semaphore(self.present_complete_semaphore, None);
+            self.device.destroy_command_pool(self.cmd_pool, None);
         }
     }
 }

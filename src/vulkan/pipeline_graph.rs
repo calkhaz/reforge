@@ -2,8 +2,6 @@ extern crate ash;
 extern crate shaderc;
 extern crate gpu_allocator;
 
-use gpu_allocator::vulkan as gpu_alloc_vk;
-
 use ash::vk;
 use std::ffi::CStr;
 use std::default::Default;
@@ -14,6 +12,7 @@ use std::cell::RefCell;
 use std::fmt;
 use std::ops::Drop;
 
+use crate::vulkan::core::VkCore;
 use crate::vulkan::utils;
 use crate::vulkan::utils::Image;
 
@@ -132,7 +131,8 @@ impl PipelineGraphFrame {
         }
     }
 
-    unsafe fn new_vec(device: &ash::Device, allocator: &mut gpu_alloc_vk::Allocator, frame_info: &PipelineGraphFrameInfo) -> Vec<PipelineGraphFrame> {
+    unsafe fn new_vec(core: &VkCore, frame_info: &PipelineGraphFrameInfo) -> Vec<PipelineGraphFrame> {
+        let device = &core.device;
         let mut frames: Vec<PipelineGraphFrame> = Vec::with_capacity(frame_info.num_frames);
 
         if frame_info.pipeline_infos.len() == 0  {
@@ -173,7 +173,7 @@ impl PipelineGraphFrame {
                                 descriptor_writes.push(Self::storage_image_write(&image, &mut desc_image_infos, *desc_idx, descriptor_set));
                             }
                             None => {
-                                let image = utils::create_image(device, image_name.to_string(), frame_info.width, frame_info.height, allocator);
+                                let image = utils::create_image(core, image_name.to_string(), frame_info.width, frame_info.height);
                                 descriptor_writes.push(Self::storage_image_write(&image, &mut desc_image_infos, *desc_idx, descriptor_set));
                                 images.insert(image_name.to_string(), image);
                             }
@@ -188,7 +188,7 @@ impl PipelineGraphFrame {
                             descriptor_writes.push(Self::storage_image_write(&image, &mut desc_image_infos, *desc_idx, descriptor_set));
                         }
                         None => {
-                            let image = utils::create_image(device, image_name.to_string(), frame_info.width, frame_info.height, allocator);
+                            let image = utils::create_image(core, image_name.to_string(), frame_info.width, frame_info.height);
                             descriptor_writes.push(Self::storage_image_write(&image, &mut desc_image_infos, *desc_idx, descriptor_set));
                             images.insert(image_name.to_string(), image);
                         }
@@ -407,8 +407,8 @@ impl PipelineGraph {
         }
     }
 
-    pub unsafe fn new(device: Rc<ash::Device>, allocator: &mut gpu_alloc_vk::Allocator, pipeline_infos: &HashMap<&str, PipelineInfo>, window: &Window) -> Self {
-        let (pipelines, descriptor_pool) = Self::build_global_pipeline_data(Rc::clone(&device), &pipeline_infos);
+    pub unsafe fn new(core: &VkCore, pipeline_infos: &HashMap<&str, PipelineInfo>, window: &Window) -> Self {
+        let (pipelines, descriptor_pool) = Self::build_global_pipeline_data(Rc::clone(&core.device), &pipeline_infos);
 
         let window_size = window.inner_size();
 
@@ -421,18 +421,11 @@ impl PipelineGraph {
             height: window_size.height
         };
 
-        /*
-        allocator.free(allocation).unwrap();
-        allocator.free(image_allocation).unwrap();
-        device.destroy_buffer(test_buffer, none);
-        device.destroy_image(test_image, none);
-        */
-    
         let roots = Self::create_nodes(&pipelines, pipeline_infos);
-        let frames = PipelineGraphFrame::new_vec(&device, allocator, &graph_frame_info);
+        let frames = PipelineGraphFrame::new_vec(core, &graph_frame_info);
 
         PipelineGraph {
-            device: device,
+            device: Rc::clone(&core.device),
             frames: frames,
             width: window_size.width,
             height: window_size.height,
@@ -447,6 +440,7 @@ fn destroy_pipeline(pipeline: &mut Pipeline) {
     let device = &pipeline.device;
 
     unsafe {
+    device.device_wait_idle().unwrap();
     device.destroy_pipeline(pipeline.vk_pipeline, None);
     device.destroy_pipeline_layout(pipeline.layout.vk, None);
     device.destroy_descriptor_set_layout(pipeline.layout.descriptor_layout, None);
@@ -465,15 +459,9 @@ impl Drop for PipelineGraph {
         let device = &self.device;
         unsafe {
 
-        device.device_wait_idle().unwrap();
+        self.device.device_wait_idle().unwrap();
 
         // frames
-        for frame in &self.frames {
-            for (_, image) in &frame.images {
-                device.destroy_image_view(image.view, None);
-                device.destroy_image(image.vk, None);
-            }
-        }
         self.frames.clear();
 
         // root nodes and pipelines
@@ -482,8 +470,6 @@ impl Drop for PipelineGraph {
 
         // descriptor pool
         device.destroy_descriptor_pool(self.descriptor_pool, None);
-
-
         }
     }
 }
