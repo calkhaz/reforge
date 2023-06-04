@@ -12,6 +12,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::cell::RefCell;
 use std::fmt;
+use std::ops::Drop;
 
 use crate::vulkan::core::VkCore;
 use crate::vulkan::utils;
@@ -32,6 +33,7 @@ pub struct PipelineInfo {
 }
 
 pub struct Pipeline {
+    core: Rc<VkCore>,
     shader_path: String,
     shader_module: vk::ShaderModule,
     pub layout: PipelineLayout,
@@ -238,8 +240,11 @@ impl PipelineGraph {
     }
 
     pub unsafe fn rebuild_pipeline(&mut self, name: &str) {
+        let device = &self.core.device;
         let mut pipeline = self.pipelines.get_mut(name).unwrap().borrow_mut();
-        let shader_module = Self::create_shader_module(&self.core.device, &pipeline.shader_path);
+        destroy_pipeline(&mut *pipeline);
+
+        let shader_module = Self::create_shader_module(&device, &pipeline.shader_path);
 
         if shader_module.is_some() {
             let shader_entry_name = CStr::from_bytes_with_nul_unchecked(b"main\0");
@@ -254,7 +259,7 @@ impl PipelineGraph {
                 .layout(pipeline.layout.vk)
                 .stage(shader_stage_create_infos);
 
-            pipeline.vk_pipeline = self.core.device.create_compute_pipelines(vk::PipelineCache::null(), &[pipeline_info.build()], None).unwrap()[0];
+            pipeline.vk_pipeline = device.create_compute_pipelines(vk::PipelineCache::null(), &[pipeline_info.build()], None).unwrap()[0];
             pipeline.shader_module = shader_module.unwrap();
         }
     }
@@ -276,7 +281,8 @@ impl PipelineGraph {
         sizes
     }
 
-    pub unsafe fn build_global_pipeline_data(device: &ash::Device, infos: &HashMap<&str, PipelineInfo>) -> (HashMap<String, Rc<RefCell<Pipeline>>>, vk::DescriptorPool) {
+    pub unsafe fn build_global_pipeline_data(core: &Rc<VkCore>, infos: &HashMap<&str, PipelineInfo>) -> (HashMap<String, Rc<RefCell<Pipeline>>>, vk::DescriptorPool) {
+        let device = &core.device;
         let mut pipelines: HashMap<String, Rc<RefCell<Pipeline>>> = HashMap::new();
         let mut descriptor_pool: vk::DescriptorPool = vk::DescriptorPool::null();
 
@@ -348,6 +354,7 @@ impl PipelineGraph {
             };
 
             pipelines.insert(pipeline_name.to_string(), Rc::new(RefCell::new(Pipeline {
+                core: Rc::clone(core),
                 shader_path: info.shader_path.clone(),
                 shader_module : shader_module.unwrap(),
                 layout: pipeline_layout,
@@ -403,7 +410,7 @@ impl PipelineGraph {
     }
 
     pub unsafe fn new(core: Rc<VkCore>, allocator: &mut gpu_alloc_vk::Allocator, pipeline_infos: &HashMap<&str, PipelineInfo>, window: &Window) -> Self {
-        let (pipelines, descriptor_pool) = Self::build_global_pipeline_data(&core.device, &pipeline_infos);
+        let (pipelines, descriptor_pool) = Self::build_global_pipeline_data(&core, &pipeline_infos);
 
         let window_size = window.inner_size();
 
@@ -434,6 +441,51 @@ impl PipelineGraph {
             pipelines: pipelines,
             descriptor_pool: descriptor_pool,
             roots: roots
+        }
+    }
+}
+
+fn destroy_pipeline(pipeline: &mut Pipeline) {
+    let device = &pipeline.core.device;
+
+    unsafe {
+    device.destroy_pipeline(pipeline.vk_pipeline, None);
+    device.destroy_pipeline_layout(pipeline.layout.vk, None);
+    device.destroy_descriptor_set_layout(pipeline.layout.descriptor_layout, None);
+    device.destroy_shader_module(pipeline.shader_module, None);
+    }
+}
+
+impl Drop for Pipeline {
+    fn drop(&mut self) {
+        destroy_pipeline(self);
+    }
+}
+
+impl Drop for PipelineGraph {
+    fn drop(&mut self) {
+        let device = &self.core.device;
+        unsafe {
+
+        device.device_wait_idle().unwrap();
+
+        // frames
+        for frame in &self.frames {
+            for (_, image) in &frame.images {
+                device.destroy_image_view(image.view, None);
+                device.destroy_image(image.vk, None);
+            }
+        }
+        self.frames.clear();
+
+        // root nodes and pipelines
+        self.roots.clear();
+        self.pipelines.clear();
+
+        // descriptor pool
+        device.destroy_descriptor_pool(self.descriptor_pool, None);
+
+
         }
     }
 }
