@@ -141,12 +141,12 @@ fn main() {
         .unwrap();
 
     unsafe {
-    let vk_core = Rc::new(VkCore::new(&window));
+    let vk_core = VkCore::new(&window);
 
     // setting up the allocator
     let mut allocator = gpu_alloc_vk::Allocator::new(&gpu_alloc_vk::AllocatorCreateDesc {
         instance: vk_core.instance.clone(),
-        device: vk_core.device.clone(),
+        device: (*vk_core.device).clone(),
         physical_device: vk_core.pdevice,
         debug_settings: Default::default(),
         buffer_device_address: false,
@@ -172,7 +172,7 @@ fn main() {
         })
     ]);
 
-    let mut graph = PipelineGraph::new(Rc::clone(&vk_core), &mut allocator, &pipeline_infos, &window);
+    let mut graph = PipelineGraph::new(Rc::clone(&vk_core.device), &mut allocator, &pipeline_infos, &window);
     let frames : Vec<Frame> = (0..NUM_FRAMES).map(|_|{
         Frame::new(&vk_core)
     }).collect();

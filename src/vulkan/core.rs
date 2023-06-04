@@ -6,6 +6,7 @@ use ash::extensions::khr;
 use std::borrow::Cow;
 use std::default::Default;
 use std::os::raw::c_char;
+use std::rc::Rc;
 use winit::window::Window;
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 
@@ -42,7 +43,7 @@ unsafe extern "system" fn vulkan_debug_callback(
 pub struct VkCore {
     pub entry: ash::Entry,
     pub instance: ash::Instance,
-    pub device: ash::Device,
+    pub device: Rc<ash::Device>,
     pub pdevice: vk::PhysicalDevice,
     pub queue: vk::Queue,
     pub queue_family_index: u32,
@@ -106,7 +107,7 @@ impl VkCore {
         VkCore {
             entry: entry,
             instance: instance,
-            device: device,
+            device: Rc::new(device),
             pdevice: pdevice,
             queue: queue,
             queue_family_index: queue_family_index,

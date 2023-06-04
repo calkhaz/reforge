@@ -14,7 +14,6 @@ use std::cell::RefCell;
 use std::fmt;
 use std::ops::Drop;
 
-use crate::vulkan::core::VkCore;
 use crate::vulkan::utils;
 use crate::vulkan::utils::Image;
 
@@ -33,7 +32,7 @@ pub struct PipelineInfo {
 }
 
 pub struct Pipeline {
-    core: Rc<VkCore>,
+    device: Rc<ash::Device>,
     shader_path: String,
     shader_module: vk::ShaderModule,
     pub layout: PipelineLayout,
@@ -53,7 +52,7 @@ pub struct PipelineGraphFrame {
 
 pub struct PipelineGraph {
     pub roots: Vec<Rc<PipelineNode>>,
-    core: Rc<VkCore>,
+    device: Rc<ash::Device>,
     pub frames: Vec<PipelineGraphFrame>,
     pub width: u32,
     pub height: u32,
@@ -240,7 +239,7 @@ impl PipelineGraph {
     }
 
     pub unsafe fn rebuild_pipeline(&mut self, name: &str) {
-        let device = &self.core.device;
+        let device = &self.device;
         let mut pipeline = self.pipelines.get_mut(name).unwrap().borrow_mut();
         destroy_pipeline(&mut *pipeline);
 
@@ -281,8 +280,7 @@ impl PipelineGraph {
         sizes
     }
 
-    pub unsafe fn build_global_pipeline_data(core: &Rc<VkCore>, infos: &HashMap<&str, PipelineInfo>) -> (HashMap<String, Rc<RefCell<Pipeline>>>, vk::DescriptorPool) {
-        let device = &core.device;
+    pub unsafe fn build_global_pipeline_data(device: Rc<ash::Device>, infos: &HashMap<&str, PipelineInfo>) -> (HashMap<String, Rc<RefCell<Pipeline>>>, vk::DescriptorPool) {
         let mut pipelines: HashMap<String, Rc<RefCell<Pipeline>>> = HashMap::new();
         let mut descriptor_pool: vk::DescriptorPool = vk::DescriptorPool::null();
 
@@ -354,7 +352,7 @@ impl PipelineGraph {
             };
 
             pipelines.insert(pipeline_name.to_string(), Rc::new(RefCell::new(Pipeline {
-                core: Rc::clone(core),
+                device: Rc::clone(&device),
                 shader_path: info.shader_path.clone(),
                 shader_module : shader_module.unwrap(),
                 layout: pipeline_layout,
@@ -409,8 +407,8 @@ impl PipelineGraph {
         }
     }
 
-    pub unsafe fn new(core: Rc<VkCore>, allocator: &mut gpu_alloc_vk::Allocator, pipeline_infos: &HashMap<&str, PipelineInfo>, window: &Window) -> Self {
-        let (pipelines, descriptor_pool) = Self::build_global_pipeline_data(&core, &pipeline_infos);
+    pub unsafe fn new(device: Rc<ash::Device>, allocator: &mut gpu_alloc_vk::Allocator, pipeline_infos: &HashMap<&str, PipelineInfo>, window: &Window) -> Self {
+        let (pipelines, descriptor_pool) = Self::build_global_pipeline_data(Rc::clone(&device), &pipeline_infos);
 
         let window_size = window.inner_size();
 
@@ -431,10 +429,10 @@ impl PipelineGraph {
         */
     
         let roots = Self::create_nodes(&pipelines, pipeline_infos);
-        let frames = PipelineGraphFrame::new_vec(&core.device, allocator, &graph_frame_info);
+        let frames = PipelineGraphFrame::new_vec(&device, allocator, &graph_frame_info);
 
         PipelineGraph {
-            core: core,
+            device: device,
             frames: frames,
             width: window_size.width,
             height: window_size.height,
@@ -446,7 +444,7 @@ impl PipelineGraph {
 }
 
 fn destroy_pipeline(pipeline: &mut Pipeline) {
-    let device = &pipeline.core.device;
+    let device = &pipeline.device;
 
     unsafe {
     device.destroy_pipeline(pipeline.vk_pipeline, None);
@@ -464,7 +462,7 @@ impl Drop for Pipeline {
 
 impl Drop for PipelineGraph {
     fn drop(&mut self) {
-        let device = &self.core.device;
+        let device = &self.device;
         unsafe {
 
         device.device_wait_idle().unwrap();
