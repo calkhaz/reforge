@@ -240,7 +240,6 @@ impl PipelineGraph {
     pub unsafe fn rebuild_pipeline(&mut self, name: &str) {
         let device = &self.device;
         let mut pipeline = self.pipelines.get_mut(name).unwrap().borrow_mut();
-        destroy_pipeline(&mut *pipeline);
 
         let shader_module = Self::create_shader_module(&device, &pipeline.shader_path);
 
@@ -257,6 +256,7 @@ impl PipelineGraph {
                 .layout(pipeline.layout.vk)
                 .stage(shader_stage_create_infos);
 
+            destroy_pipeline(&mut *pipeline, false);
             pipeline.vk_pipeline = device.create_compute_pipelines(vk::PipelineCache::null(), &[pipeline_info.build()], None).unwrap()[0];
             pipeline.shader_module = shader_module.unwrap();
         }
@@ -433,21 +433,23 @@ impl PipelineGraph {
     }
 }
 
-fn destroy_pipeline(pipeline: &mut Pipeline) {
+fn destroy_pipeline(pipeline: &mut Pipeline, destroy_layouts: bool) {
     let device = &pipeline.device;
 
     unsafe {
     device.device_wait_idle().unwrap();
     device.destroy_pipeline(pipeline.vk_pipeline, None);
-    device.destroy_pipeline_layout(pipeline.layout.vk, None);
-    device.destroy_descriptor_set_layout(pipeline.layout.descriptor_layout, None);
+    if destroy_layouts  {
+        device.destroy_pipeline_layout(pipeline.layout.vk, None);
+        device.destroy_descriptor_set_layout(pipeline.layout.descriptor_layout, None);
+    }
     device.destroy_shader_module(pipeline.shader_module, None);
     }
 }
 
 impl Drop for Pipeline {
     fn drop(&mut self) {
-        destroy_pipeline(self);
+        destroy_pipeline(self, true);
     }
 }
 
