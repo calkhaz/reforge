@@ -169,6 +169,7 @@ fn main() {
 
     let buffer_size = (window_width as vk::DeviceSize)*(window_height as vk::DeviceSize)*4;
     let input_image_buffer = utils::create_buffer(&vk_core,
+                                                  "input-image-staging-buffer".to_string(),
                                                   buffer_size,
                                                   vk::BufferUsageFlags::TRANSFER_SRC,
                                                   gpu_alloc::MemoryLocation::CpuToGpu);

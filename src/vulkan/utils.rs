@@ -26,6 +26,7 @@ pub struct Buffer {
 }
 
 pub unsafe fn create_buffer(core: &VkCore,
+                            name : String,
                             size: vk::DeviceSize,
                             usage: vk::BufferUsageFlags,
                             mem_type: gpu_alloc::MemoryLocation) -> Buffer {
@@ -43,7 +44,7 @@ pub unsafe fn create_buffer(core: &VkCore,
             location: mem_type,
             linear: true,
             allocation_scheme: gpu_alloc_vk::AllocationScheme::GpuAllocatorManaged,
-            name: "input-image-staging-buffer",
+            name: &name
         })
         .unwrap();
 
