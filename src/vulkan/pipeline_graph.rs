@@ -5,7 +5,6 @@ extern crate gpu_allocator;
 use ash::vk;
 use std::ffi::CStr;
 use std::default::Default;
-use winit::window::Window;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::cell::RefCell;
@@ -407,18 +406,16 @@ impl PipelineGraph {
         }
     }
 
-    pub unsafe fn new(core: &VkCore, pipeline_infos: &HashMap<&str, PipelineInfo>, window: &Window) -> Self {
+    pub unsafe fn new(core: &VkCore, pipeline_infos: &HashMap<&str, PipelineInfo>, width: u32, height: u32) -> Self {
         let (pipelines, descriptor_pool) = Self::build_global_pipeline_data(Rc::clone(&core.device), &pipeline_infos);
-
-        let window_size = window.inner_size();
 
         let graph_frame_info = PipelineGraphFrameInfo {
             pipelines: &pipelines,
             pipeline_infos: pipeline_infos,
             descriptor_pool: descriptor_pool,
             num_frames: NUM_FRAMES,
-            width: window_size.width,
-            height: window_size.height
+            width: width,
+            height: height
         };
 
         let roots = Self::create_nodes(&pipelines, pipeline_infos);
@@ -427,8 +424,8 @@ impl PipelineGraph {
         PipelineGraph {
             device: Rc::clone(&core.device),
             frames: frames,
-            width: window_size.width,
-            height: window_size.height,
+            width: width,
+            height: height,
             pipelines: pipelines,
             descriptor_pool: descriptor_pool,
             roots: roots

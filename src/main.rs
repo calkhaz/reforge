@@ -134,7 +134,7 @@ fn main() {
             f64::from(window_width),
             f64::from(window_height),
         ))
-        .with_resizable(true)
+        .with_resizable(false)
         .build(&event_loop)
         .unwrap();
 
@@ -161,7 +161,7 @@ fn main() {
         })
     ]);
 
-    let mut graph = PipelineGraph::new(&vk_core, &pipeline_infos, &window);
+    let mut graph = PipelineGraph::new(&vk_core, &pipeline_infos, window_width, window_height);
     let frames : Vec<Frame> = (0..NUM_FRAMES).map(|_|{
         Frame::new(&vk_core)
     }).collect();
