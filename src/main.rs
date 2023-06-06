@@ -24,11 +24,6 @@ use vulkan::utils;
 mod imagefileio;
 use imagefileio::ImageFileDecoder;
 
-#[cfg(any(target_os = "macos", target_os = "ios"))]
-use ash::vk::{
-    KhrGetPhysicalDeviceProperties2Fn, KhrPortabilityEnumerationFn, KhrPortabilitySubsetFn,
-};
-
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, clap::ValueEnum)]
 enum ShaderFormat {
     Rgba8,

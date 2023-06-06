@@ -71,9 +71,9 @@ impl VkCore {
 
         #[cfg(any(target_os = "macos", target_os = "ios"))]
         {
-            extension_names.push(KhrPortabilityEnumerationFn::name().as_ptr());
-            // Enabling this extension is a requirement when using `VK_KHR_portability_subset`
-            extension_names.push(KhrGetPhysicalDeviceProperties2Fn::name().as_ptr());
+            extension_names.push(ash::vk::KhrPortabilityEnumerationFn::name().as_ptr());
+            //// Enabling this extension is a requirement when using `VK_KHR_portability_subset`
+            extension_names.push(ash::vk::KhrGetPhysicalDeviceProperties2Fn::name().as_ptr());
         }
 
 
@@ -84,10 +84,10 @@ impl VkCore {
         let (surface, surface_loader) = Self::create_surface(&entry, &instance, &window);
         let (pdevice, queue_family_index) = Self::create_physical_device(&instance, surface, &surface_loader);
 
-        let device_extension_names_raw : [*const i8; 1] = [
+        let device_extension_names_raw : Vec<*const i8> = vec![
             khr::Swapchain::name().as_ptr(),
             #[cfg(any(target_os = "macos", target_os = "ios"))]
-            KhrPortabilitySubsetFn::name().as_ptr(),
+            ash::vk::KhrPortabilitySubsetFn::name().as_ptr(),
         ];
 
         let features = vk::PhysicalDeviceFeatures {
