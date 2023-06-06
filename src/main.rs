@@ -29,7 +29,23 @@ use ash::vk::{
     KhrGetPhysicalDeviceProperties2Fn, KhrPortabilityEnumerationFn, KhrPortabilitySubsetFn,
 };
 
-#[derive(clap::Parser, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, clap::ValueEnum)]
+enum ShaderFormat {
+    Rgba8,
+    Rgba32f
+}
+
+impl ShaderFormat {
+    fn to_vk_format(self) -> vk::Format {
+        match self {
+            ShaderFormat::Rgba8 => vk::Format::R8G8B8A8_UNORM,
+            ShaderFormat::Rgba32f => vk::Format::R32G32B32A32_SFLOAT
+        }
+    }
+}
+
+#[derive(clap::Parser)]
+#[command(author, version, about, long_about = None)]
 pub struct Args {
     #[arg(value_name="input-file")]
     input_file: String,
@@ -38,7 +54,10 @@ pub struct Args {
     width: Option<u32>,
 
     #[arg(long)]
-    height: Option<u32>
+    height: Option<u32>,
+
+    #[arg(long, default_value = "rgba8", help = "Shader image format")]
+    shader_format: Option<ShaderFormat>
 }
 
 use winit::{
@@ -161,7 +180,7 @@ fn main() {
         })
     ]);
 
-    let mut graph = PipelineGraph::new(&vk_core, &pipeline_infos, window_width, window_height);
+    let mut graph = PipelineGraph::new(&vk_core, &pipeline_infos, args.shader_format.unwrap().to_vk_format(), window_width, window_height);
     let frames : Vec<Frame> = (0..NUM_FRAMES).map(|_|{
         Frame::new(&vk_core)
     }).collect();

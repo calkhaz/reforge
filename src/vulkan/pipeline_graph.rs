@@ -108,7 +108,8 @@ struct PipelineGraphFrameInfo<'a> {
     pub descriptor_pool: vk::DescriptorPool,
     pub num_frames: usize,
     pub width: u32,
-    pub height: u32
+    pub height: u32,
+    pub format: vk::Format
 }
 
 impl PipelineGraphFrame {
@@ -138,7 +139,7 @@ impl PipelineGraphFrame {
             return frames;
         }
 
-        let format = vk::Format::R8G8B8A8_UNORM;
+        let format = frame_info.format;
 
         // Create per-frame images, descriptor sets
         for i in 0..frame_info.num_frames {
@@ -408,7 +409,7 @@ impl PipelineGraph {
         }
     }
 
-    pub unsafe fn new(core: &VkCore, pipeline_infos: &HashMap<&str, PipelineInfo>, width: u32, height: u32) -> Self {
+    pub unsafe fn new(core: &VkCore, pipeline_infos: &HashMap<&str, PipelineInfo>, format: vk::Format, width: u32, height: u32) -> Self {
         let (pipelines, descriptor_pool) = Self::build_global_pipeline_data(Rc::clone(&core.device), &pipeline_infos);
 
         let graph_frame_info = PipelineGraphFrameInfo {
@@ -417,7 +418,8 @@ impl PipelineGraph {
             descriptor_pool: descriptor_pool,
             num_frames: NUM_FRAMES,
             width: width,
-            height: height
+            height: height,
+            format: format
         };
 
         let roots = Self::create_nodes(&pipelines, pipeline_infos);
