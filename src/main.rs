@@ -173,6 +173,10 @@ fn main() {
                                                   buffer_size,
                                                   vk::BufferUsageFlags::TRANSFER_SRC,
                                                   gpu_alloc::MemoryLocation::CpuToGpu);
+    let input_srgb_image = utils::create_image(&vk_core,
+                                               "input-image-srgb".to_string(),
+                                               vk::Format::R8G8B8A8_SRGB,
+                                               window_width, window_height);
 
     // Pipeline-name -> timestamp
     let mut last_modified_shader_times: HashMap<String, u64>  = get_modified_times(&pipeline_infos);
@@ -219,7 +223,6 @@ fn main() {
             .wait_for_fences(&[frame.fence], true, std::u64::MAX)
             .expect("Wait for fence failed.");
 
-
         let elapsed_ms = get_elapsed_ms(&timer);
         avg_ms = moving_avg(avg_ms, elapsed_ms);
         print!("\rFrame: {:.2?}ms , Avg: {:.2?}ms ", elapsed_ms, avg_ms);
@@ -245,7 +248,7 @@ fn main() {
 
         if FIRST_RUN[FRAME_INDEX] {
             if FRAME_INDEX == 0 {
-                let regions = vk::BufferImageCopy {
+                let buffer_regions = vk::BufferImageCopy {
                     buffer_offset: input_image_buffer.allocation.offset(),
                     image_subresource: vk::ImageSubresourceLayers {
                         aspect_mask: vk::ImageAspectFlags::COLOR,
@@ -262,9 +265,27 @@ fn main() {
 
                 let input_image = &graph.get_input_image();
 
-                // Copy user-input image from vk buffer to the input image
+                /* The goal here is to copy the input file from a vulkan buffer to an srgb image
+                 * "input_srgb_image" and then to a linear rgb "input_image" so we have the correct
+                 * gamma */
+
+                // 1. Transition the two input images so they are ready to be transfer destinations
                 command::transition_image_layout(&device, frame.cmd_buffer, input_image.vk, vk::ImageLayout::UNDEFINED, vk::ImageLayout::TRANSFER_DST_OPTIMAL);
-                device.cmd_copy_buffer_to_image(frame.cmd_buffer, input_image_buffer.vk, input_image.vk, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &[regions]);
+                command::transition_image_layout(&device, frame.cmd_buffer, input_srgb_image.vk, vk::ImageLayout::UNDEFINED, vk::ImageLayout::TRANSFER_DST_OPTIMAL);
+
+                // 2. Copy the buffer to the srgb image and then make it ready to transfer out
+                device.cmd_copy_buffer_to_image(frame.cmd_buffer, input_image_buffer.vk, input_srgb_image.vk, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &[buffer_regions]);
+                command::transition_image_layout(&device, frame.cmd_buffer, input_srgb_image.vk, vk::ImageLayout::UNDEFINED, vk::ImageLayout::TRANSFER_SRC_OPTIMAL);
+
+                // 3. Copy the srgb image to the linear input image and get it ready for general compute
+                //    Note: If a regular image_copy is used here, we will not get the desired gamma
+                //    correction from the format change
+                command::blit_copy(&device, frame.cmd_buffer, &command::BlitCopy {
+                    src_image: input_srgb_image.vk, src_layout: vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+                    dst_image: input_image.vk,      dst_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                    width: window_width,
+                    height: window_height
+                });
                 command::transition_image_layout(&device, frame.cmd_buffer, input_image.vk, vk::ImageLayout::TRANSFER_DST_OPTIMAL, vk::ImageLayout::GENERAL);
             }
 

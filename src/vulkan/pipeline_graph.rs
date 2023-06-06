@@ -116,7 +116,7 @@ impl PipelineGraphFrame {
 
         infos.push(vk::DescriptorImageInfo {
             image_layout: vk::ImageLayout::GENERAL,
-            image_view: image.view,
+            image_view: image.view.unwrap(),
             ..Default::default()
         });
 
@@ -137,6 +137,8 @@ impl PipelineGraphFrame {
         if frame_info.pipeline_infos.len() == 0  {
             return frames;
         }
+
+        let format = vk::Format::R8G8B8A8_UNORM;
 
         // Create per-frame images, descriptor sets
         for i in 0..frame_info.num_frames {
@@ -172,7 +174,7 @@ impl PipelineGraphFrame {
                                 descriptor_writes.push(Self::storage_image_write(&image, &mut desc_image_infos, *desc_idx, descriptor_set));
                             }
                             None => {
-                                let image = utils::create_image(core, image_name.to_string(), frame_info.width, frame_info.height);
+                                let image = utils::create_image(core, image_name.to_string(), format, frame_info.width, frame_info.height);
                                 descriptor_writes.push(Self::storage_image_write(&image, &mut desc_image_infos, *desc_idx, descriptor_set));
                                 images.insert(image_name.to_string(), image);
                             }
@@ -187,7 +189,7 @@ impl PipelineGraphFrame {
                             descriptor_writes.push(Self::storage_image_write(&image, &mut desc_image_infos, *desc_idx, descriptor_set));
                         }
                         None => {
-                            let image = utils::create_image(core, image_name.to_string(), frame_info.width, frame_info.height);
+                            let image = utils::create_image(core, image_name.to_string(), format, frame_info.width, frame_info.height);
                             descriptor_writes.push(Self::storage_image_write(&image, &mut desc_image_infos, *desc_idx, descriptor_set));
                             images.insert(image_name.to_string(), image);
                         }

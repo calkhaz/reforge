@@ -8,7 +8,6 @@ use std::rc::Rc;
 use crate::vulkan::core::VkCore;
 
 pub struct SwapChain {
-    surface_format: vk::SurfaceFormatKHR,
     pub vk: vk::SwapchainKHR,
     pub loader: khr::Swapchain,
     pub images: Vec<vk::Image>,
@@ -24,7 +23,11 @@ impl SwapChain {
 
         let surface_format = core.surface_loader
             .get_physical_device_surface_formats(core.pdevice, core.surface)
-            .unwrap()[0];
+            .expect("Found no valid formats for the swapchain")
+            .iter().cloned()
+            .find(|&format| format.format == vk::Format::B8G8R8A8_SRGB &&
+                            format.color_space == vk::ColorSpaceKHR::SRGB_NONLINEAR)
+            .expect("Could not find desired swapchain B8G8R8A8_SRGB format");
 
         let mut desired_image_count = surface_capabilities.min_image_count + 1;
         if surface_capabilities.max_image_count > 0
@@ -64,7 +67,7 @@ impl SwapChain {
             .image_color_space(surface_format.color_space)
             .image_format(surface_format.format)
             .image_extent(surface_resolution)
-            .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::STORAGE| vk::ImageUsageFlags::TRANSFER_DST)
+            .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_DST)
             .image_sharing_mode(vk::SharingMode::EXCLUSIVE)
             .pre_transform(pre_transform)
             .composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE)
@@ -103,7 +106,6 @@ impl SwapChain {
 
         return SwapChain {
             device: Rc::clone(&core.device),
-            surface_format: surface_format,
             vk: swapchain,
             loader: swapchain_loader,
             images: present_images,

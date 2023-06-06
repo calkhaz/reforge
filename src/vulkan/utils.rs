@@ -15,7 +15,7 @@ pub struct Image {
     allocator: Rc<RefCell<gpu_alloc_vk::Allocator>>,
     pub allocation: gpu_alloc_vk::Allocation,
     pub vk: vk::Image,
-    pub view: vk::ImageView,
+    pub view: Option<vk::ImageView>,
 }
 
 pub struct Buffer {
@@ -53,18 +53,27 @@ pub unsafe fn create_buffer(core: &VkCore,
     Buffer{device: Rc::clone(&core.device), allocator: Rc::clone(&allocator), vk: buffer, allocation: allocation}
 }
 
-pub unsafe fn create_image(core: &VkCore, name: String, width: u32, height: u32) -> Image {
+pub unsafe fn create_image(core: &VkCore, name: String, format: vk::Format, width: u32, height: u32) -> Image {
+
+    let mut usage = vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::TRANSFER_SRC;
+
+    // SRGB will not be used in the compute shaders because
+    // vulkan complained about it and didn't allow it
+    if format != vk::Format::R8G8B8A8_SRGB {
+        usage |= vk::ImageUsageFlags::STORAGE;
+    }
+
     let input_image_info = vk::ImageCreateInfo::builder()
         .image_type(vk::ImageType::TYPE_2D)
         .array_layers(1)
         .samples(vk::SampleCountFlags::TYPE_1)
         .tiling(vk::ImageTiling::OPTIMAL)
         .initial_layout(vk::ImageLayout::UNDEFINED)
-        .format(vk::Format::R8G8B8A8_UNORM)
+        .format(format)
         .mip_levels(1)
         .extent(vk::Extent3D{width: width, height: height, depth: 1})
         // TOOD: Optimize for what is actually needed
-        .usage(vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::TRANSFER_SRC)
+        .usage(usage)
         .sharing_mode(vk::SharingMode::EXCLUSIVE);
 
     let vk_image = core.device.create_image(&input_image_info, None).unwrap();
@@ -83,18 +92,25 @@ pub unsafe fn create_image(core: &VkCore, name: String, width: u32, height: u32)
 
     core.device.bind_image_memory(vk_image, image_allocation.memory(), image_allocation.offset()).unwrap();
 
-    let image_view_info = vk::ImageViewCreateInfo::builder()
-        .image(vk_image)
-        .view_type(vk::ImageViewType::TYPE_2D)
-        .format(vk::Format::R8G8B8A8_UNORM)
-        .subresource_range(*vk::ImageSubresourceRange::builder()
-            .aspect_mask(vk::ImageAspectFlags::COLOR)
-            .base_mip_level(0)
-            .level_count(1)
-            .base_array_layer(0)
-            .layer_count(1));
+    // Because SRGB is only going to be used for blitting, an image view
+    // is not required and only causes validation warnings
+    let image_view = if format != vk::Format::R8G8B8A8_SRGB {
+        let image_view_info = vk::ImageViewCreateInfo::builder()
+            .image(vk_image)
+            .view_type(vk::ImageViewType::TYPE_2D)
+            .format(format)
+            .subresource_range(*vk::ImageSubresourceRange::builder()
+                .aspect_mask(vk::ImageAspectFlags::COLOR)
+                .base_mip_level(0)
+                .level_count(1)
+                .base_array_layer(0)
+                .layer_count(1));
 
-    let image_view = core.device.create_image_view(&image_view_info, None).unwrap();
+        Some(core.device.create_image_view(&image_view_info, None).unwrap())
+    }
+    else {
+        None
+    };
 
     Image {
         device: Rc::clone(&core.device),
@@ -118,7 +134,9 @@ impl Drop for Buffer {
 impl Drop for Image {
     fn drop(&mut self) {
         unsafe {
-            self.device.destroy_image_view(self.view, None);
+            if let Some(view) = self.view {
+                self.device.destroy_image_view(view, None);
+            }
             self.device.destroy_image(self.vk, None);
         }
         let allocation = std::mem::take(&mut self.allocation);
