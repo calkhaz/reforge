@@ -40,7 +40,6 @@ impl ShaderFormat {
 }
 
 #[derive(clap::Parser)]
-#[command(author, version, about, long_about = None)]
 pub struct Args {
     #[arg(value_name="input-file")]
     input_file: String,
