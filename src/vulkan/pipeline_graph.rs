@@ -259,9 +259,19 @@ impl PipelineGraph {
                 .layout(pipeline.layout.vk)
                 .stage(shader_stage_create_infos);
 
-            destroy_pipeline(&mut *pipeline, false);
-            pipeline.vk_pipeline = device.create_compute_pipelines(vk::PipelineCache::null(), &[pipeline_info.build()], None).unwrap()[0];
-            pipeline.shader_module = shader_module.unwrap();
+            // In some cases, the spirv code compiles but we fail to create the pipeline due to
+            // other issues, which can still be related to the shader code being wrong or
+            // incompatible with current configurations
+            match device.create_compute_pipelines(vk::PipelineCache::null(), &[pipeline_info.build()], None) {
+                Ok(vk_pipeline) =>  {
+                    destroy_pipeline(&mut *pipeline, false);
+                    pipeline.vk_pipeline = vk_pipeline[0];
+                    pipeline.shader_module = shader_module.unwrap();
+                },
+                Err(error) => {
+                    eprintln!("{:?}", error);
+                }
+            }
         }
     }
 
