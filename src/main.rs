@@ -91,9 +91,17 @@ fn get_modified_times(pipeline_infos: &HashMap<&str, PipelineInfo>) -> HashMap<S
     let mut timestamps: HashMap<String, u64> = HashMap::new();
 
     for (name, info) in pipeline_infos {
-        let timestamp = std::fs::metadata(&info.shader_path).unwrap().modified().unwrap().duration_since(std::time::SystemTime::UNIX_EPOCH).unwrap().as_secs();
-
-        timestamps.insert(name.to_string(), timestamp);
+        match std::fs::metadata(&info.shader_path) {
+            Ok(metadata) => {
+                let timestamp = metadata.modified().unwrap().duration_since(std::time::SystemTime::UNIX_EPOCH).unwrap().as_secs();
+                timestamps.insert(name.to_string(), timestamp);
+            },
+            // Set the modification time to zero so it gets picked up
+            // up when the file is findable again
+            Err(_) => {
+                timestamps.insert(name.to_string(), 0);
+            }
+        };
     }
 
     timestamps
@@ -209,12 +217,22 @@ fn main() {
         static mut FIRST_RUN: [bool;NUM_FRAMES] = [true ; NUM_FRAMES];
         static mut FRAME_INDEX: usize = 0;
 
-
         let current_modified_shader_times: HashMap<String, u64>  = get_modified_times(&pipeline_infos);
 
-        for (name, timestamp) in &last_modified_shader_times {
-            if *current_modified_shader_times.get(name).unwrap() != *timestamp {
-                graph.rebuild_pipeline(name);
+        for (name, last_timestamp) in &last_modified_shader_times {
+            match *current_modified_shader_times.get(name).unwrap() {
+                // If the file was set to 0, we were unable to find it
+                // Ex: File was moved or not available, print an error just once if we previously saw it
+                0 => {
+                    if 0 != *last_timestamp {
+                        eprintln!("Unable to access shader file: {}", pipeline_infos.get(name.as_str()).unwrap().shader_path);
+                    }
+                }
+                modified_timestamp => {
+                    if modified_timestamp != *last_timestamp {
+                        graph.rebuild_pipeline(&name);
+                    }
+                }
             }
         }
 
