@@ -164,22 +164,33 @@ fn main() {
     unsafe {
     let vk_core = VkCore::new(&window);
 
+    /*
+    // Example of chained shaders (currently all just passthrough)
     let pipeline_infos = HashMap::from([
-        ("contrast-pipeline", PipelineInfo {
-            shader_path: "shaders/contrast.comp".to_string(),
+        ("passthrough-pipeline-0", PipelineInfo {
+            shader_path: "shaders/passthrough.comp".to_string(),
             input_images: [(0, FILE_INPUT.to_string())].to_vec(),
-            output_images: [(1, "contrast".to_string())].to_vec()
+            output_images: [(1, "passthrough-0".to_string())].to_vec()
         }),
 
-        ("contrast-pipeline2", PipelineInfo {
-            shader_path: "shaders/contrast.comp".to_string(),
-            input_images: [(0, "contrast".to_string())].to_vec(),
-            output_images: [(1, "contrast2".to_string())].to_vec(),
+        ("passthrough-pipeline-1", PipelineInfo {
+            shader_path: "shaders/passthrough.comp".to_string(),
+            input_images: [(0, "passthrough-0".to_string())].to_vec(),
+            output_images: [(1, "passthrough-1".to_string())].to_vec(),
         }),
 
-        ("brightness-pipeline", PipelineInfo {
-            shader_path: "shaders/brightness.comp".to_string(),
-            input_images: [(0, "contrast2".to_string())].to_vec(),
+        ("passthrough-pipeline-2", PipelineInfo {
+            shader_path: "shaders/passthrough.comp".to_string(),
+            input_images: [(0, "passthrough-1".to_string())].to_vec(),
+            output_images: [(1, SWAPCHAIN_OUTPUT.to_string())].to_vec(),
+        })
+    ]);
+    */
+
+    let pipeline_infos = HashMap::from([
+        ("passthrough-pipeline", PipelineInfo {
+            shader_path: "shaders/passthrough.comp".to_string(),
+            input_images: [(0, FILE_INPUT.to_string())].to_vec(),
             output_images: [(1, SWAPCHAIN_OUTPUT.to_string())].to_vec(),
         })
     ]);
