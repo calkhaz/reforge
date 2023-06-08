@@ -16,6 +16,8 @@ use crate::vulkan::utils;
 use crate::vulkan::utils::Image;
 
 pub const NUM_FRAMES: usize = 2;
+pub const FILE_INPUT: &str = "rf:file-input";
+pub const SWAPCHAIN_OUTPUT: &str = "rf:swapchain";
 
 pub struct PipelineLayout {
     pub vk: vk::PipelineLayout,
@@ -165,9 +167,9 @@ impl PipelineGraphFrame {
 
                 // Input images
                 for (desc_idx, image_name) in &info.input_images {
-                    // We only want one "file" input image across frames as it will never change
-                    if i > 0 && image_name == "file" {
-                        let image = &frames[0].images.get("file").unwrap();
+                    // We only want one FILE_INPUT input image across frames as it will never change
+                    if i > 0 && image_name == FILE_INPUT {
+                        let image = &frames[0].images.get(FILE_INPUT).unwrap();
                         descriptor_writes.push(Self::storage_image_write(&image, &mut desc_image_infos, *desc_idx, descriptor_set));
                     } else {
                         match images.get(image_name) {
@@ -231,7 +233,7 @@ impl PipelineGraph {
 
     pub fn create_nodes(pipelines: &HashMap<String, Rc<RefCell<Pipeline>>>, pipeline_infos: &HashMap<&str, PipelineInfo>) -> Vec<Rc<PipelineNode>> {
         let mut roots: Vec<Rc<PipelineNode>> = Vec::new();
-        let matching_root_pipelines = Self::get_pipelines_with_input("file", pipelines, &pipeline_infos);
+        let matching_root_pipelines = Self::get_pipelines_with_input(FILE_INPUT, pipelines, &pipeline_infos);
 
         for (name, info, pipeline) in &matching_root_pipelines {
             roots.push(Rc::new(PipelineNode::new(name.to_string(), Rc::clone(pipeline), info, pipelines, pipeline_infos)));
@@ -276,7 +278,7 @@ impl PipelineGraph {
     }
 
     pub fn get_input_image(&self) -> &Image {
-        &self.frames[0].images.get("file").unwrap()
+        &self.frames[0].images.get(FILE_INPUT).unwrap()
     }
 
     pub fn map_to_desc_size(map: &HashMap<vk::DescriptorType, u32>) -> Vec<vk::DescriptorPoolSize> {
@@ -325,7 +327,7 @@ impl PipelineGraph {
 
             // Output images
             for (desc_idx, image_name) in &info.output_images {
-                if image_name == "swapchain"  {
+                if image_name == SWAPCHAIN_OUTPUT  {
                     found_swapchain_image = true;
                 }
 
@@ -373,7 +375,7 @@ impl PipelineGraph {
         }
 
         if !found_swapchain_image  {
-            eprintln!("No output named \"swapchain\", which is currently required");
+            eprintln!("No output named \"{}\", which is currently required", SWAPCHAIN_OUTPUT);
             std::process::exit(1);
         }
 
