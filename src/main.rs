@@ -21,7 +21,9 @@ use vulkan::pipeline_graph::NUM_FRAMES;
 use vulkan::pipeline_graph::FILE_INPUT;
 use vulkan::pipeline_graph::SWAPCHAIN_OUTPUT;
 use vulkan::frame::Frame;
-use vulkan::utils;
+use vulkan::utils as vkutils;
+
+mod utils;
 
 mod imagefileio;
 use imagefileio::ImageFileDecoder;
@@ -89,58 +91,6 @@ fn render_loop<F: FnMut()>(event_loop: &mut EventLoop<()>, f: &mut F) {
         });
 }
 
-fn get_modified_times(pipeline_infos: &HashMap<&str, PipelineInfo>) -> HashMap<String, u64> {
-    let mut timestamps: HashMap<String, u64> = HashMap::new();
-
-    for (name, info) in pipeline_infos {
-        match std::fs::metadata(&info.shader_path) {
-            Ok(metadata) => {
-                let timestamp = metadata.modified().unwrap().duration_since(std::time::SystemTime::UNIX_EPOCH).unwrap().as_secs();
-                timestamps.insert(name.to_string(), timestamp);
-            },
-            // Set the modification time to zero so it gets picked up
-            // up when the file is findable again
-            Err(_) => {
-                timestamps.insert(name.to_string(), 0);
-            }
-        };
-    }
-
-    timestamps
-}
-
-fn get_dim(width: u32, height: u32, new_width: Option<u32>, new_height: Option<u32>) -> (u32, u32) {
-    let mut w  = width;
-    let mut h = height;
-
-    if new_width.is_some() && new_height.is_some() {
-        return (new_width.unwrap(), new_height.unwrap())
-    }
-
-    if new_width.is_some() {
-        w = new_width.unwrap();
-        h = ((w as f32/width as f32)*height as f32) as u32;
-    }
-    else if new_height.is_some() {
-        h = new_height.unwrap();
-        w = ((h as f32/(height as f32))*width as f32) as u32;
-    }
-
-    (w, h)
-}
-
-fn moving_avg(mut avg: f64, next_value: f64) -> f64 {
-
-    avg -= avg / 60.0;
-    avg += next_value / 60.0;
-
-    return avg;
-}
-
-fn get_elapsed_ms(inst: &std::time::Instant) -> f64{
-    return (inst.elapsed().as_nanos() as f64)/1e6 as f64;
-}
-
 fn main() {
     let args = Args::parse();
 
@@ -148,7 +98,7 @@ fn main() {
 
     let mut file_decoder = ImageFileDecoder::new(&args.input_file);
 
-    let (window_width, window_height) = get_dim(file_decoder.width, file_decoder.height, args.width, args.height);
+    let (window_width, window_height) = utils::get_dim(file_decoder.width, file_decoder.height, args.width, args.height);
 
     let mut event_loop = EventLoop::new();
     let window = WindowBuilder::new()
@@ -202,24 +152,24 @@ fn main() {
 
 
     let buffer_size = (window_width as vk::DeviceSize)*(window_height as vk::DeviceSize)*4;
-    let input_image_buffer = utils::create_buffer(&vk_core,
-                                                  "input-image-staging-buffer".to_string(),
-                                                  buffer_size,
-                                                  vk::BufferUsageFlags::TRANSFER_SRC,
-                                                  gpu_alloc::MemoryLocation::CpuToGpu);
-    let input_srgb_image = utils::create_image(&vk_core,
-                                               "input-image-srgb".to_string(),
-                                               vk::Format::R8G8B8A8_SRGB,
-                                               window_width, window_height);
+    let input_image_buffer = vkutils::create_buffer(&vk_core,
+                                                    "input-image-staging-buffer".to_string(),
+                                                    buffer_size,
+                                                    vk::BufferUsageFlags::TRANSFER_SRC,
+                                                    gpu_alloc::MemoryLocation::CpuToGpu);
+    let input_srgb_image = vkutils::create_image(&vk_core,
+                                                 "input-image-srgb".to_string(),
+                                                 vk::Format::R8G8B8A8_SRGB,
+                                                 window_width, window_height);
 
     // Pipeline-name -> timestamp
-    let mut last_modified_shader_times: HashMap<String, u64>  = get_modified_times(&pipeline_infos);
+    let mut last_modified_shader_times: HashMap<String, u64> = utils::get_modified_times(&pipeline_infos);
 
     let mapped_input_image_data: *mut u8 = input_image_buffer.allocation.mapped_ptr().unwrap().as_ptr() as *mut u8;
     let mut timer: std::time::Instant = std::time::Instant::now();
 
     file_decoder.decode(mapped_input_image_data, window_width, window_height);
-    let elapsed_ms = get_elapsed_ms(&timer);
+    let elapsed_ms = utils::get_elapsed_ms(&timer);
     println!("File Decode and resize: {:.2?}ms", elapsed_ms);
 
     let swapchain = SwapChain::new(&vk_core, window_width, window_height);
@@ -230,7 +180,7 @@ fn main() {
         static mut FIRST_RUN: [bool;NUM_FRAMES] = [true ; NUM_FRAMES];
         static mut FRAME_INDEX: usize = 0;
 
-        let current_modified_shader_times: HashMap<String, u64>  = get_modified_times(&pipeline_infos);
+        let current_modified_shader_times: HashMap<String, u64> = utils::get_modified_times(&pipeline_infos);
 
         for (name, last_timestamp) in &last_modified_shader_times {
             match *current_modified_shader_times.get(name).unwrap() {
@@ -267,8 +217,8 @@ fn main() {
             .wait_for_fences(&[frame.fence], true, std::u64::MAX)
             .expect("Wait for fence failed.");
 
-        let elapsed_ms = get_elapsed_ms(&timer);
-        avg_ms = moving_avg(avg_ms, elapsed_ms);
+        let elapsed_ms = utils::get_elapsed_ms(&timer);
+        avg_ms = utils::moving_avg(avg_ms, elapsed_ms);
         print!("\rFrame: {:.2?}ms , Avg: {:.2?}ms ", elapsed_ms, avg_ms);
         timer = std::time::Instant::now();
 
