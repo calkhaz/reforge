@@ -12,8 +12,8 @@ use std::fmt;
 use std::ops::Drop;
 
 use crate::vulkan::core::VkCore;
-use crate::vulkan::utils;
-use crate::vulkan::utils::Image;
+use crate::vulkan::vkutils;
+use crate::vulkan::vkutils::Image;
 
 pub const NUM_FRAMES: usize = 2;
 pub const FILE_INPUT: &str = "rf:file-input";
@@ -177,7 +177,7 @@ impl PipelineGraphFrame {
                                 descriptor_writes.push(Self::storage_image_write(&image, &mut desc_image_infos, *desc_idx, descriptor_set));
                             }
                             None => {
-                                let image = utils::create_image(core, image_name.to_string(), format, frame_info.width, frame_info.height);
+                                let image = vkutils::create_image(core, image_name.to_string(), format, frame_info.width, frame_info.height);
                                 descriptor_writes.push(Self::storage_image_write(&image, &mut desc_image_infos, *desc_idx, descriptor_set));
                                 images.insert(image_name.to_string(), image);
                             }
@@ -192,7 +192,7 @@ impl PipelineGraphFrame {
                             descriptor_writes.push(Self::storage_image_write(&image, &mut desc_image_infos, *desc_idx, descriptor_set));
                         }
                         None => {
-                            let image = utils::create_image(core, image_name.to_string(), format, frame_info.width, frame_info.height);
+                            let image = vkutils::create_image(core, image_name.to_string(), format, frame_info.width, frame_info.height);
                             descriptor_writes.push(Self::storage_image_write(&image, &mut desc_image_infos, *desc_idx, descriptor_set));
                             images.insert(image_name.to_string(), image);
                         }

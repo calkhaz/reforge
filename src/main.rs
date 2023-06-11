@@ -21,7 +21,7 @@ use vulkan::pipeline_graph::NUM_FRAMES;
 use vulkan::pipeline_graph::FILE_INPUT;
 use vulkan::pipeline_graph::SWAPCHAIN_OUTPUT;
 use vulkan::frame::Frame;
-use vulkan::utils as vkutils;
+use vulkan::vkutils;
 
 mod utils;
 

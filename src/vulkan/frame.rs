@@ -3,7 +3,7 @@ extern crate ash;
 
 use ash::vk;
 use crate::vulkan::core::VkCore;
-use crate::vulkan::utils::GpuTimer;
+use crate::vulkan::vkutils::GpuTimer;
 
 use std::rc::Rc;
 
