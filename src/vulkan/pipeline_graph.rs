@@ -15,7 +15,6 @@ use crate::vulkan::core::VkCore;
 use crate::vulkan::vkutils;
 use crate::vulkan::vkutils::Image;
 
-pub const NUM_FRAMES: usize = 2;
 pub const FILE_INPUT: &str = "rf:file-input";
 pub const SWAPCHAIN_OUTPUT: &str = "rf:swapchain";
 
@@ -294,7 +293,7 @@ impl PipelineGraph {
         sizes
     }
 
-    pub unsafe fn build_global_pipeline_data(device: Rc<ash::Device>, infos: &HashMap<&str, PipelineInfo>) -> (HashMap<String, Rc<RefCell<Pipeline>>>, vk::DescriptorPool) {
+    pub unsafe fn build_global_pipeline_data(device: Rc<ash::Device>, infos: &HashMap<&str, PipelineInfo>, num_frames: usize) -> (HashMap<String, Rc<RefCell<Pipeline>>>, vk::DescriptorPool) {
         let mut pipelines: HashMap<String, Rc<RefCell<Pipeline>>> = HashMap::new();
         let mut descriptor_pool: vk::DescriptorPool = vk::DescriptorPool::null();
 
@@ -320,7 +319,7 @@ impl PipelineGraph {
 
             // Input images
             for (desc_idx, _) in &info.input_images {
-                *descriptor_size_map.entry(vk::DescriptorType::STORAGE_IMAGE).or_insert(0) += 1*NUM_FRAMES as u32;
+                *descriptor_size_map.entry(vk::DescriptorType::STORAGE_IMAGE).or_insert(0) += 1*num_frames as u32;
                 image_binding.binding = *desc_idx;
                 descriptor_layout_bindings.push(image_binding);
             }
@@ -331,7 +330,7 @@ impl PipelineGraph {
                     found_swapchain_image = true;
                 }
 
-                *descriptor_size_map.entry(vk::DescriptorType::STORAGE_IMAGE).or_insert(0) += 1*NUM_FRAMES as u32;
+                *descriptor_size_map.entry(vk::DescriptorType::STORAGE_IMAGE).or_insert(0) += 1*num_frames as u32;
                 image_binding.binding = *desc_idx;
                 descriptor_layout_bindings.push(image_binding);
             }
@@ -383,9 +382,9 @@ impl PipelineGraph {
         let descriptor_size_vec = Self::map_to_desc_size(&descriptor_size_map);
 
         // We determine number of sets by the number of pipelines
-        // Generally, each pipeline will have NUM_FRAMES amount of descriptor copies
+        // Generally, each pipeline will have num_frames amount of descriptor copies
         // However, if there is a set of swapchain images being used for one pipeline, we will include that
-        let num_max_sets = NUM_FRAMES as u32*infos.len() as u32;
+        let num_max_sets = num_frames as u32*infos.len() as u32;
 
         let descriptor_pool_info = vk::DescriptorPoolCreateInfo::builder()
             .pool_sizes(&descriptor_size_vec)
@@ -421,14 +420,14 @@ impl PipelineGraph {
         }
     }
 
-    pub unsafe fn new(core: &VkCore, pipeline_infos: &HashMap<&str, PipelineInfo>, format: vk::Format, width: u32, height: u32) -> Self {
-        let (pipelines, descriptor_pool) = Self::build_global_pipeline_data(Rc::clone(&core.device), &pipeline_infos);
+    pub unsafe fn new(core: &VkCore, pipeline_infos: &HashMap<&str, PipelineInfo>, format: vk::Format, width: u32, height: u32, num_frames: usize) -> Self {
+        let (pipelines, descriptor_pool) = Self::build_global_pipeline_data(Rc::clone(&core.device), &pipeline_infos, num_frames);
 
         let graph_frame_info = PipelineGraphFrameInfo {
             pipelines: &pipelines,
             pipeline_infos: pipeline_infos,
             descriptor_pool: descriptor_pool,
-            num_frames: NUM_FRAMES,
+            num_frames: num_frames,
             width: width,
             height: height,
             format: format

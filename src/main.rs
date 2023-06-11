@@ -17,7 +17,6 @@ use vulkan::swapchain::SwapChain;
 use vulkan::core::VkCore;
 use vulkan::pipeline_graph::PipelineInfo;
 use vulkan::pipeline_graph::PipelineGraph;
-use vulkan::pipeline_graph::NUM_FRAMES;
 use vulkan::pipeline_graph::FILE_INPUT;
 use vulkan::pipeline_graph::SWAPCHAIN_OUTPUT;
 use vulkan::frame::Frame;
@@ -55,7 +54,10 @@ pub struct Args {
     height: Option<u32>,
 
     #[arg(long, default_value = "rgba8", help = "Shader image format")]
-    shader_format: Option<ShaderFormat>
+    shader_format: Option<ShaderFormat>,
+
+    #[arg(long, default_value= "2", help = "Number of frame-in-flight to be used when displaying to the swapchain")]
+    num_frames: Option<usize>,
 }
 
 use winit::{
@@ -93,6 +95,7 @@ fn render_loop<F: FnMut()>(event_loop: &mut EventLoop<()>, f: &mut F) {
 
 fn main() {
     let args = Args::parse();
+    let num_frames = args.num_frames.unwrap();
 
     imagefileio::init();
 
@@ -145,8 +148,8 @@ fn main() {
         })
     ]);
 
-    let mut graph = PipelineGraph::new(&vk_core, &pipeline_infos, args.shader_format.unwrap().to_vk_format(), window_width, window_height);
-    let mut frames : Vec<Frame> = (0..NUM_FRAMES).map(|_|{
+    let mut graph = PipelineGraph::new(&vk_core, &pipeline_infos, args.shader_format.unwrap().to_vk_format(), window_width, window_height, num_frames);
+    let mut frames : Vec<Frame> = (0..num_frames).map(|_|{
         Frame::new(&vk_core, pipeline_infos.len() as u32)
     }).collect();
 
@@ -176,8 +179,9 @@ fn main() {
 
     let mut avg_ms = 0.0;
 
+    let mut first_run = vec![true; num_frames];
+
     render_loop(&mut event_loop, &mut || {
-        static mut FIRST_RUN: [bool;NUM_FRAMES] = [true ; NUM_FRAMES];
         static mut FRAME_INDEX: usize = 0;
 
         let current_modified_shader_times: HashMap<String, u64> = utils::get_modified_times(&pipeline_infos);
@@ -247,7 +251,7 @@ fn main() {
                                     0, // first-query-idx
                                     frame.timer.query_pool_size);
 
-        if FIRST_RUN[FRAME_INDEX] {
+        if first_run[FRAME_INDEX] {
             if FRAME_INDEX == 0 {
                 let buffer_regions = vk::BufferImageCopy {
                     buffer_offset: input_image_buffer.allocation.offset(),
@@ -297,7 +301,7 @@ fn main() {
                 }
             }
 
-            FIRST_RUN[FRAME_INDEX] = false;
+            first_run[FRAME_INDEX] = false;
         }
 
         command::transition_image_layout(&device, frame.cmd_buffer, graph_frame.images.get(SWAPCHAIN_OUTPUT).unwrap().vk, vk::ImageLayout::UNDEFINED, vk::ImageLayout::GENERAL);
@@ -353,7 +357,7 @@ fn main() {
             .queue_present(vk_core.queue, &present_info)
             .unwrap();
 
-        FRAME_INDEX = (FRAME_INDEX+1)%NUM_FRAMES;
+        FRAME_INDEX = (FRAME_INDEX+1)%num_frames;
     });
 
     }
