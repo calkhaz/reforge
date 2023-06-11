@@ -116,9 +116,9 @@ pub fn blit_copy(device: &ash::Device, cmd: vk::CommandBuffer, info: &BlitCopy) 
 }
 
 
-pub fn execute_pipeline_graph(device: &ash::Device, frame: &Frame, graph_frame: &PipelineGraphFrame, graph: &PipelineGraph) {
+pub fn execute_pipeline_graph(device: &ash::Device, frame: &mut Frame, graph_frame: &PipelineGraphFrame, graph: &PipelineGraph) {
 
-    fn dispatch_node(node: &PipelineNode, device: &ash::Device, frame: &Frame, graph_frame: &PipelineGraphFrame, dispatch_x: u32, dispatch_y: u32) {
+    fn dispatch_node(node: &PipelineNode, device: &ash::Device, frame: &mut Frame, graph_frame: &PipelineGraphFrame, dispatch_x: u32, dispatch_y: u32) {
         unsafe {
         device.cmd_bind_descriptor_sets(
             frame.cmd_buffer,
@@ -133,7 +133,20 @@ pub fn execute_pipeline_graph(device: &ash::Device, frame: &Frame, graph_frame: 
             vk::PipelineBindPoint::COMPUTE,
             node.pipeline.borrow().vk_pipeline
         );
+
+        // Start timer
+        device.cmd_write_timestamp(frame.cmd_buffer,
+                                   vk::PipelineStageFlags::TOP_OF_PIPE,
+                                   frame.timer.query_pool,
+                                   frame.timer.start(&node.name));
+
         device.cmd_dispatch(frame.cmd_buffer, dispatch_x, dispatch_y, 1);
+
+        // Stop timer
+        device.cmd_write_timestamp(frame.cmd_buffer,
+                                   vk::PipelineStageFlags::BOTTOM_OF_PIPE,
+                                   frame.timer.query_pool,
+                                   frame.timer.stop(&node.name));
 
         for output_node in &node.outputs {
             let mem_barrier = vk::MemoryBarrier {

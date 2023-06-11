@@ -9,6 +9,7 @@ use crate::vulkan::core::VkCore;
 
 use std::rc::Rc;
 use std::cell::RefCell;
+use std::collections::BTreeMap;
 
 pub struct Image {
     device: Rc<ash::Device>,
@@ -23,6 +24,96 @@ pub struct Buffer {
     allocator: Rc<RefCell<gpu_alloc_vk::Allocator>>,
     pub allocation: gpu_alloc_vk::Allocation,
     pub vk: vk::Buffer
+}
+
+pub struct GpuTimer {
+    device: Rc<ash::Device>,
+    pub query_pool: vk::QueryPool,
+    query_indices: BTreeMap<String, u32>, // BTreeMap because we want names sorted for printing
+    current_query_index: u32,
+    pub query_pool_size: u32
+}
+
+impl GpuTimer{
+    pub fn new(device: Rc<ash::Device>, mut count: u32) -> GpuTimer {
+        // 2* because need begin + end timers
+        count *= 2;
+
+        let query_info = vk::QueryPoolCreateInfo::builder()
+            .query_count(count)
+            .query_type(vk::QueryType::TIMESTAMP);
+
+        unsafe {
+        let query_pool = device.create_query_pool(&query_info, None).unwrap();
+
+        GpuTimer {
+            device: device,
+            query_pool: query_pool,
+            query_indices: BTreeMap::new(),
+            current_query_index: 0,
+            query_pool_size: count
+        }
+        }
+    }
+
+    pub fn start(&mut self, name: &str) -> u32 {
+
+        // Reserve a beg/end set of query indices if we haven't seen this timer name before
+        if !self.query_indices.contains_key(name) {
+            // We check +2 because we need 2 slots per timer (start & stop)
+            if self.current_query_index + 2 > self.query_pool_size {
+                panic!("Ran out of query-pool indices when trying to add timer {}", name);
+            }
+
+            self.query_indices.insert(name.to_string(), self.current_query_index);
+
+            // Begin + end
+            self.current_query_index += 2;
+        }
+
+        *self.query_indices.get(name).unwrap()
+    }
+
+    pub fn stop(&mut self, name: &str) -> u32{
+        if !self.query_indices.contains_key(name) {
+            panic!("No gpu-timer was ever stated with the name: {}", name);
+        }
+
+        // Get the ending timer for the name
+        *self.query_indices.get(name).unwrap() + 1
+    }
+
+    pub fn get_elapsed_ms(&mut self) -> String {
+        let mut times: String = String::new();
+
+        if self.current_query_index == 0 {
+            return times;
+        }
+
+        let mut timestamps: Vec<u64> = vec![0; self.current_query_index as usize];
+
+        unsafe {
+        self.device.get_query_pool_results(
+            self.query_pool,
+            0,                              // first-query-idx
+            self.current_query_index,       // last-query-idx
+            timestamps.as_mut_slice(),      // data to fill with timestamps
+            vk::QueryResultFlags::TYPE_64).unwrap();
+        }
+
+        for (name, idx) in &self.query_indices {
+            let nanosec_diff = timestamps[*idx as usize+1] - timestamps[*idx as usize];
+            let ms = (nanosec_diff as f32)/1e6;
+
+            times.push_str(&format!("{}: {:.3}ms, ", name.to_string(), ms));
+        }
+
+        // Remove last ", "
+        times.truncate(times.len()-2);
+
+        times
+
+    }
 }
 
 pub unsafe fn create_buffer(core: &VkCore,
@@ -141,5 +232,13 @@ impl Drop for Image {
         }
         let allocation = std::mem::take(&mut self.allocation);
         self.allocator.borrow_mut().free(allocation).unwrap();
+    }
+}
+
+impl Drop for GpuTimer {
+    fn drop(&mut self) {
+        unsafe {
+            self.device.destroy_query_pool(self.query_pool, None);
+        }
     }
 }

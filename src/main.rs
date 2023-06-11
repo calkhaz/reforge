@@ -114,8 +114,8 @@ fn main() {
     unsafe {
     let vk_core = VkCore::new(&window);
 
-    /*
     // Example of chained shaders (currently all just passthrough)
+    /*
     let pipeline_infos = HashMap::from([
         ("passthrough-pipeline-0", PipelineInfo {
             shader_path: "shaders/passthrough.comp".to_string(),
@@ -146,8 +146,8 @@ fn main() {
     ]);
 
     let mut graph = PipelineGraph::new(&vk_core, &pipeline_infos, args.shader_format.unwrap().to_vk_format(), window_width, window_height);
-    let frames : Vec<Frame> = (0..NUM_FRAMES).map(|_|{
-        Frame::new(&vk_core)
+    let mut frames : Vec<Frame> = (0..NUM_FRAMES).map(|_|{
+        Frame::new(&vk_core, pipeline_infos.len() as u32)
     }).collect();
 
 
@@ -202,7 +202,7 @@ fn main() {
         last_modified_shader_times = current_modified_shader_times;
 
         let graph_frame = &graph.frames[FRAME_INDEX];
-        let frame = &frames[FRAME_INDEX];
+        let frame = &mut frames[FRAME_INDEX];
         let device = &vk_core.device;
 
         let (present_index, _) = swapchain.loader.acquire_next_image(
@@ -219,8 +219,10 @@ fn main() {
 
         let elapsed_ms = utils::get_elapsed_ms(&timer);
         avg_ms = utils::moving_avg(avg_ms, elapsed_ms);
-        print!("\rFrame: {:.2?}ms , Avg: {:.2?}ms ", elapsed_ms, avg_ms);
         timer = std::time::Instant::now();
+
+        let gpu_times = frame.timer.get_elapsed_ms();
+        print!("\rFrame: {:.2?}ms , Frame-Avg: {:.2?}ms, GPU: {{{}}}", elapsed_ms, avg_ms, gpu_times);
 
         device
             .reset_fences(&[frame.fence])
@@ -239,6 +241,11 @@ fn main() {
 
         device.begin_command_buffer(frame.cmd_buffer, &command_buffer_begin_info)
             .expect("Begin commandbuffer");
+
+        device.cmd_reset_query_pool(frame.cmd_buffer,
+                                    frame.timer.query_pool,
+                                    0, // first-query-idx
+                                    frame.timer.query_pool_size);
 
         if FIRST_RUN[FRAME_INDEX] {
             if FRAME_INDEX == 0 {
