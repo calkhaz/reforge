@@ -56,7 +56,8 @@ pub struct PipelineGraph {
     pub width: u32,
     pub height: u32,
     pipelines: HashMap<String, Rc<RefCell<Pipeline>>>,
-    descriptor_pool: vk::DescriptorPool
+    descriptor_pool: vk::DescriptorPool,
+    sampler: vk::Sampler
 }
 
 impl PipelineNode {
@@ -110,7 +111,8 @@ struct PipelineGraphFrameInfo<'a> {
     pub num_frames: usize,
     pub width: u32,
     pub height: u32,
-    pub format: vk::Format
+    pub format: vk::Format,
+    pub sampler: vk::Sampler
 }
 
 impl PipelineGraphFrame {
@@ -127,6 +129,25 @@ impl PipelineGraphFrame {
             dst_binding: desc_idx,
             descriptor_count: 1,
             descriptor_type: vk::DescriptorType::STORAGE_IMAGE,
+            p_image_info: infos.last().unwrap(),
+            ..Default::default()
+        }
+    }
+
+    unsafe fn sampler_image_write(image: &Image, sampler: vk::Sampler, infos: &mut Vec<vk::DescriptorImageInfo>, desc_idx: u32, set: vk::DescriptorSet) -> vk::WriteDescriptorSet {
+
+        infos.push(vk::DescriptorImageInfo {
+            image_layout: vk::ImageLayout::GENERAL,
+            image_view: image.view.unwrap(),
+            sampler: sampler,
+            ..Default::default()
+        });
+
+        vk::WriteDescriptorSet {
+            dst_set: set,
+            dst_binding: desc_idx,
+            descriptor_count: 1,
+            descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
             p_image_info: infos.last().unwrap(),
             ..Default::default()
         }
@@ -169,15 +190,15 @@ impl PipelineGraphFrame {
                     // We only want one FILE_INPUT input image across frames as it will never change
                     if i > 0 && image_name == FILE_INPUT {
                         let image = &frames[0].images.get(FILE_INPUT).unwrap();
-                        descriptor_writes.push(Self::storage_image_write(&image, &mut desc_image_infos, *desc_idx, descriptor_set));
+                        descriptor_writes.push(Self::sampler_image_write(&image, frame_info.sampler, &mut desc_image_infos, *desc_idx, descriptor_set));
                     } else {
                         match images.get(image_name) {
                             Some(image) => {
-                                descriptor_writes.push(Self::storage_image_write(&image, &mut desc_image_infos, *desc_idx, descriptor_set));
+                                descriptor_writes.push(Self::sampler_image_write(&image, frame_info.sampler, &mut desc_image_infos, *desc_idx, descriptor_set));
                             }
                             None => {
                                 let image = vkutils::create_image(core, image_name.to_string(), format, frame_info.width, frame_info.height);
-                                descriptor_writes.push(Self::storage_image_write(&image, &mut desc_image_infos, *desc_idx, descriptor_set));
+                                descriptor_writes.push(Self::sampler_image_write(&image, frame_info.sampler, &mut desc_image_infos, *desc_idx, descriptor_set));
                                 images.insert(image_name.to_string(), image);
                             }
                         }
@@ -293,20 +314,37 @@ impl PipelineGraph {
         sizes
     }
 
-    pub unsafe fn build_global_pipeline_data(device: Rc<ash::Device>, infos: &HashMap<&str, PipelineInfo>, num_frames: usize) -> (HashMap<String, Rc<RefCell<Pipeline>>>, vk::DescriptorPool) {
+    pub unsafe fn build_global_pipeline_data(device: Rc<ash::Device>, infos: &HashMap<&str, PipelineInfo>, num_frames: usize) -> (HashMap<String, Rc<RefCell<Pipeline>>>, vk::DescriptorPool, vk::Sampler) {
         let mut pipelines: HashMap<String, Rc<RefCell<Pipeline>>> = HashMap::new();
         let mut descriptor_pool: vk::DescriptorPool = vk::DescriptorPool::null();
 
         if infos.len() == 0  {
-            return (pipelines, descriptor_pool);
+            return (pipelines, descriptor_pool, vk::Sampler::null());
         }
 
         // Track descriptor pool sizes by descriptor type
         let mut descriptor_size_map : HashMap<vk::DescriptorType, u32> = HashMap::new();
         let mut found_swapchain_image = false;
 
+        let sampler_info = vk::SamplerCreateInfo::builder()
+            .min_filter(vk::Filter::LINEAR)
+            .mag_filter(vk::Filter::LINEAR)
+            .address_mode_u(vk::SamplerAddressMode::CLAMP_TO_EDGE)
+            .address_mode_w(vk::SamplerAddressMode::CLAMP_TO_EDGE)
+            .address_mode_w(vk::SamplerAddressMode::CLAMP_TO_EDGE);
+
+        let sampler = device.create_sampler(&sampler_info, None).unwrap();
+
         let mut image_binding = vk::DescriptorSetLayoutBinding {
             descriptor_type: vk::DescriptorType::STORAGE_IMAGE,
+            descriptor_count: 1,
+            stage_flags: vk::ShaderStageFlags::COMPUTE,
+            binding: 0,
+            ..Default::default()
+        };
+
+        let sampler_binding = vk::DescriptorSetLayoutBinding {
+            descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
             descriptor_count: 1,
             stage_flags: vk::ShaderStageFlags::COMPUTE,
             binding: 0,
@@ -319,9 +357,9 @@ impl PipelineGraph {
 
             // Input images
             for (desc_idx, _) in &info.input_images {
-                *descriptor_size_map.entry(vk::DescriptorType::STORAGE_IMAGE).or_insert(0) += 1*num_frames as u32;
+                *descriptor_size_map.entry(vk::DescriptorType::COMBINED_IMAGE_SAMPLER).or_insert(0) += 1*num_frames as u32;
                 image_binding.binding = *desc_idx;
-                descriptor_layout_bindings.push(image_binding);
+                descriptor_layout_bindings.push(sampler_binding);
             }
 
             // Output images
@@ -394,7 +432,7 @@ impl PipelineGraph {
             .create_descriptor_pool(&descriptor_pool_info, None)
             .unwrap();
 
-        (pipelines, descriptor_pool)
+        (pipelines, descriptor_pool, sampler)
     }
 
     unsafe fn create_shader_module(device: &ash::Device, path: &str) -> Option<vk::ShaderModule> {
@@ -421,7 +459,7 @@ impl PipelineGraph {
     }
 
     pub unsafe fn new(core: &VkCore, pipeline_infos: &HashMap<&str, PipelineInfo>, format: vk::Format, width: u32, height: u32, num_frames: usize) -> Self {
-        let (pipelines, descriptor_pool) = Self::build_global_pipeline_data(Rc::clone(&core.device), &pipeline_infos, num_frames);
+        let (pipelines, descriptor_pool, sampler) = Self::build_global_pipeline_data(Rc::clone(&core.device), &pipeline_infos, num_frames);
 
         let graph_frame_info = PipelineGraphFrameInfo {
             pipelines: &pipelines,
@@ -430,7 +468,8 @@ impl PipelineGraph {
             num_frames: num_frames,
             width: width,
             height: height,
-            format: format
+            format: format,
+            sampler: sampler
         };
 
         let roots = Self::create_nodes(&pipelines, pipeline_infos);
@@ -443,7 +482,8 @@ impl PipelineGraph {
             height: height,
             pipelines: pipelines,
             descriptor_pool: descriptor_pool,
-            roots: roots
+            roots: roots,
+            sampler: sampler
         }
     }
 }

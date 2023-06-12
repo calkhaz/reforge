@@ -1,0 +1,48 @@
+#version 450
+
+layout (local_size_x = 16, local_size_y = 16) in;
+layout (binding = 0       ) uniform           sampler2D inputImage;
+layout (binding = 1, rgba8) uniform writeonly image2D outputImage;
+
+
+vec4 GaussianBlurHorizontal(uint radius, vec2 image_dim) {
+    float weights[] = { 0.1253706879755621, 0.20623749537105457, 0.11432730721656285, 0.04221315958765398, 0.010162427308138919, 0.0015418855226141809, 0.0001398888074952382, 0.000006981972566607254, 1.6623744206207745e-7 };
+    float offsets[] = { 0, 1.45, 3.4, 5.349999999999999, 7.300000000000002, 9.25, 11.2, 13.15, 15.1 };
+
+    vec2 uv = vec2(gl_GlobalInvocationID.x, gl_GlobalInvocationID.y);
+    vec2 offset_uv = uv;
+
+    // sampler at 0, 0
+    vec4 res = texture(inputImage, uv/image_dim);
+    vec4 blur = weights[0] * res;
+
+    for(uint i = 1; i < radius; i++) {
+        float offset = offsets[i];
+        float weight = weights[i];
+
+		offset_uv = (uv + vec2(offset, 0.0))/image_dim;
+
+        res = texture(inputImage, offset_uv);
+		blur += weight * res;
+
+		offset_uv = (uv + vec2(-offset, 0.0))/image_dim;
+
+        res = texture(inputImage, offset_uv);
+		blur += weight * res;
+    }
+	
+	return blur;
+}
+
+
+void main()
+{	
+    vec4 res = texture(inputImage, vec2(gl_GlobalInvocationID.x/1592.0, gl_GlobalInvocationID.y/1592.0));
+
+    uint radius = 9;
+    vec2 image_dim = vec2(1592, 1592);
+
+    vec4 blur = GaussianBlurHorizontal(radius, image_dim);
+
+    imageStore(outputImage, ivec2(gl_GlobalInvocationID.xy), blur);
+}

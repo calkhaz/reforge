@@ -151,7 +151,7 @@ pub unsafe fn create_image(core: &VkCore, name: String, format: vk::Format, widt
     // SRGB will not be used in the compute shaders because
     // vulkan complained about it and didn't allow it
     if format != vk::Format::R8G8B8A8_SRGB {
-        usage |= vk::ImageUsageFlags::STORAGE;
+        usage |= vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::SAMPLED;
     }
 
     let input_image_info = vk::ImageCreateInfo::builder()

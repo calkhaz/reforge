@@ -118,28 +118,20 @@ fn main() {
     let vk_core = VkCore::new(&window);
 
     // Example of chained shaders (currently all just passthrough)
-    /*
     let pipeline_infos = HashMap::from([
-        ("passthrough-pipeline-0", PipelineInfo {
-            shader_path: "shaders/passthrough.comp".to_string(),
+        ("gaussian-h", PipelineInfo {
+            shader_path: "shaders/gaussian-horizontal.comp".to_string(),
             input_images: [(0, FILE_INPUT.to_string())].to_vec(),
-            output_images: [(1, "passthrough-0".to_string())].to_vec()
+            output_images: [(1, "gauss-h".to_string())].to_vec()
         }),
-
-        ("passthrough-pipeline-1", PipelineInfo {
-            shader_path: "shaders/passthrough.comp".to_string(),
-            input_images: [(0, "passthrough-0".to_string())].to_vec(),
-            output_images: [(1, "passthrough-1".to_string())].to_vec(),
-        }),
-
-        ("passthrough-pipeline-2", PipelineInfo {
-            shader_path: "shaders/passthrough.comp".to_string(),
-            input_images: [(0, "passthrough-1".to_string())].to_vec(),
+        ("gaussian-v", PipelineInfo {
+            shader_path: "shaders/gaussian-vertical.comp".to_string(),
+            input_images: [(0, "gauss-h".to_string())].to_vec(),
             output_images: [(1, SWAPCHAIN_OUTPUT.to_string())].to_vec(),
         })
     ]);
-    */
 
+    /*
     let pipeline_infos = HashMap::from([
         ("passthrough-pipeline", PipelineInfo {
             shader_path: "shaders/passthrough.comp".to_string(),
@@ -147,6 +139,7 @@ fn main() {
             output_images: [(1, SWAPCHAIN_OUTPUT.to_string())].to_vec(),
         })
     ]);
+    */
 
     let mut graph = PipelineGraph::new(&vk_core, &pipeline_infos, args.shader_format.unwrap().to_vk_format(), window_width, window_height, num_frames);
     let mut frames : Vec<Frame> = (0..num_frames).map(|_|{
