@@ -53,7 +53,7 @@ pub struct Args {
     #[arg(long)]
     height: Option<u32>,
 
-    #[arg(long, default_value = "rgba8", help = "Shader image format")]
+    #[arg(long, default_value = "rgba32f", help = "Shader image format")]
     shader_format: Option<ShaderFormat>,
 
     #[arg(long, default_value= "2", help = "Number of frame-in-flight to be used when displaying to the swapchain")]
