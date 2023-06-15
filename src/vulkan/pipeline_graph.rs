@@ -14,6 +14,7 @@ use std::ops::Drop;
 use crate::vulkan::core::VkCore;
 use crate::vulkan::vkutils;
 use crate::vulkan::vkutils::Image;
+use crate::vulkan::shader::Shader;
 
 pub const FILE_INPUT: &str = "rf:file-input";
 pub const SWAPCHAIN_OUTPUT: &str = "rf:swapchain";
@@ -245,13 +246,11 @@ impl PipelineGraph {
         let device = &self.device;
         let mut pipeline = self.pipelines.get_mut(name).unwrap().borrow_mut();
 
-        let shader_module = Self::create_shader_module(&device, &pipeline.shader_path);
-
-        if shader_module.is_some() {
+        if let Some(shader) = Shader::new(&device, &pipeline.shader_path) {
             let shader_entry_name = CStr::from_bytes_with_nul_unchecked(b"main\0");
 
             let shader_stage_create_infos = vk::PipelineShaderStageCreateInfo {
-                module: shader_module.unwrap(),
+                module: shader.module,
                 p_name: shader_entry_name.as_ptr(),
                 stage: vk::ShaderStageFlags::COMPUTE,
                 ..Default::default()
@@ -267,7 +266,7 @@ impl PipelineGraph {
                 Ok(vk_pipeline) =>  {
                     destroy_pipeline(&mut *pipeline, false);
                     pipeline.vk_pipeline = vk_pipeline[0];
-                    pipeline.shader_module = shader_module.unwrap();
+                    pipeline.shader_module = shader.module;
                 },
                 Err(error) => {
                     eprintln!("{:?}", error);
@@ -344,10 +343,10 @@ impl PipelineGraph {
                 create_pipeline_layout(&vk::PipelineLayoutCreateInfo::builder()
                     .set_layouts(&descriptor_layout), None).unwrap();
 
-            let shader_module = Self::create_shader_module(&device, &info.shader_path);
+            let shader = Shader::new(&device, &info.shader_path).unwrap();
             let shader_entry_name = CStr::from_bytes_with_nul_unchecked(b"main\0");
             let shader_stage_create_infos = vk::PipelineShaderStageCreateInfo {
-                module: shader_module.unwrap(),
+                module: shader.module,
                 p_name: shader_entry_name.as_ptr(),
                 stage: vk::ShaderStageFlags::COMPUTE,
                 ..Default::default()
@@ -367,7 +366,7 @@ impl PipelineGraph {
             pipelines.insert(pipeline_name.to_string(), Rc::new(RefCell::new(Pipeline {
                 device: Rc::clone(&device),
                 shader_path: info.shader_path.clone(),
-                shader_module : shader_module.unwrap(),
+                shader_module : shader.module,
                 layout: pipeline_layout,
                 vk_pipeline: compute_pipeline
             })));
@@ -395,29 +394,6 @@ impl PipelineGraph {
             .unwrap();
 
         (pipelines, descriptor_pool)
-    }
-
-    unsafe fn create_shader_module(device: &ash::Device, path: &str) -> Option<vk::ShaderModule> {
-        let glsl_source = std::fs::read_to_string(path)
-            .expect("Should have been able to read the file");
-
-        let compiler = shaderc::Compiler::new().unwrap();
-        let options = shaderc::CompileOptions::new().unwrap();
-
-        match compiler.compile_into_spirv(&glsl_source.to_owned(),
-                                                        shaderc::ShaderKind::Compute,
-                                                        path,
-                                                        "main",
-                                                        Some(&options)) {
-            Ok(binary) => {
-                assert_eq!(Some(&0x07230203), binary.as_binary().first());
-
-                let shader_info = vk::ShaderModuleCreateInfo::builder().code(&binary.as_binary());
-
-                Some(device.create_shader_module(&shader_info, None).expect("Shader module error"))
-            }
-            Err(e) => { eprintln!("{:?}", e); None }
-        }
     }
 
     pub unsafe fn new(core: &VkCore, pipeline_infos: &HashMap<&str, PipelineInfo>, format: vk::Format, width: u32, height: u32, num_frames: usize) -> Self {
