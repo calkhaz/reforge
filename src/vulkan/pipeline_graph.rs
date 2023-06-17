@@ -301,40 +301,15 @@ impl PipelineGraph {
         }
 
         // Track descriptor pool sizes by descriptor type
-        let mut descriptor_size_map : HashMap<vk::DescriptorType, u32> = HashMap::new();
-        let mut found_swapchain_image = false;
-
-        let mut image_binding = vk::DescriptorSetLayoutBinding {
-            descriptor_type: vk::DescriptorType::STORAGE_IMAGE,
-            descriptor_count: 1,
-            stage_flags: vk::ShaderStageFlags::COMPUTE,
-            binding: 0,
-            ..Default::default()
-        };
+        let mut pool_sizes: HashMap<vk::DescriptorType, u32> = HashMap::new();
 
         // descriptor layouts, add descriptor pool sizes, and add pipelines to hashmap
         for (pipeline_name, info) in infos {
-            let mut descriptor_layout_bindings: Vec<vk::DescriptorSetLayoutBinding> = Vec::with_capacity(infos.len());
+            let shader = Shader::new(&device, &info.shader_path).unwrap();
 
-            // Input images
-            for (desc_idx, _) in &info.input_images {
-                *descriptor_size_map.entry(vk::DescriptorType::STORAGE_IMAGE).or_insert(0) += 1*num_frames as u32;
-                image_binding.binding = *desc_idx;
-                descriptor_layout_bindings.push(image_binding);
-            }
+            let layout_bindings = vkutils::create_descriptor_layout_bindings(&shader.bindings, num_frames, &mut pool_sizes);
 
-            // Output images
-            for (desc_idx, image_name) in &info.output_images {
-                if image_name == SWAPCHAIN_OUTPUT  {
-                    found_swapchain_image = true;
-                }
-
-                *descriptor_size_map.entry(vk::DescriptorType::STORAGE_IMAGE).or_insert(0) += 1*num_frames as u32;
-                image_binding.binding = *desc_idx;
-                descriptor_layout_bindings.push(image_binding);
-            }
-
-            let descriptor_info = vk::DescriptorSetLayoutCreateInfo::builder().bindings(&descriptor_layout_bindings);
+            let descriptor_info = vk::DescriptorSetLayoutCreateInfo::builder().bindings(&layout_bindings);
             let descriptor_layout = [device
                 .create_descriptor_set_layout(&descriptor_info, None)
                 .unwrap()];
@@ -343,7 +318,6 @@ impl PipelineGraph {
                 create_pipeline_layout(&vk::PipelineLayoutCreateInfo::builder()
                     .set_layouts(&descriptor_layout), None).unwrap();
 
-            let shader = Shader::new(&device, &info.shader_path).unwrap();
             let shader_entry_name = CStr::from_bytes_with_nul_unchecked(b"main\0");
             let shader_stage_create_infos = vk::PipelineShaderStageCreateInfo {
                 module: shader.module,
@@ -372,13 +346,8 @@ impl PipelineGraph {
             })));
         }
 
-        if !found_swapchain_image  {
-            eprintln!("No output named \"{}\", which is currently required", SWAPCHAIN_OUTPUT);
-            std::process::exit(1);
-        }
-
         // Create descriptor pool
-        let descriptor_size_vec = Self::map_to_desc_size(&descriptor_size_map);
+        let descriptor_size_vec = Self::map_to_desc_size(&pool_sizes);
 
         // We determine number of sets by the number of pipelines
         // Generally, each pipeline will have num_frames amount of descriptor copies

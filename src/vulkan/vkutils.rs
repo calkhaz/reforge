@@ -10,6 +10,9 @@ use crate::vulkan::core::VkCore;
 use std::rc::Rc;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
+use std::collections::HashMap;
+
+use crate::vulkan::shader::DescriptorBinding;
 
 pub struct Image {
     device: Rc<ash::Device>,
@@ -210,6 +213,31 @@ pub unsafe fn create_image(core: &VkCore, name: String, format: vk::Format, widt
         view: image_view,
         allocation: image_allocation
     }
+}
+
+pub fn create_descriptor_layout_bindings(bindings: &HashMap<String, DescriptorBinding>,
+                                         num_frames: usize,
+                                         pool_sizes: &mut HashMap<vk::DescriptorType, u32>) -> Vec<vk::DescriptorSetLayoutBinding> {
+
+    let mut vk_bindings: Vec<vk::DescriptorSetLayoutBinding> = Vec::with_capacity(bindings.len());
+
+    let mut image_binding = vk::DescriptorSetLayoutBinding {
+        descriptor_count: 1,
+        stage_flags: vk::ShaderStageFlags::COMPUTE,
+        ..Default::default()
+    };
+
+    for (_, binding) in bindings {
+        // Add to pool size
+        *pool_sizes.entry(binding.descriptor_type).or_insert(0) += num_frames as u32;
+
+        // Add vulkan descriptor binding
+        image_binding.binding = binding.index;
+        image_binding.descriptor_type = binding.descriptor_type;
+        vk_bindings.push(image_binding);
+    }
+
+    vk_bindings
 }
 
 impl Drop for Buffer {
