@@ -133,7 +133,7 @@ impl PipelineGraphFrame {
         }
     }
 
-    unsafe fn new_vec(core: &VkCore, frame_info: &PipelineGraphFrameInfo) -> Vec<PipelineGraphFrame> {
+    unsafe fn new(core: &VkCore, frame_info: &PipelineGraphFrameInfo) -> Vec<PipelineGraphFrame> {
         let device = &core.device;
         let mut frames: Vec<PipelineGraphFrame> = Vec::with_capacity(frame_info.num_frames);
 
@@ -292,58 +292,60 @@ impl PipelineGraph {
         sizes
     }
 
-    pub unsafe fn build_global_pipeline_data(device: Rc<ash::Device>, infos: &HashMap<&str, PipelineInfo>, num_frames: usize) -> (HashMap<String, Rc<RefCell<Pipeline>>>, vk::DescriptorPool) {
-        let mut pipelines: HashMap<String, Rc<RefCell<Pipeline>>> = HashMap::new();
-        let mut descriptor_pool: vk::DescriptorPool = vk::DescriptorPool::null();
+    pub unsafe fn build_global_pipeline_data(device: Rc<ash::Device>,
+                                             info: &PipelineInfo,
+                                             pool_sizes: &mut HashMap<vk::DescriptorType, u32>,
+                                             num_frames: usize) -> Rc<RefCell<Pipeline>> {
+        // descriptor layouts, add descriptor pool sizes, and add pipelines to hashmap
+        let shader = Shader::new(&device, &info.shader_path).unwrap();
 
-        if infos.len() == 0  {
-            return (pipelines, descriptor_pool);
-        }
+        let layout_bindings = vkutils::create_descriptor_layout_bindings(&shader.bindings, num_frames, pool_sizes);
 
+        let descriptor_info = vk::DescriptorSetLayoutCreateInfo::builder().bindings(&layout_bindings);
+        let descriptor_layout = [device
+            .create_descriptor_set_layout(&descriptor_info, None)
+            .unwrap()];
+
+        let pipeline_layout = device.
+            create_pipeline_layout(&vk::PipelineLayoutCreateInfo::builder()
+                .set_layouts(&descriptor_layout), None).unwrap();
+
+        let shader_entry_name = CStr::from_bytes_with_nul_unchecked(b"main\0");
+        let shader_stage_create_infos = vk::PipelineShaderStageCreateInfo {
+            module: shader.module,
+            p_name: shader_entry_name.as_ptr(),
+            stage: vk::ShaderStageFlags::COMPUTE,
+            ..Default::default()
+        };
+
+        let pipeline_info = vk::ComputePipelineCreateInfo::builder()
+            .layout(pipeline_layout)
+            .stage(shader_stage_create_infos);
+
+        let compute_pipeline = device.create_compute_pipelines(vk::PipelineCache::null(), &[pipeline_info.build()], None).unwrap()[0];
+
+        let pipeline_layout = PipelineLayout {
+            vk: pipeline_layout,
+            descriptor_layout: descriptor_layout[0]
+        };
+
+        Rc::new(RefCell::new(Pipeline {
+            device: Rc::clone(&device),
+            shader_path: info.shader_path.clone(),
+            shader_module : shader.module,
+            layout: pipeline_layout,
+            vk_pipeline: compute_pipeline
+        }))
+    }
+
+    pub unsafe fn new(core: &VkCore, pipeline_infos: &HashMap<&str, PipelineInfo>, format: vk::Format, width: u32, height: u32, num_frames: usize) -> Self {
         // Track descriptor pool sizes by descriptor type
         let mut pool_sizes: HashMap<vk::DescriptorType, u32> = HashMap::new();
+        let mut pipelines: HashMap<String, Rc<RefCell<Pipeline>>> = HashMap::new();
 
-        // descriptor layouts, add descriptor pool sizes, and add pipelines to hashmap
-        for (pipeline_name, info) in infos {
-            let shader = Shader::new(&device, &info.shader_path).unwrap();
-
-            let layout_bindings = vkutils::create_descriptor_layout_bindings(&shader.bindings, num_frames, &mut pool_sizes);
-
-            let descriptor_info = vk::DescriptorSetLayoutCreateInfo::builder().bindings(&layout_bindings);
-            let descriptor_layout = [device
-                .create_descriptor_set_layout(&descriptor_info, None)
-                .unwrap()];
-
-            let pipeline_layout = device.
-                create_pipeline_layout(&vk::PipelineLayoutCreateInfo::builder()
-                    .set_layouts(&descriptor_layout), None).unwrap();
-
-            let shader_entry_name = CStr::from_bytes_with_nul_unchecked(b"main\0");
-            let shader_stage_create_infos = vk::PipelineShaderStageCreateInfo {
-                module: shader.module,
-                p_name: shader_entry_name.as_ptr(),
-                stage: vk::ShaderStageFlags::COMPUTE,
-                ..Default::default()
-            };
-
-            let pipeline_info = vk::ComputePipelineCreateInfo::builder()
-                .layout(pipeline_layout)
-                .stage(shader_stage_create_infos);
-
-            let compute_pipeline = device.create_compute_pipelines(vk::PipelineCache::null(), &[pipeline_info.build()], None).unwrap()[0];
-
-            let pipeline_layout = PipelineLayout {
-                vk: pipeline_layout,
-                descriptor_layout: descriptor_layout[0]
-            };
-
-            pipelines.insert(pipeline_name.to_string(), Rc::new(RefCell::new(Pipeline {
-                device: Rc::clone(&device),
-                shader_path: info.shader_path.clone(),
-                shader_module : shader.module,
-                layout: pipeline_layout,
-                vk_pipeline: compute_pipeline
-            })));
+        for (name, info) in pipeline_infos {
+            let pipeline = Self::build_global_pipeline_data(Rc::clone(&core.device), &info, &mut pool_sizes, num_frames);
+            pipelines.insert(name.to_string(), pipeline);
         }
 
         // Create descriptor pool
@@ -352,21 +354,15 @@ impl PipelineGraph {
         // We determine number of sets by the number of pipelines
         // Generally, each pipeline will have num_frames amount of descriptor copies
         // However, if there is a set of swapchain images being used for one pipeline, we will include that
-        let num_max_sets = num_frames as u32*infos.len() as u32;
+        let num_max_sets = num_frames as u32*pipeline_infos.len() as u32;
 
         let descriptor_pool_info = vk::DescriptorPoolCreateInfo::builder()
             .pool_sizes(&descriptor_size_vec)
             .max_sets(num_max_sets);
 
-        descriptor_pool = device
+        let descriptor_pool = core.device
             .create_descriptor_pool(&descriptor_pool_info, None)
             .unwrap();
-
-        (pipelines, descriptor_pool)
-    }
-
-    pub unsafe fn new(core: &VkCore, pipeline_infos: &HashMap<&str, PipelineInfo>, format: vk::Format, width: u32, height: u32, num_frames: usize) -> Self {
-        let (pipelines, descriptor_pool) = Self::build_global_pipeline_data(Rc::clone(&core.device), &pipeline_infos, num_frames);
 
         let graph_frame_info = PipelineGraphFrameInfo {
             pipelines: &pipelines,
@@ -379,7 +375,7 @@ impl PipelineGraph {
         };
 
         let roots = Self::create_nodes(&pipelines, pipeline_infos);
-        let frames = PipelineGraphFrame::new_vec(core, &graph_frame_info);
+        let frames = PipelineGraphFrame::new(core, &graph_frame_info);
 
         PipelineGraph {
             device: Rc::clone(&core.device),
