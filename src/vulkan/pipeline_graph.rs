@@ -57,6 +57,7 @@ pub struct PipelineGraph {
     pub width: u32,
     pub height: u32,
     pipelines: HashMap<String, Rc<RefCell<Pipeline>>>,
+    images: HashMap<String, Image>, // Top-level images that shouldn't be per-frame
     descriptor_pool: vk::DescriptorPool
 }
 
@@ -108,7 +109,7 @@ struct PipelineGraphFrameInfo<'a> {
     pub pipelines: &'a HashMap<String, Rc<RefCell<Pipeline>>>,
     pub pipeline_infos: &'a HashMap<&'a str, PipelineInfo>,
     pub descriptor_pool: vk::DescriptorPool,
-    pub num_frames: usize,
+    pub images: &'a HashMap<String, Image>,
     pub width: u32,
     pub height: u32,
     pub format: vk::Format
@@ -133,60 +134,38 @@ impl PipelineGraphFrame {
         }
     }
 
-    unsafe fn new(core: &VkCore, frame_info: &PipelineGraphFrameInfo) -> Vec<PipelineGraphFrame> {
+    unsafe fn new(core: &VkCore, frame_info: &PipelineGraphFrameInfo) -> PipelineGraphFrame {
         let device = &core.device;
-        let mut frames: Vec<PipelineGraphFrame> = Vec::with_capacity(frame_info.num_frames);
-
-        if frame_info.pipeline_infos.len() == 0  {
-            return frames;
-        }
-
         let format = frame_info.format;
 
         // Create per-frame images, descriptor sets
-        for i in 0..frame_info.num_frames {
-            let mut images: HashMap<String, Image> = HashMap::new();
-            let mut descriptor_sets: HashMap<String, vk::DescriptorSet> = HashMap::new();
+        let mut images: HashMap<String, Image> = HashMap::new();
+        let mut descriptor_sets: HashMap<String, vk::DescriptorSet> = HashMap::new();
 
-            for (pipeline_name, info) in frame_info.pipeline_infos {
-                let pipeline = &frame_info.pipelines.get(&pipeline_name.to_string()).unwrap();
+        for (name, info) in frame_info.pipeline_infos {
+            let pipeline = frame_info.pipelines.get(*name).unwrap().as_ref().borrow();
+            let layout_info = &[pipeline.layout.descriptor_layout];
 
-                let layout_info = &[pipeline.borrow().layout.descriptor_layout];
-                let desc_alloc_info = vk::DescriptorSetAllocateInfo::builder()
-                    .descriptor_pool(frame_info.descriptor_pool)
-                    .set_layouts(layout_info);
+            let desc_alloc_info = vk::DescriptorSetAllocateInfo::builder()
+                .descriptor_pool(frame_info.descriptor_pool)
+                .set_layouts(layout_info);
 
-                let descriptor_set = device
-                    .allocate_descriptor_sets(&desc_alloc_info)
-                    .unwrap()[0];
+            let descriptor_set = device
+                .allocate_descriptor_sets(&desc_alloc_info)
+                .unwrap()[0];
 
-                let mut desc_image_infos: Vec<vk::DescriptorImageInfo> =
-                    Vec::with_capacity(info.input_images.len() + info.output_images.len());
-                let mut descriptor_writes: Vec<vk::WriteDescriptorSet> =
-                    Vec::with_capacity(info.input_images.len() + info.output_images.len());
+            let mut desc_image_infos: Vec<vk::DescriptorImageInfo> =
+                Vec::with_capacity(info.input_images.len() + info.output_images.len());
+            let mut descriptor_writes: Vec<vk::WriteDescriptorSet> =
+                Vec::with_capacity(info.input_images.len() + info.output_images.len());
 
-                // Input images
-                for (desc_idx, image_name) in &info.input_images {
-                    // We only want one FILE_INPUT input image across frames as it will never change
-                    if i > 0 && image_name == FILE_INPUT {
-                        let image = &frames[0].images.get(FILE_INPUT).unwrap();
-                        descriptor_writes.push(Self::storage_image_write(&image, &mut desc_image_infos, *desc_idx, descriptor_set));
-                    } else {
-                        match images.get(image_name) {
-                            Some(image) => {
-                                descriptor_writes.push(Self::storage_image_write(&image, &mut desc_image_infos, *desc_idx, descriptor_set));
-                            }
-                            None => {
-                                let image = vkutils::create_image(core, image_name.to_string(), format, frame_info.width, frame_info.height);
-                                descriptor_writes.push(Self::storage_image_write(&image, &mut desc_image_infos, *desc_idx, descriptor_set));
-                                images.insert(image_name.to_string(), image);
-                            }
-                        }
-                    }
-                }
-
-                // Output images
-                for (desc_idx, image_name) in &info.output_images {
+            // Input images
+            for (desc_idx, image_name) in &info.input_images {
+                // We only want one FILE_INPUT input image across frames as it will never change
+                if image_name == FILE_INPUT {
+                    let image = &frame_info.images.get(FILE_INPUT).unwrap();
+                    descriptor_writes.push(Self::storage_image_write(&image, &mut desc_image_infos, *desc_idx, descriptor_set));
+                } else {
                     match images.get(image_name) {
                         Some(image) => {
                             descriptor_writes.push(Self::storage_image_write(&image, &mut desc_image_infos, *desc_idx, descriptor_set));
@@ -198,18 +177,29 @@ impl PipelineGraphFrame {
                         }
                     }
                 }
-
-                device.update_descriptor_sets(&descriptor_writes, &[]);
-                descriptor_sets.insert(pipeline_name.to_string(), descriptor_set);
             }
 
-            frames.push(PipelineGraphFrame {
-                images, descriptor_sets
-            });
+            // Output images
+            for (desc_idx, image_name) in &info.output_images {
+                match images.get(image_name) {
+                    Some(image) => {
+                        descriptor_writes.push(Self::storage_image_write(&image, &mut desc_image_infos, *desc_idx, descriptor_set));
+                    }
+                    None => {
+                        let image = vkutils::create_image(core, image_name.to_string(), format, frame_info.width, frame_info.height);
+                        descriptor_writes.push(Self::storage_image_write(&image, &mut desc_image_infos, *desc_idx, descriptor_set));
+                        images.insert(image_name.to_string(), image);
+                    }
+                }
+            }
+
+            device.update_descriptor_sets(&descriptor_writes, &[]);
+            descriptor_sets.insert(name.to_string(), descriptor_set);
         }
 
-    frames
-
+        PipelineGraphFrame {
+            images, descriptor_sets
+        }
     }
 }
 
@@ -276,7 +266,7 @@ impl PipelineGraph {
     }
 
     pub fn get_input_image(&self) -> &Image {
-        &self.frames[0].images.get(FILE_INPUT).unwrap()
+        self.images.get(FILE_INPUT).unwrap()
     }
 
     pub fn map_to_desc_size(map: &HashMap<vk::DescriptorType, u32>) -> Vec<vk::DescriptorPoolSize> {
@@ -342,10 +332,20 @@ impl PipelineGraph {
         // Track descriptor pool sizes by descriptor type
         let mut pool_sizes: HashMap<vk::DescriptorType, u32> = HashMap::new();
         let mut pipelines: HashMap<String, Rc<RefCell<Pipeline>>> = HashMap::new();
+        let mut global_images: HashMap<String, Image> = HashMap::new();
 
         for (name, info) in pipeline_infos {
             let pipeline = Self::build_global_pipeline_data(Rc::clone(&core.device), &info, &mut pool_sizes, num_frames);
             pipelines.insert(name.to_string(), pipeline);
+
+            // Build any required global images
+            for (_, image_name) in &info.input_images {
+                // We only want one FILE_INPUT input image across frames as it will never change
+                if image_name == FILE_INPUT {
+                    global_images.entry(image_name.clone()).or_insert(
+                        vkutils::create_image(core, name.to_string(), format, width, height));
+                }
+            }
         }
 
         // Create descriptor pool
@@ -364,18 +364,23 @@ impl PipelineGraph {
             .create_descriptor_pool(&descriptor_pool_info, None)
             .unwrap();
 
-        let graph_frame_info = PipelineGraphFrameInfo {
-            pipelines: &pipelines,
-            pipeline_infos: pipeline_infos,
-            descriptor_pool: descriptor_pool,
-            num_frames: num_frames,
-            width: width,
-            height: height,
-            format: format
-        };
+        let mut frames: Vec<PipelineGraphFrame> = Vec::with_capacity(num_frames);
+
+        for _ in 0..num_frames {
+            let graph_frame_info = PipelineGraphFrameInfo {
+                pipelines: &pipelines,
+                pipeline_infos: pipeline_infos,
+                descriptor_pool: descriptor_pool,
+                images: &global_images,
+                width: width,
+                height: height,
+                format: format
+            };
+
+            frames.push(PipelineGraphFrame::new(core, &graph_frame_info));
+        }
 
         let roots = Self::create_nodes(&pipelines, pipeline_infos);
-        let frames = PipelineGraphFrame::new(core, &graph_frame_info);
 
         PipelineGraph {
             device: Rc::clone(&core.device),
@@ -383,6 +388,7 @@ impl PipelineGraph {
             width: width,
             height: height,
             pipelines: pipelines,
+            images: global_images,
             descriptor_pool: descriptor_pool,
             roots: roots
         }
