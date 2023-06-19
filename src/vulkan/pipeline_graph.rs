@@ -159,39 +159,30 @@ impl PipelineGraphFrame {
             let mut descriptor_writes: Vec<vk::WriteDescriptorSet> =
                 Vec::with_capacity(info.input_images.len() + info.output_images.len());
 
-            // Input images
-            for (desc_idx, image_name) in &info.input_images {
-                // We only want one FILE_INPUT input image across frames as it will never change
-                if image_name == FILE_INPUT {
-                    let image = &frame_info.images.get(FILE_INPUT).unwrap();
-                    descriptor_writes.push(Self::storage_image_write(&image, &mut desc_image_infos, *desc_idx, descriptor_set));
-                } else {
-                    match images.get(image_name) {
-                        Some(image) => {
-                            descriptor_writes.push(Self::storage_image_write(&image, &mut desc_image_infos, *desc_idx, descriptor_set));
-                        }
-                        None => {
-                            let image = vkutils::create_image(core, image_name.to_string(), format, frame_info.width, frame_info.height);
-                            descriptor_writes.push(Self::storage_image_write(&image, &mut desc_image_infos, *desc_idx, descriptor_set));
-                            images.insert(image_name.to_string(), image);
+            // Create descriptor writes and create images as needed
+            let mut load_descriptors = |image_infos: &Vec<(u32, String)>| {
+                for (desc_idx, image_name) in image_infos {
+                    // We only want one FILE_INPUT input image across frames as it will never change
+                    if image_name == FILE_INPUT {
+                        let image = &frame_info.images.get(FILE_INPUT).unwrap();
+                        descriptor_writes.push(Self::storage_image_write(&image, &mut desc_image_infos, *desc_idx, descriptor_set));
+                    } else {
+                        match images.get(image_name) {
+                            Some(image) => {
+                                descriptor_writes.push(Self::storage_image_write(&image, &mut desc_image_infos, *desc_idx, descriptor_set));
+                            }
+                            None => {
+                                let image = vkutils::create_image(core, image_name.to_string(), format, frame_info.width, frame_info.height);
+                                descriptor_writes.push(Self::storage_image_write(&image, &mut desc_image_infos, *desc_idx, descriptor_set));
+                                images.insert(image_name.to_string(), image);
+                            }
                         }
                     }
                 }
-            }
+            };
 
-            // Output images
-            for (desc_idx, image_name) in &info.output_images {
-                match images.get(image_name) {
-                    Some(image) => {
-                        descriptor_writes.push(Self::storage_image_write(&image, &mut desc_image_infos, *desc_idx, descriptor_set));
-                    }
-                    None => {
-                        let image = vkutils::create_image(core, image_name.to_string(), format, frame_info.width, frame_info.height);
-                        descriptor_writes.push(Self::storage_image_write(&image, &mut desc_image_infos, *desc_idx, descriptor_set));
-                        images.insert(image_name.to_string(), image);
-                    }
-                }
-            }
+            load_descriptors(&info.input_images);
+            load_descriptors(&info.output_images);
 
             device.update_descriptor_sets(&descriptor_writes, &[]);
             descriptor_sets.insert(name.to_string(), descriptor_set);
