@@ -15,6 +15,7 @@ use crate::vulkan::core::VkCore;
 use crate::vulkan::vkutils;
 use crate::vulkan::vkutils::Image;
 use crate::vulkan::shader::Shader;
+use crate::vulkan::shader::DescriptorBinding;
 
 pub const FILE_INPUT: &str = "rf:file-input";
 pub const SWAPCHAIN_OUTPUT: &str = "rf:swapchain";
@@ -27,14 +28,15 @@ pub struct PipelineLayout {
 #[derive(Default)]
 pub struct PipelineInfo {
     pub shader_path: String,
-    pub input_images: Vec<(u32, String)>,
-    pub output_images: Vec<(u32, String)>
+    pub input_images: Vec<(String, String)>,
+    pub output_images: Vec<(String, String)>
 }
 
 pub struct Pipeline {
     device: Rc<ash::Device>,
     shader_path: String,
     shader_module: vk::ShaderModule,
+    bindings: HashMap<String, DescriptorBinding>,
     pub layout: PipelineLayout,
     pub vk_pipeline: ash::vk::Pipeline
 }
@@ -160,20 +162,22 @@ impl PipelineGraphFrame {
                 Vec::with_capacity(info.input_images.len() + info.output_images.len());
 
             // Create descriptor writes and create images as needed
-            let mut load_descriptors = |image_infos: &Vec<(u32, String)>| {
-                for (desc_idx, image_name) in image_infos {
+            let mut load_descriptors = |image_infos: &Vec<(String, String)>| {
+                for (shader_image_name, image_name) in image_infos {
+                    let desc_idx = pipeline.bindings.get(shader_image_name)
+                                   .expect(&format!("Pipeline {} had no image descriptor named {} in the shader", name, shader_image_name)).index;
                     // We only want one FILE_INPUT input image across frames as it will never change
                     if image_name == FILE_INPUT {
                         let image = &frame_info.images.get(FILE_INPUT).unwrap();
-                        descriptor_writes.push(Self::storage_image_write(&image, &mut desc_image_infos, *desc_idx, descriptor_set));
+                        descriptor_writes.push(Self::storage_image_write(&image, &mut desc_image_infos, desc_idx, descriptor_set));
                     } else {
                         match images.get(image_name) {
                             Some(image) => {
-                                descriptor_writes.push(Self::storage_image_write(&image, &mut desc_image_infos, *desc_idx, descriptor_set));
+                                descriptor_writes.push(Self::storage_image_write(&image, &mut desc_image_infos, desc_idx, descriptor_set));
                             }
                             None => {
                                 let image = vkutils::create_image(core, image_name.to_string(), format, frame_info.width, frame_info.height);
-                                descriptor_writes.push(Self::storage_image_write(&image, &mut desc_image_infos, *desc_idx, descriptor_set));
+                                descriptor_writes.push(Self::storage_image_write(&image, &mut desc_image_infos, desc_idx, descriptor_set));
                                 images.insert(image_name.to_string(), image);
                             }
                         }
@@ -313,6 +317,7 @@ impl PipelineGraph {
         Rc::new(RefCell::new(Pipeline {
             device: Rc::clone(&device),
             shader_path: info.shader_path.clone(),
+            bindings: shader.bindings,
             shader_module : shader.module,
             layout: pipeline_layout,
             vk_pipeline: compute_pipeline

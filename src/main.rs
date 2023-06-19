@@ -122,20 +122,20 @@ fn main() {
     let pipeline_infos = HashMap::from([
         ("passthrough-pipeline-0", PipelineInfo {
             shader_path: "shaders/passthrough.comp".to_string(),
-            input_images: [(0, FILE_INPUT.to_string())].to_vec(),
-            output_images: [(1, "passthrough-0".to_string())].to_vec()
+            input_images: [("inputImage".to_string(), FILE_INPUT.to_string())].to_vec(),
+            output_images: [("outputImage".to_string(), "passthrough-0".to_string())].to_vec()
         }),
 
         ("passthrough-pipeline-1", PipelineInfo {
             shader_path: "shaders/passthrough.comp".to_string(),
-            input_images: [(0, "passthrough-0".to_string())].to_vec(),
-            output_images: [(1, "passthrough-1".to_string())].to_vec(),
+            input_images: [("inputImage".to_string(), "passthrough-0".to_string())].to_vec(),
+            output_images: [("outputImage".to_string(), "passthrough-1".to_string())].to_vec(),
         }),
 
         ("passthrough-pipeline-2", PipelineInfo {
             shader_path: "shaders/passthrough.comp".to_string(),
-            input_images: [(0, "passthrough-1".to_string())].to_vec(),
-            output_images: [(1, SWAPCHAIN_OUTPUT.to_string())].to_vec(),
+            input_images: [("inputImage".to_string(), "passthrough-1".to_string())].to_vec(),
+            output_images: [("outputImage".to_string(), SWAPCHAIN_OUTPUT.to_string())].to_vec(),
         })
     ]);
     */
@@ -143,8 +143,8 @@ fn main() {
     let pipeline_infos = HashMap::from([
         ("passthrough-pipeline", PipelineInfo {
             shader_path: "shaders/passthrough.comp".to_string(),
-            input_images: [(0, FILE_INPUT.to_string())].to_vec(),
-            output_images: [(1, SWAPCHAIN_OUTPUT.to_string())].to_vec(),
+            input_images: [("inputImage".to_string(), FILE_INPUT.to_string())].to_vec(),
+            output_images: [("outputImage".to_string(), SWAPCHAIN_OUTPUT.to_string())].to_vec(),
         })
     ]);
 
