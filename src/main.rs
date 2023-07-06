@@ -254,7 +254,7 @@ fn main() {
         if first_run[FRAME_INDEX] {
             if FRAME_INDEX == 0 {
                 let buffer_regions = vk::BufferImageCopy {
-                    buffer_offset: input_image_buffer.allocation.offset(),
+                    buffer_offset: 0,
                     image_subresource: vk::ImageSubresourceLayers {
                         aspect_mask: vk::ImageAspectFlags::COLOR,
                         layer_count: 1,
