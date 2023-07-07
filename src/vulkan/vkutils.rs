@@ -5,14 +5,15 @@ use gpu_allocator as gpu_alloc;
 use gpu_allocator::vulkan as gpu_alloc_vk;
 
 use ash::vk;
+use spirv_reflect::types::ReflectDescriptorBinding;
+use spirv_reflect::types::ReflectDescriptorType;
 use crate::vulkan::core::VkCore;
+use crate::vulkan::shader::ShaderBindings;
 
 use std::rc::Rc;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
-
-use crate::vulkan::shader::DescriptorBinding;
 
 pub struct Image {
     device: Rc<ash::Device>,
@@ -215,11 +216,23 @@ pub unsafe fn create_image(core: &VkCore, name: String, format: vk::Format, widt
     }
 }
 
-pub fn create_descriptor_layout_bindings(bindings: &HashMap<String, DescriptorBinding>,
+pub fn reflect_desc_to_vk(desc_type: ReflectDescriptorType) -> Option<vk::DescriptorType> {
+    match desc_type {
+        ReflectDescriptorType::StorageImage         => Some(vk::DescriptorType::STORAGE_IMAGE),
+        ReflectDescriptorType::CombinedImageSampler => Some(vk::DescriptorType::COMBINED_IMAGE_SAMPLER),
+        ReflectDescriptorType::Sampler              => Some(vk::DescriptorType::SAMPLER),
+        ReflectDescriptorType::UniformBuffer        => Some(vk::DescriptorType::UNIFORM_BUFFER),
+        ReflectDescriptorType::StorageBuffer        => Some(vk::DescriptorType::STORAGE_BUFFER),
+        _ => None
+    }
+}
+
+//pub fn create_descriptor_layout_bindings(bindings: &HashMap<String, ReflectDescriptorBinding>,
+pub fn create_descriptor_layout_bindings(bindings: &ShaderBindings,
                                          num_frames: usize,
                                          pool_sizes: &mut HashMap<vk::DescriptorType, u32>) -> Vec<vk::DescriptorSetLayoutBinding> {
 
-    let mut vk_bindings: Vec<vk::DescriptorSetLayoutBinding> = Vec::with_capacity(bindings.len());
+    let mut vk_bindings: Vec<vk::DescriptorSetLayoutBinding> = Vec::with_capacity(bindings.images.len() + bindings.buffers.len());
 
     let mut image_binding = vk::DescriptorSetLayoutBinding {
         descriptor_count: 1,
@@ -227,14 +240,23 @@ pub fn create_descriptor_layout_bindings(bindings: &HashMap<String, DescriptorBi
         ..Default::default()
     };
 
-    for (_, binding) in bindings {
+    let mut add_binding = |binding: &ReflectDescriptorBinding| {
+        let desc_type = reflect_desc_to_vk(binding.descriptor_type).expect(&format!("Can\'t handle descriptor type: {:?}", binding.descriptor_type));
         // Add to pool size
-        *pool_sizes.entry(binding.descriptor_type).or_insert(0) += num_frames as u32;
+        *pool_sizes.entry(desc_type).or_insert(0) += num_frames as u32;
 
         // Add vulkan descriptor binding
-        image_binding.binding = binding.index;
-        image_binding.descriptor_type = binding.descriptor_type;
+        image_binding.binding = binding.binding;
+        image_binding.descriptor_type = desc_type;
         vk_bindings.push(image_binding);
+    };
+
+    for (_, binding) in &bindings.images {
+        add_binding(binding);
+    }
+
+    for binding in &bindings.buffers {
+        add_binding(binding);
     }
 
     vk_bindings

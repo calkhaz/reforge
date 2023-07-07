@@ -1,18 +1,20 @@
 extern crate spirv_reflect;
 use ash::vk;
 use shaderc::CompilationArtifact;
-use spirv_reflect::types::ReflectDescriptorType;
+use spirv_reflect::types::{ReflectDescriptorType, ReflectDescriptorBinding};
 
 use std::collections::HashMap;
 
-pub struct DescriptorBinding {
-    pub descriptor_type: vk::DescriptorType,
-    pub index: u32
+#[derive(Debug)]
+pub struct ShaderBindings {
+    pub images: HashMap<String, ReflectDescriptorBinding>,
+    pub buffers: Vec<ReflectDescriptorBinding>,
+    pub ssbos: HashMap<String, ReflectDescriptorBinding>
 }
 
 pub struct Shader {
     pub module: vk::ShaderModule,
-    pub bindings: HashMap<String, DescriptorBinding>
+    pub bindings: ShaderBindings
 }
 
 impl Shader {
@@ -60,7 +62,18 @@ impl Shader {
         }
     }
 
-    fn reflect_descriptors(binary: &[u32]) ->  Option< HashMap<String, DescriptorBinding> > {
+    fn reflect_desc_to_vk(desc_type: ReflectDescriptorType) -> Option<vk::DescriptorType> {
+        match desc_type {
+            ReflectDescriptorType::StorageImage         => Some(vk::DescriptorType::STORAGE_IMAGE),
+            ReflectDescriptorType::CombinedImageSampler => Some(vk::DescriptorType::COMBINED_IMAGE_SAMPLER),
+            ReflectDescriptorType::Sampler              => Some(vk::DescriptorType::SAMPLER),
+            ReflectDescriptorType::UniformBuffer        => Some(vk::DescriptorType::UNIFORM_BUFFER),
+            ReflectDescriptorType::StorageBuffer        => Some(vk::DescriptorType::STORAGE_BUFFER),
+            _ => None
+        }
+    }
+
+    fn reflect_descriptors(binary: &[u32]) ->  Option<ShaderBindings> {
         let module = match spirv_reflect::ShaderModule::load_u32_data(binary) {
             Ok(module) => Some(module),
             Err(e) => { eprintln!("{:?}", e); None }
@@ -72,7 +85,9 @@ impl Shader {
         }?;
 
         // The bindings for the pipeline
-        let mut bindings : HashMap<String, DescriptorBinding> = HashMap::new();
+        let mut images : HashMap<String, ReflectDescriptorBinding> = HashMap::new();
+        let mut buffers : Vec<ReflectDescriptorBinding> = Vec::new();
+        let mut ssbos : HashMap<String, ReflectDescriptorBinding> = HashMap::new();
 
         if sets.len() > 1 {
             eprintln!("Warning: Cannot currently handle more than one descriptor set per shader");
@@ -84,24 +99,35 @@ impl Shader {
                     panic!("Currently only support a single descriptor at idx 0 set per shader");
                 }
 
-                let mut desc_type = vk::DescriptorType::STORAGE_IMAGE;
+                let desc_is_buffer = |desc_type: ReflectDescriptorType| -> bool {
+                    desc_type == ReflectDescriptorType::UniformBuffer || desc_type == ReflectDescriptorType::StorageBuffer
+                };
 
-                match binding.descriptor_type {
-                    ReflectDescriptorType::StorageImage         =>  desc_type = vk::DescriptorType::STORAGE_IMAGE,
-                    ReflectDescriptorType::CombinedImageSampler => desc_type = vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-                    ReflectDescriptorType::Sampler              => desc_type = vk::DescriptorType::SAMPLER,
-                    ReflectDescriptorType::UniformBuffer        => desc_type = vk::DescriptorType::UNIFORM_BUFFER,
-                    ReflectDescriptorType::StorageBuffer        => desc_type = vk::DescriptorType::STORAGE_BUFFER,
-                    _ => { eprintln!("Warning: Unrecognized binding '{}'", binding.name) }
+                let desc_type = Self::reflect_desc_to_vk(binding.descriptor_type);
+
+                if desc_type.is_none() {
+                    eprintln!("Warning: Unable to handle descriptor type '{:?}'", desc_type); 
+                    break;
                 }
 
-                bindings.insert(binding.name.clone(), DescriptorBinding {
-                    descriptor_type: desc_type,
-                    index: binding.binding
-                });
+                if desc_is_buffer(binding.descriptor_type) {
+                    if binding.descriptor_type == ReflectDescriptorType::StorageBuffer {
+                        // Grab ssbo by the block name
+                        ssbos.insert(binding.type_description.as_ref().unwrap().type_name.clone(), binding.clone());
+                    }
+                    buffers.push(binding.clone());
+                }
+                // Images are always top level and have names, just insert them
+                else {
+                    images.insert(binding.name.clone(), binding.clone());
+                }
             }
         }
 
-        Some(bindings)
+        Some(ShaderBindings {
+            images: images,
+            buffers: buffers,
+            ssbos: ssbos
+        })
     }
 }

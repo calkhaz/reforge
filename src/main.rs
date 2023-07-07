@@ -120,22 +120,19 @@ fn main() {
     // Example of chained shaders (currently all just passthrough)
     /*
     let pipeline_infos = HashMap::from([
-        ("passthrough-pipeline-0", PipelineInfo {
+        ("passthrough-pipeline", PipelineInfo {
             shader_path: "shaders/passthrough.comp".to_string(),
             input_images: [("inputImage".to_string(), FILE_INPUT.to_string())].to_vec(),
-            output_images: [("outputImage".to_string(), "passthrough-0".to_string())].to_vec()
-        }),
-
-        ("passthrough-pipeline-1", PipelineInfo {
-            shader_path: "shaders/passthrough.comp".to_string(),
-            input_images: [("inputImage".to_string(), "passthrough-0".to_string())].to_vec(),
-            output_images: [("outputImage".to_string(), "passthrough-1".to_string())].to_vec(),
-        }),
-
-        ("passthrough-pipeline-2", PipelineInfo {
-            shader_path: "shaders/passthrough.comp".to_string(),
-            input_images: [("inputImage".to_string(), "passthrough-1".to_string())].to_vec(),
             output_images: [("outputImage".to_string(), SWAPCHAIN_OUTPUT.to_string())].to_vec(),
+            output_buffers: [("outputBuffer".to_string(), "passthrough_buffer".to_string())].to_vec(),
+            ..Default::default()
+        }),
+        ("passthrough-pipeline2", PipelineInfo {
+            shader_path: "shaders/passthrough2.comp".to_string(),
+            input_images: [("inputImage".to_string(), FILE_INPUT.to_string())].to_vec(),
+            output_images: [("outputImage".to_string(), SWAPCHAIN_OUTPUT.to_string())].to_vec(),
+            input_buffers: [("inputBuffer".to_string(), "passthrough_buffer".to_string())].to_vec(),
+            ..Default::default()
         })
     ]);
     */
@@ -145,8 +142,10 @@ fn main() {
             shader_path: "shaders/passthrough.comp".to_string(),
             input_images: [("inputImage".to_string(), FILE_INPUT.to_string())].to_vec(),
             output_images: [("outputImage".to_string(), SWAPCHAIN_OUTPUT.to_string())].to_vec(),
+            ..Default::default()
         })
     ]);
+
 
     let mut graph = PipelineGraph::new(&vk_core, &pipeline_infos, args.shader_format.unwrap().to_vk_format(), window_width, window_height, num_frames);
     let mut frames : Vec<Frame> = (0..num_frames).map(|_|{

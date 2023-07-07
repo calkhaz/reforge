@@ -14,8 +14,9 @@ use std::ops::Drop;
 use crate::vulkan::core::VkCore;
 use crate::vulkan::vkutils;
 use crate::vulkan::vkutils::Image;
+use crate::vulkan::vkutils::Buffer;
 use crate::vulkan::shader::Shader;
-use crate::vulkan::shader::DescriptorBinding;
+use crate::vulkan::shader::ShaderBindings;
 
 pub const FILE_INPUT: &str = "rf:file-input";
 pub const SWAPCHAIN_OUTPUT: &str = "rf:swapchain";
@@ -28,15 +29,19 @@ pub struct PipelineLayout {
 #[derive(Default)]
 pub struct PipelineInfo {
     pub shader_path: String,
+    // images
     pub input_images: Vec<(String, String)>,
-    pub output_images: Vec<(String, String)>
+    pub output_images: Vec<(String, String)>,
+    // buffers (ssbo)
+    pub input_buffers: Vec<(String, String)>,
+    pub output_buffers: Vec<(String, String)>
 }
 
 pub struct Pipeline {
     device: Rc<ash::Device>,
     shader_path: String,
     shader_module: vk::ShaderModule,
-    bindings: HashMap<String, DescriptorBinding>,
+    bindings: ShaderBindings,
     pub layout: PipelineLayout,
     pub vk_pipeline: ash::vk::Pipeline
 }
@@ -49,6 +54,7 @@ pub struct PipelineNode {
 
 pub struct PipelineGraphFrame {
     pub images: HashMap<String, Image>,
+    pub buffers: HashMap<String, Buffer>,
     pub descriptor_sets: HashMap<String, vk::DescriptorSet>
 }
 
@@ -136,13 +142,55 @@ impl PipelineGraphFrame {
         }
     }
 
+    unsafe fn buffer_write(buffer: &Buffer, infos: &mut Vec<vk::DescriptorBufferInfo>, desc_idx: u32, set: vk::DescriptorSet) -> vk::WriteDescriptorSet {
+        // TODO: If we get a different allocator, we'll want to change the offset and range here
+        infos.push(vk::DescriptorBufferInfo {
+            buffer: buffer.vk,
+            offset: 0,
+            range : ash::vk::WHOLE_SIZE
+        });
+
+        vk::WriteDescriptorSet {
+            dst_set: set,
+            dst_binding: desc_idx,
+            descriptor_count: 1,
+            descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
+            p_buffer_info: infos.last().unwrap(),
+            ..Default::default()
+        }
+    }
+
     unsafe fn new(core: &VkCore, frame_info: &PipelineGraphFrameInfo) -> PipelineGraphFrame {
         let device = &core.device;
         let format = frame_info.format;
 
         // Create per-frame images, descriptor sets
         let mut images: HashMap<String, Image> = HashMap::new();
+        let mut buffers: HashMap<String, Buffer> = HashMap::new();
         let mut descriptor_sets: HashMap<String, vk::DescriptorSet> = HashMap::new();
+
+        let mut ssbo_sizes: HashMap<String, u32> = HashMap::new();
+
+        for (name, info) in frame_info.pipeline_infos {
+            let pipeline = frame_info.pipelines.get(*name).unwrap().as_ref().borrow();
+
+            let mut add_ssbo_sizes = |buffer_name_pairs: &Vec<(String, String)>| {
+                for (shader_buffer_name, buffer_name) in buffer_name_pairs {
+                    let binding = pipeline.bindings.ssbos.get(shader_buffer_name)
+                                   .expect(&format!("Pipeline {} had no buffer descriptor named {} in the shader", name, shader_buffer_name));
+
+                    let size: u32 = binding.block.members.iter().map(|s| s.padded_size).sum();
+
+                    // Insert the size or max of current size and new size found
+                    ssbo_sizes.entry(buffer_name.clone()).and_modify(|curr_val| {
+                        *curr_val = std::cmp::max(size, *curr_val);
+                    }).or_insert(size);
+                }
+            };
+
+            add_ssbo_sizes(&info.input_buffers);
+            add_ssbo_sizes(&info.output_buffers);
+        }
 
         for (name, info) in frame_info.pipeline_infos {
             let pipeline = frame_info.pipelines.get(*name).unwrap().as_ref().borrow();
@@ -158,14 +206,20 @@ impl PipelineGraphFrame {
 
             let mut desc_image_infos: Vec<vk::DescriptorImageInfo> =
                 Vec::with_capacity(info.input_images.len() + info.output_images.len());
-            let mut descriptor_writes: Vec<vk::WriteDescriptorSet> =
-                Vec::with_capacity(info.input_images.len() + info.output_images.len());
 
+            let mut desc_buffer_infos: Vec<vk::DescriptorBufferInfo> =
+                Vec::with_capacity(info.input_buffers.len() + info.output_buffers.len());
+
+            let mut descriptor_writes: Vec<vk::WriteDescriptorSet> =
+                Vec::with_capacity(info.input_images.len()  + info.output_images .len() +
+                                   info.input_buffers.len() + info.output_buffers.len());
+
+            {
             // Create descriptor writes and create images as needed
-            let mut load_descriptors = |image_infos: &Vec<(String, String)>| {
+            let mut load_image_descriptors = |image_infos: &Vec<(String, String)>| {
                 for (shader_image_name, image_name) in image_infos {
-                    let desc_idx = pipeline.bindings.get(shader_image_name)
-                                   .expect(&format!("Pipeline {} had no image descriptor named {} in the shader", name, shader_image_name)).index;
+                    let desc_idx = pipeline.bindings.images.get(shader_image_name)
+                                   .expect(&format!("Pipeline {} had no image descriptor named {} in the shader", name, shader_image_name)).binding;
                     // We only want one FILE_INPUT input image across frames as it will never change
                     if image_name == FILE_INPUT {
                         let image = &frame_info.images.get(FILE_INPUT).unwrap();
@@ -185,15 +239,42 @@ impl PipelineGraphFrame {
                 }
             };
 
-            load_descriptors(&info.input_images);
-            load_descriptors(&info.output_images);
+            load_image_descriptors(&info.input_images);
+            load_image_descriptors(&info.output_images);
+            }
+
+            {
+            // Create descriptor writes and create ssbo buffers as needed
+            let mut load_buffer_descriptors = |buffer_infos: &Vec<(String, String)>| {
+                for (shader_buffer_name, buffer_name) in buffer_infos {
+                    let desc = pipeline.bindings.ssbos.get(shader_buffer_name)
+                                   .expect(&format!("Pipeline {} had no buffer descriptor named {} in the shader", name, shader_buffer_name));
+                    match buffers.get(buffer_name) {
+                        Some(buffer) => {
+                            descriptor_writes.push(Self::buffer_write(&buffer, &mut desc_buffer_infos, desc.binding, descriptor_set));
+                        }
+                        None => {
+                            let usage = vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST;
+                            let size = *ssbo_sizes.get(buffer_name).unwrap();
+                            let buffer = vkutils::create_buffer(core, buffer_name.to_string(), size as u64, usage, gpu_allocator::MemoryLocation::CpuToGpu);
+                            descriptor_writes.push(Self::buffer_write(&buffer, &mut desc_buffer_infos, desc.binding, descriptor_set));
+                            buffers.insert(buffer_name.to_string(), buffer);
+                        }
+                    }
+                }
+            };
+
+            load_buffer_descriptors(&info.input_buffers);
+            load_buffer_descriptors(&info.output_buffers);
+
+            }
 
             device.update_descriptor_sets(&descriptor_writes, &[]);
             descriptor_sets.insert(name.to_string(), descriptor_set);
         }
 
         PipelineGraphFrame {
-            images, descriptor_sets
+            images, buffers, descriptor_sets
         }
     }
 }
