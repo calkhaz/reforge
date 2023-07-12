@@ -1,0 +1,75 @@
+use std::str::FromStr;
+use std::collections::HashMap;
+use crate::config::ast::ParamValue;
+use crate::config::ast::NodeExpr;
+
+grammar;
+
+pub NodeExprList: Vec<Box<NodeExpr>> = {
+    <node_expr: NodeExpr> => vec![node_expr],
+    <node_exprs: NodeExprList> <node_expr: NodeExpr> => {
+        let mut exprs = node_exprs;
+        exprs.push(node_expr);
+        exprs
+    }
+};
+
+NodeExpr: Box<NodeExpr> = {
+    // Node definition: gaussian : { sigma: 32, val: 123 }
+    <node:NodeField>  => Box::new(NodeExpr::Node(node)),
+
+    // Graph: nodeX -> nodeY -> nodeZ
+    <graph:GraphExpr> => Box::new(NodeExpr::Graph(graph)),
+
+    // Single-line comment: // coment
+    r"//[^\n\r]*[\n\r]*" => Box::new(NodeExpr::Ignore(0)),
+
+    // Multi-line comments: /* comment */ 
+    r"/\*([^\*]*\*+[^\*/])*([^\*]*\*+|[^\*])*\*/" => Box::new(NodeExpr::Ignore(0))
+};
+
+GraphExpr: Vec<(String, Option<String>)> = {
+    <node0:GraphMember> "->" <node1:GraphMember> => vec![node0, node1],
+    <graph:GraphExpr> "->" <node:GraphMember> => {
+        let mut exprs = graph;
+        exprs.push(node);
+        exprs
+    },
+};
+
+GraphMember: (String, Option<String>) = {
+    <node:Str> => (node, None),
+    <node:Str> ":" <descriptor:Str> => (node, Some(descriptor.to_string()))
+};
+
+NodeField: (String, String, HashMap<String, Box<ParamValue>>) = {
+    <node_name:Str> ":" <node_type:Str> <node_params:NodeParams> => (node_name, node_type, node_params)
+};
+
+NodeParams: HashMap<String, Box<ParamValue>> = {
+     "{" <map:ParamFieldList> "}" => map,
+     "{}" => HashMap::new()
+};
+
+ParamFieldList: HashMap<String, Box<ParamValue>> = {
+    <head:ParamField> <tail:("," ParamField)*> => {
+        let mut result = HashMap::new();
+        result.insert(head.0, head.1);
+
+        for (key, value) in tail.into_iter().map(|(_, f)| f) {
+            result.insert(key, value);
+        }
+        result
+    }
+};
+
+ParamField: (String, Box<ParamValue>) = {
+    <key:Str> ":" <value:ParamValueOp> => (key, value),
+};
+
+ParamValueOp: Box<ParamValue> = {
+    r"[0-9]+" => Box::new(ParamValue::Number(i32::from_str(<>).unwrap())),
+};
+
+// C-like identifier
+Str: String = <s:r"[a-zA-Z_][a-zA-Z0-9_]+"> => s.to_string();
