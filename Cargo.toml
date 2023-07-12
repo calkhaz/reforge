@@ -15,3 +15,7 @@ gpu-allocator = "0.22.0"
 ffmpeg-next = "6.0.0"
 clap = { version = "4.2.5", features = ["derive"] }
 spirv-reflect = "0.2.3"
+lalrpop-util = { version = "0.20.0", features = ["lexer", "unicode"] }
+
+[build-dependencies]
+lalrpop = "0.20.0"
