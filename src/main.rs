@@ -166,6 +166,7 @@ fn main() {
 
     // Pipeline-name -> timestamp
     let mut last_modified_shader_times: HashMap<String, u64> = utils::get_modified_times(&graph.pipelines);
+    let mut last_modified_config_time: u64 = if let Some(node_config) = args.node_config.as_ref() { utils::get_modified_time(node_config) } else { 0 };
 
     let mapped_input_image_data: *mut u8 = input_image_buffer.allocation.mapped_ptr().unwrap().as_ptr() as *mut u8;
     let mut timer: std::time::Instant = std::time::Instant::now();
@@ -203,6 +204,56 @@ fn main() {
         }
 
         last_modified_shader_times = current_modified_shader_times;
+
+        if let Some(node_config) = args.node_config.as_ref() {
+            let current_modified_config_time = utils::get_modified_time(node_config);
+
+            match current_modified_config_time {
+                0 => {
+                    if 0 != last_modified_config_time {
+                        eprintln!("Unable to access config file: {}", node_config);
+                    }
+                },
+                modified_timestamp => {
+                    if modified_timestamp != last_modified_config_time{
+
+                        let config_contents = match std::fs::read_to_string(node_config) {
+                            Ok(contents) => Some(contents),
+                            Err(e) => { eprintln!("Error reading file '{}' : {}", node_config, e); None }
+                        };
+
+                        if let Some(contents) = config_contents {
+                            let pipeline_config = config_parse(contents);
+
+                            let graph_info = PipelineGraphInfo {
+                                pipeline_infos: vulkan::vkutils::synthesize_config(Rc::clone(&vk_core.device), &pipeline_config),
+                                format: args.shader_format.unwrap().to_vk_format(),
+                                width: window_width,
+                                height: window_height,
+                                num_frames: num_frames
+                            };
+
+                            vk_core.device.device_wait_idle().unwrap();
+                            graph = PipelineGraph::new(&vk_core, graph_info);
+
+                            for frame in &mut frames {
+                                frame.timer.clear();
+                            }
+
+                            for i in 0..num_frames {
+                                first_run[i] = true;
+                            }
+
+                            FRAME_INDEX = 0;
+
+                            last_modified_shader_times = utils::get_modified_times(&graph.pipelines);
+                        }
+                  }
+                }
+            };
+
+            last_modified_config_time = current_modified_config_time;
+        }
 
         let graph_frame = &graph.frames[FRAME_INDEX];
         let frame = &mut frames[FRAME_INDEX];
