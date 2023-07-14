@@ -124,11 +124,19 @@ fn main() {
     unsafe {
     let vk_core = VkCore::new(&window);
 
-    let config = r#"
-        input -> passthrough -> output
-    "#;
 
-    let pipeline_config = config_parse(config.to_string());
+    let node_config = if args.node_config.is_some() {
+        match std::fs::read_to_string(args.node_config.clone().unwrap()) {
+            Ok(contents) => contents,
+            Err(e) => { eprintln!("Error reading file '{}' : {}", args.node_config.unwrap(), e); std::process::exit(1); }
+        }
+    }
+    else {
+        // Default configuration
+        "input -> passthrough -> output".to_string()
+    };
+
+    let pipeline_config = config_parse(node_config.to_string());
 
     let graph_info = PipelineGraphInfo {
         pipeline_infos: vulkan::vkutils::synthesize_config(Rc::clone(&vk_core.device), &pipeline_config),
