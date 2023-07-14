@@ -124,28 +124,11 @@ fn main() {
     unsafe {
     let vk_core = VkCore::new(&window);
 
-    // Example of chained shaders (currently all just passthrough)
-    /*
-    let pipeline_infos = HashMap::from([
-        ("passthrough-pipeline", PipelineInfo {
-            shader_path: "shaders/passthrough.comp".to_string(),
-            input_images: [("inputImage".to_string(), FILE_INPUT.to_string())].to_vec(),
-            output_images: [("outputImage".to_string(), SWAPCHAIN_OUTPUT.to_string())].to_vec(),
-            output_buffers: [("outputBuffer".to_string(), "passthrough_buffer".to_string())].to_vec(),
-            ..Default::default()
-        }),
-        ("passthrough-pipeline2", PipelineInfo {
-            shader_path: "shaders/passthrough2.comp".to_string(),
-            input_images: [("inputImage".to_string(), FILE_INPUT.to_string())].to_vec(),
-            output_images: [("outputImage".to_string(), SWAPCHAIN_OUTPUT.to_string())].to_vec(),
-            input_buffers: [("inputBuffer".to_string(), "passthrough_buffer".to_string())].to_vec(),
-            ..Default::default()
-        })
-    ]);
-    */
+    let config = r#"
+        input -> passthrough -> output
+    "#;
 
-
-    let pipeline_config = config_parse("".to_string());
+    let pipeline_config = config_parse(config.to_string());
 
     let graph_info = PipelineGraphInfo {
         pipeline_infos: vulkan::vkutils::synthesize_config(Rc::clone(&vk_core.device), &pipeline_config),
