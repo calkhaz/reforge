@@ -2,12 +2,14 @@ extern crate ash;
 extern crate shaderc;
 extern crate clap;
 extern crate gpu_allocator;
+#[macro_use] extern crate lalrpop_util;
 
 use gpu_allocator as gpu_alloc;
 
 use clap::Parser;
 
 use ash::vk;
+use std::rc::Rc;
 use std::collections::HashMap;
 use std::default::Default;
 
@@ -15,12 +17,14 @@ mod vulkan;
 use vulkan::command;
 use vulkan::swapchain::SwapChain;
 use vulkan::core::VkCore;
-use vulkan::pipeline_graph::PipelineInfo;
 use vulkan::pipeline_graph::PipelineGraph;
+use vulkan::pipeline_graph::PipelineGraphInfo;
 use vulkan::pipeline_graph::FILE_INPUT;
 use vulkan::pipeline_graph::SWAPCHAIN_OUTPUT;
 use vulkan::frame::Frame;
 use vulkan::vkutils;
+mod config;
+use config::config::parse as config_parse;
 
 mod utils;
 
@@ -55,6 +59,9 @@ pub struct Args {
 
     #[arg(long, default_value = "rgba32f", help = "Shader image format")]
     shader_format: Option<ShaderFormat>,
+
+    #[arg(long, value_name="node-config", help = "Path to the node configuration file")]
+    node_config: Option<String>,
 
     #[arg(long, default_value= "2", help = "Number of frame-in-flight to be used when displaying to the swapchain")]
     num_frames: Option<usize>,
@@ -137,19 +144,21 @@ fn main() {
     ]);
     */
 
-    let pipeline_infos = HashMap::from([
-        ("passthrough-pipeline", PipelineInfo {
-            shader_path: "shaders/passthrough.comp".to_string(),
-            input_images: [("inputImage".to_string(), FILE_INPUT.to_string())].to_vec(),
-            output_images: [("outputImage".to_string(), SWAPCHAIN_OUTPUT.to_string())].to_vec(),
-            ..Default::default()
-        })
-    ]);
 
+    let pipeline_config = config_parse("".to_string());
 
-    let mut graph = PipelineGraph::new(&vk_core, &pipeline_infos, args.shader_format.unwrap().to_vk_format(), window_width, window_height, num_frames);
+    let graph_info = PipelineGraphInfo {
+        pipeline_infos: vulkan::vkutils::synthesize_config(Rc::clone(&vk_core.device), &pipeline_config),
+        format: args.shader_format.unwrap().to_vk_format(),
+        width: window_width,
+        height: window_height,
+        num_frames: num_frames
+    };
+
+    let mut graph = PipelineGraph::new(&vk_core, graph_info);
+
     let mut frames : Vec<Frame> = (0..num_frames).map(|_|{
-        Frame::new(&vk_core, pipeline_infos.len() as u32)
+        Frame::new(&vk_core, pipeline_config.len() as u32)
     }).collect();
 
 
@@ -165,7 +174,7 @@ fn main() {
                                                  window_width, window_height);
 
     // Pipeline-name -> timestamp
-    let mut last_modified_shader_times: HashMap<String, u64> = utils::get_modified_times(&pipeline_infos);
+    let mut last_modified_shader_times: HashMap<String, u64> = utils::get_modified_times(&graph.pipelines);
 
     let mapped_input_image_data: *mut u8 = input_image_buffer.allocation.mapped_ptr().unwrap().as_ptr() as *mut u8;
     let mut timer: std::time::Instant = std::time::Instant::now();
@@ -183,7 +192,7 @@ fn main() {
     render_loop(&mut event_loop, &mut || {
         static mut FRAME_INDEX: usize = 0;
 
-        let current_modified_shader_times: HashMap<String, u64> = utils::get_modified_times(&pipeline_infos);
+        let current_modified_shader_times: HashMap<String, u64> = utils::get_modified_times(&graph.pipelines);
 
         for (name, last_timestamp) in &last_modified_shader_times {
             match *current_modified_shader_times.get(name).unwrap() {
@@ -191,7 +200,7 @@ fn main() {
                 // Ex: File was moved or not available, print an error just once if we previously saw it
                 0 => {
                     if 0 != *last_timestamp {
-                        eprintln!("Unable to access shader file: {}", pipeline_infos.get(name.as_str()).unwrap().shader_path);
+                        eprintln!("Unable to access shader file: {}", graph.pipelines.get(name.as_str()).unwrap().borrow().info.shader.path);
                     }
                 }
                 modified_timestamp => {

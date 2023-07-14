@@ -1,14 +1,17 @@
 use std::collections::HashMap;
 
-use crate::vulkan::pipeline_graph::PipelineInfo;
+use crate::vulkan::pipeline_graph::Pipeline;
+
+use std::rc::Rc;
+use std::cell::RefCell;
 
 const MOVING_AVG_SIZE: f64 = 60.0;
 
-pub fn get_modified_times(pipeline_infos: &HashMap<&str, PipelineInfo>) -> HashMap<String, u64> {
+pub fn get_modified_times(pipelines: &HashMap<String, Rc<RefCell<Pipeline>>>) -> HashMap<String, u64> {
     let mut timestamps: HashMap<String, u64> = HashMap::new();
 
-    for (name, info) in pipeline_infos {
-        match std::fs::metadata(&info.shader_path) {
+    for (name, pipeline) in pipelines {
+        match std::fs::metadata(&pipeline.borrow().info.shader.path) {
             Ok(metadata) => {
                 let timestamp = metadata.modified().unwrap().duration_since(std::time::SystemTime::UNIX_EPOCH).unwrap().as_secs();
                 timestamps.insert(name.to_string(), timestamp);

@@ -14,7 +14,8 @@ pub struct ShaderBindings {
 
 pub struct Shader {
     pub module: vk::ShaderModule,
-    pub bindings: ShaderBindings
+    pub bindings: ShaderBindings,
+    pub path: String
 }
 
 impl Shader {
@@ -25,7 +26,8 @@ impl Shader {
 
         Some(Shader {
             module  : Self::create_module(device, spirv_binary)?,
-            bindings: Self::reflect_descriptors(spirv_binary)?
+            bindings: Self::reflect_descriptors(spirv_binary)?,
+            path: path.to_string()
         })
     }
 

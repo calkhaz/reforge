@@ -9,11 +9,14 @@ use spirv_reflect::types::ReflectDescriptorBinding;
 use spirv_reflect::types::ReflectDescriptorType;
 use crate::vulkan::core::VkCore;
 use crate::vulkan::shader::ShaderBindings;
+use crate::vulkan::pipeline_graph::PipelineInfo;
 
 use std::rc::Rc;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
+
+use crate::config::config::ConfigPipeline;
 
 pub struct Image {
     device: Rc<ash::Device>,
@@ -118,6 +121,53 @@ impl GpuTimer{
         times
 
     }
+}
+
+pub fn synthesize_config(device: Rc<ash::Device>, config: &HashMap<String, ConfigPipeline>) -> HashMap<String, PipelineInfo> {
+
+    use crate::vulkan::pipeline_graph::{SWAPCHAIN_OUTPUT, FILE_INPUT};
+    use crate::vulkan::shader::Shader;
+
+    let mut infos: HashMap<String, PipelineInfo> = HashMap::new();
+
+    for (name, data) in config {
+        let shader_path = &data.shader_path;
+
+
+        let shader = Shader::new(&device, shader_path).expect(&format!("Failed to create shader: {shader_path}"));
+
+        let mut info = PipelineInfo {
+            shader: shader,
+            input_images: Vec::new(), output_images: Vec::new(),
+            input_ssbos : Vec::new(), output_ssbos : Vec::new()
+        };
+
+        for image in &data.input_images {
+            let desc = info.shader.bindings.images.get(&image.descriptor_name).expect(&format!("Shader {shader_path} has no binding named: {}", image.descriptor_name));
+            let resource_name = if image.resource_name == "input_image" { FILE_INPUT.to_string() } else { image.resource_name.clone() };
+            info.input_images.push((resource_name, desc.clone()));
+        }
+
+        for image in &data.output_images {
+            let desc = info.shader.bindings.images.get(&image.descriptor_name).expect(&format!("Shader {shader_path} has no binding named: {}", image.descriptor_name));
+            let resource_name = if image.resource_name == "output_image" { SWAPCHAIN_OUTPUT.to_string() } else { image.resource_name.clone() };
+            info.output_images.push((resource_name, desc.clone()));
+        }
+
+        for buffer in &data.input_buffers {
+            let desc = info.shader.bindings.ssbos.get(&buffer.descriptor_name).expect(&format!("Shader {shader_path} has no binding named: {}", buffer.descriptor_name));
+            info.input_ssbos.push((buffer.resource_name.clone(), desc.clone()));
+        }
+
+        for buffer in &data.output_buffers {
+            let desc = info.shader.bindings.ssbos.get(&buffer.descriptor_name).expect(&format!("Shader {shader_path} has no binding named: {}", buffer.descriptor_name));
+            info.output_ssbos.push((buffer.resource_name.clone(), desc.clone()));
+        }
+
+        infos.insert(name.clone(), info);
+    }
+
+    infos
 }
 
 pub unsafe fn create_buffer(core: &VkCore,
