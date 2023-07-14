@@ -90,6 +90,11 @@ impl GpuTimer{
         *self.query_indices.get(name).unwrap() + 1
     }
 
+    pub fn clear(&mut self) {
+        self.query_indices.clear();
+        self.current_query_index = 0;
+    }
+
     pub fn get_elapsed_ms(&mut self) -> String {
         let mut times: String = String::new();
 

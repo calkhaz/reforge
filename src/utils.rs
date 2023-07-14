@@ -7,21 +7,22 @@ use std::cell::RefCell;
 
 const MOVING_AVG_SIZE: f64 = 60.0;
 
+pub fn get_modified_time(path: &String) -> u64 {
+    match std::fs::metadata(path) {
+        Ok(metadata) => {
+            metadata.modified().unwrap().duration_since(std::time::SystemTime::UNIX_EPOCH).unwrap().as_secs()
+        },
+        // Set the modification time to zero so it gets picked up
+        // up when the file is findable again
+        Err(_) => 0
+    }
+}
+
 pub fn get_modified_times(pipelines: &HashMap<String, Rc<RefCell<Pipeline>>>) -> HashMap<String, u64> {
     let mut timestamps: HashMap<String, u64> = HashMap::new();
 
     for (name, pipeline) in pipelines {
-        match std::fs::metadata(&pipeline.borrow().info.shader.path) {
-            Ok(metadata) => {
-                let timestamp = metadata.modified().unwrap().duration_since(std::time::SystemTime::UNIX_EPOCH).unwrap().as_secs();
-                timestamps.insert(name.to_string(), timestamp);
-            },
-            // Set the modification time to zero so it gets picked up
-            // up when the file is findable again
-            Err(_) => {
-                timestamps.insert(name.to_string(), 0);
-            }
-        };
+        timestamps.insert(name.to_string(), get_modified_time(&pipeline.borrow().info.shader.path));
     }
 
     timestamps
