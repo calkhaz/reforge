@@ -2,7 +2,7 @@ extern crate ash;
 use ash::vk;
 
 use crate::vulkan::frame::Frame;
-use crate::vulkan::pipeline_graph::PipelineNode;
+use crate::vulkan::pipeline_graph::GraphAction;
 use crate::vulkan::pipeline_graph::PipelineGraph;
 use crate::vulkan::pipeline_graph::PipelineGraphFrame;
 
@@ -117,59 +117,56 @@ pub fn blit_copy(device: &ash::Device, cmd: vk::CommandBuffer, info: &BlitCopy) 
 
 
 pub fn execute_pipeline_graph(device: &ash::Device, frame: &mut Frame, graph_frame: &PipelineGraphFrame, graph: &PipelineGraph) {
-
-    fn dispatch_node(node: &PipelineNode, device: &ash::Device, frame: &mut Frame, graph_frame: &PipelineGraphFrame, dispatch_x: u32, dispatch_y: u32) {
-        unsafe {
-        device.cmd_bind_descriptor_sets(
-            frame.cmd_buffer,
-            vk::PipelineBindPoint::COMPUTE,
-            node.pipeline.borrow().layout.vk,
-            0,
-            &[*graph_frame.descriptor_sets.get(&node.name).unwrap()],
-            &[],
-        );
-        device.cmd_bind_pipeline(
-            frame.cmd_buffer,
-            vk::PipelineBindPoint::COMPUTE,
-            node.pipeline.borrow().vk_pipeline
-        );
-
-        // Start timer
-        device.cmd_write_timestamp(frame.cmd_buffer,
-                                   vk::PipelineStageFlags::TOP_OF_PIPE,
-                                   frame.timer.query_pool,
-                                   frame.timer.start(&node.name));
-
-        device.cmd_dispatch(frame.cmd_buffer, dispatch_x, dispatch_y, 1);
-
-        // Stop timer
-        device.cmd_write_timestamp(frame.cmd_buffer,
-                                   vk::PipelineStageFlags::BOTTOM_OF_PIPE,
-                                   frame.timer.query_pool,
-                                   frame.timer.stop(&node.name));
-
-        for output_node in &node.outputs {
-            let mem_barrier = vk::MemoryBarrier {
-                src_access_mask: vk::AccessFlags::SHADER_READ,
-                dst_access_mask: vk::AccessFlags::SHADER_WRITE,
-                ..Default::default()
-            };
-
-            device.cmd_pipeline_barrier(frame.cmd_buffer,
-                                        vk::PipelineStageFlags::COMPUTE_SHADER,
-                                        vk::PipelineStageFlags::COMPUTE_SHADER,
-                                        vk::DependencyFlags::empty(), &[mem_barrier], &[], &[]);
-
-            dispatch_node(output_node, device, frame, graph_frame, dispatch_x, dispatch_y);
-        }
-        }
-    }
-
-
     let dispatch_x = (graph.width as f32/16.0).ceil() as u32;
     let dispatch_y = (graph.height as f32/16.0).ceil() as u32;
 
-    for node in &graph.roots {
-        dispatch_node(node, device, frame, graph_frame, dispatch_x, dispatch_y);
+    for action in &graph.flattened {
+        match action {
+            GraphAction::Barrier => {
+                let mem_barrier = vk::MemoryBarrier {
+                    src_access_mask: vk::AccessFlags::SHADER_READ,
+                    dst_access_mask: vk::AccessFlags::SHADER_WRITE,
+                    ..Default::default()
+                };
+
+                unsafe {
+                device.cmd_pipeline_barrier(frame.cmd_buffer,
+                                            vk::PipelineStageFlags::COMPUTE_SHADER,
+                                            vk::PipelineStageFlags::COMPUTE_SHADER,
+                                            vk::DependencyFlags::empty(), &[mem_barrier], &[], &[]);
+                }
+            },
+            GraphAction::Pipeline(pipeline) => {
+                unsafe {
+                device.cmd_bind_descriptor_sets(
+                    frame.cmd_buffer,
+                    vk::PipelineBindPoint::COMPUTE,
+                    pipeline.borrow().layout.vk,
+                    0,
+                    &[*graph_frame.descriptor_sets.get(&pipeline.borrow().name).unwrap()],
+                    &[],
+                );
+                device.cmd_bind_pipeline(
+                    frame.cmd_buffer,
+                    vk::PipelineBindPoint::COMPUTE,
+                    pipeline.borrow().vk_pipeline
+                );
+
+                // Start timer
+                device.cmd_write_timestamp(frame.cmd_buffer,
+                                           vk::PipelineStageFlags::TOP_OF_PIPE,
+                                           frame.timer.query_pool,
+                                           frame.timer.start(&pipeline.borrow().name));
+
+                device.cmd_dispatch(frame.cmd_buffer, dispatch_x, dispatch_y, 1);
+
+                // Stop timer
+                device.cmd_write_timestamp(frame.cmd_buffer,
+                                           vk::PipelineStageFlags::BOTTOM_OF_PIPE,
+                                           frame.timer.query_pool,
+                                           frame.timer.stop(&pipeline.borrow().name));
+                    }
+            }
+        }
     }
 }
