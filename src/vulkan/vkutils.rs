@@ -18,6 +18,11 @@ use std::collections::HashMap;
 
 use crate::config::config::ConfigPipeline;
 
+pub struct Sampler {
+    device: Rc<ash::Device>,
+    pub vk: vk::Sampler
+}
+
 pub struct Image {
     device: Rc<ash::Device>,
     allocator: Rc<RefCell<gpu_alloc_vk::Allocator>>,
@@ -205,7 +210,7 @@ pub unsafe fn create_buffer(core: &VkCore,
 
 pub unsafe fn create_image(core: &VkCore, name: String, format: vk::Format, width: u32, height: u32) -> Image {
 
-    let mut usage = vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::TRANSFER_SRC;
+    let mut usage = vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::TRANSFER_SRC | vk::ImageUsageFlags::SAMPLED;
 
     // SRGB will not be used in the compute shaders because
     // vulkan complained about it and didn't allow it
@@ -317,6 +322,19 @@ pub fn create_descriptor_layout_bindings(bindings: &ShaderBindings,
     vk_bindings
 }
 
+pub unsafe fn create_sampler(device: Rc<ash::Device>) -> Sampler {
+    let sampler_info = vk::SamplerCreateInfo::builder()
+        .min_filter(vk::Filter::LINEAR)
+        .mag_filter(vk::Filter::LINEAR)
+        .address_mode_u(vk::SamplerAddressMode::CLAMP_TO_EDGE)
+        .address_mode_w(vk::SamplerAddressMode::CLAMP_TO_EDGE)
+        .address_mode_w(vk::SamplerAddressMode::CLAMP_TO_EDGE);
+
+    let vk = device.create_sampler(&sampler_info, None).unwrap();
+
+    Sampler { device, vk }
+}
+
 impl Drop for Buffer {
     fn drop(&mut self) {
         unsafe {
@@ -338,6 +356,10 @@ impl Drop for Image {
         let allocation = std::mem::take(&mut self.allocation);
         self.allocator.borrow_mut().free(allocation).unwrap();
     }
+}
+
+impl Drop for Sampler {
+    fn drop(&mut self) { unsafe { self.device.destroy_sampler(self.vk, None); } }
 }
 
 impl Drop for GpuTimer {
