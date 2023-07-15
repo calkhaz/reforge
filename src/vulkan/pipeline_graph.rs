@@ -14,8 +14,7 @@ use std::ops::Drop;
 
 use crate::vulkan::core::VkCore;
 use crate::vulkan::vkutils;
-use crate::vulkan::vkutils::Image;
-use crate::vulkan::vkutils::Buffer;
+use crate::vulkan::vkutils::{Buffer, Image, Sampler};
 use crate::vulkan::shader::Shader;
 
 pub const FILE_INPUT: &str = "rf:file-input";
@@ -71,6 +70,7 @@ pub struct PipelineGraph {
     pub height: u32,
     pub pipelines: HashMap<String, Rc<RefCell<Pipeline>>>,
     images: HashMap<String, Image>, // Top-level images that shouldn't be per-frame
+    _sampler: Sampler, // Stored here so it doesn't get dropped
     descriptor_pool: vk::DescriptorPool
 }
 
@@ -80,23 +80,23 @@ struct PipelineGraphFrameInfo<'a> {
     pub images: &'a HashMap<String, Image>,
     pub width: u32,
     pub height: u32,
-    pub format: vk::Format
+    pub format: vk::Format,
+    pub sampler: &'a Sampler
 }
 
 impl PipelineGraphFrame {
-    unsafe fn storage_image_write(image: &Image, infos: &mut Vec<vk::DescriptorImageInfo>, binding_idx: u32, set: vk::DescriptorSet) -> vk::WriteDescriptorSet {
-
+    unsafe fn image_write(image: &Image, infos: &mut Vec<vk::DescriptorImageInfo>, binding: &ReflectDescriptorBinding, set: vk::DescriptorSet, sampler: &Sampler) -> vk::WriteDescriptorSet {
         infos.push(vk::DescriptorImageInfo {
             image_layout: vk::ImageLayout::GENERAL,
             image_view: image.view.unwrap(),
-            ..Default::default()
+            sampler: sampler.vk
         });
 
         vk::WriteDescriptorSet {
             dst_set: set,
-            dst_binding: binding_idx,
+            dst_binding: binding.binding,
             descriptor_count: 1,
-            descriptor_type: vk::DescriptorType::STORAGE_IMAGE,
+            descriptor_type: vkutils::reflect_desc_to_vk(binding.descriptor_type).unwrap(),
             p_image_info: infos.last().unwrap(),
             ..Default::default()
         }
@@ -174,20 +174,18 @@ impl PipelineGraphFrame {
             // Create descriptor writes and create images as needed
             let mut load_image_descriptors = |image_infos: &Vec<(String, ReflectDescriptorBinding)>| {
                 for (image_name, binding) in image_infos {
-                    let binding_idx = binding.binding;
-
                     // We only want one FILE_INPUT input image across frames as it will never change
                     if image_name == FILE_INPUT {
                         let image = &frame_info.images.get(FILE_INPUT).unwrap();
-                        descriptor_writes.push(Self::storage_image_write(&image, &mut desc_image_infos, binding_idx, descriptor_set));
+                        descriptor_writes.push(Self::image_write(&image, &mut desc_image_infos, binding, descriptor_set, frame_info.sampler));
                     } else {
                         match images.get(image_name) {
                             Some(image) => {
-                                descriptor_writes.push(Self::storage_image_write(&image, &mut desc_image_infos, binding_idx, descriptor_set));
+                                descriptor_writes.push(Self::image_write(&image, &mut desc_image_infos, binding, descriptor_set, frame_info.sampler));
                             }
                             None => {
                                 let image = vkutils::create_image(core, image_name.to_string(), format, frame_info.width, frame_info.height);
-                                descriptor_writes.push(Self::storage_image_write(&image, &mut desc_image_infos, binding_idx, descriptor_set));
+                                descriptor_writes.push(Self::image_write(&image, &mut desc_image_infos, binding, descriptor_set, frame_info.sampler));
                                 images.insert(image_name.to_string(), image);
                             }
                         }
@@ -435,6 +433,8 @@ impl PipelineGraph {
             .create_descriptor_pool(&descriptor_pool_info, None)
             .unwrap();
 
+        let sampler = vkutils::create_sampler(Rc::clone(&core.device));
+
         let mut frames: Vec<PipelineGraphFrame> = Vec::with_capacity(gi.num_frames);
 
         for _ in 0..gi.num_frames {
@@ -444,7 +444,8 @@ impl PipelineGraph {
                 images: &global_images,
                 width: gi.width,
                 height: gi.height,
-                format: gi.format
+                format: gi.format,
+                sampler: &sampler
             };
 
             frames.push(PipelineGraphFrame::new(core, &graph_frame_info));
@@ -459,6 +460,7 @@ impl PipelineGraph {
             height: gi.height,
             pipelines: pipelines,
             images: global_images,
+            _sampler: sampler,
             descriptor_pool: descriptor_pool,
             flattened: flattened_execution
         }
