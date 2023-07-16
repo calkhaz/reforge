@@ -1,35 +1,29 @@
 extern crate ash;
-extern crate shaderc;
 extern crate clap;
 extern crate gpu_allocator;
+extern crate shaderc;
 #[macro_use] extern crate lalrpop_util;
 
 use gpu_allocator as gpu_alloc;
 
-use clap::Parser;
+mod config;
+mod imagefileio;
+mod render;
+mod utils;
+mod vulkan;
 
 use ash::vk;
-use std::rc::Rc;
-use std::collections::HashMap;
-use std::default::Default;
-
-mod vulkan;
-use vulkan::command;
-use vulkan::swapchain::SwapChain;
-use vulkan::core::VkCore;
-use vulkan::pipeline_graph::PipelineGraph;
-use vulkan::pipeline_graph::PipelineGraphInfo;
-use vulkan::pipeline_graph::FILE_INPUT;
-use vulkan::pipeline_graph::SWAPCHAIN_OUTPUT;
-use vulkan::frame::Frame;
-use vulkan::vkutils;
-mod config;
-use config::config::parse as config_parse;
-
-mod utils;
-
-mod imagefileio;
+use clap::Parser;
 use imagefileio::ImageFileDecoder;
+use render::Render;
+use render::RenderInfo;
+use vulkan::vkutils;
+
+use winit::{
+    event::{ElementState, Event, KeyboardInput, VirtualKeyCode, WindowEvent},
+    event_loop::{ControlFlow, EventLoop},
+    platform::run_return::EventLoopExtRunReturn
+};
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, clap::ValueEnum)]
 enum ShaderFormat {
@@ -67,37 +61,25 @@ pub struct Args {
     num_frames: Option<usize>,
 }
 
-use winit::{
-    event::{ElementState, Event, KeyboardInput, VirtualKeyCode, WindowEvent},
-    event_loop::{ControlFlow, EventLoop},
-    platform::run_return::EventLoopExtRunReturn,
-    window::WindowBuilder,
-};
-
-
 fn render_loop<F: FnMut()>(event_loop: &mut EventLoop<()>, f: &mut F) {
-    event_loop
-        .run_return(|event, _, control_flow| {
-            *control_flow = ControlFlow::Poll;
-            match event {
-                Event::WindowEvent {
-                    event:
-                        WindowEvent::CloseRequested
-                        | WindowEvent::KeyboardInput {
-                            input:
-                                KeyboardInput {
-                                    state: ElementState::Pressed,
-                                    virtual_keycode: Some(VirtualKeyCode::Escape),
-                                    ..
-                                },
-                            ..
-                        },
+    event_loop.run_return(|event, _, control_flow| {
+        *control_flow = ControlFlow::Poll;
+        match event {
+            Event::WindowEvent {
+                event: WindowEvent::CloseRequested | WindowEvent::KeyboardInput {
+                    input: KeyboardInput {
+                        state: ElementState::Pressed,
+                        virtual_keycode: Some(VirtualKeyCode::Escape),
+                        ..
+                    },
                     ..
-                } => *control_flow = ControlFlow::Exit,
-                Event::MainEventsCleared => f(),
-                _ => (),
-            }
-        });
+                },
+            ..
+            } => *control_flow = ControlFlow::Exit,
+            Event::MainEventsCleared => f(),
+            _ => (),
+        }
+    });
 }
 
 fn main() {
@@ -108,302 +90,69 @@ fn main() {
 
     let mut file_decoder = ImageFileDecoder::new(&args.input_file);
 
-    let (window_width, window_height) = utils::get_dim(file_decoder.width, file_decoder.height, args.width, args.height);
+    let (width, height) = utils::get_dim(file_decoder.width, file_decoder.height, args.width, args.height);
+
+    let mut timer: std::time::Instant = std::time::Instant::now();
+
+    let elapsed_ms = utils::get_elapsed_ms(&timer);
+    println!("File Decode and resize: {:.2?}ms", elapsed_ms);
+
+    let mut avg_ms = 0.0;
+
+    let render_info = RenderInfo {
+        width: width,
+        height: height,
+        num_frames: num_frames,
+        config_path: args.node_config,
+        format: args.shader_format.unwrap().to_vk_format()
+    };
 
     let mut event_loop = EventLoop::new();
-    let window = WindowBuilder::new()
-        .with_title("Reforge")
-        .with_inner_size(winit::dpi::PhysicalSize::new(
-            f64::from(window_width),
-            f64::from(window_height),
-        ))
-        .with_resizable(false)
-        .build(&event_loop)
-        .unwrap();
+    let mut render = Render::new(render_info, &event_loop);
+
+    let mut first_run = vec![true; num_frames];
+
+    let buffer_size = (width as vk::DeviceSize)*(height as vk::DeviceSize)*4;
 
     unsafe {
-    let vk_core = VkCore::new(&window);
 
-
-    let node_config = if args.node_config.is_some() {
-        match std::fs::read_to_string(args.node_config.clone().unwrap()) {
-            Ok(contents) => contents,
-            Err(e) => { eprintln!("Error reading file '{}' : {}", args.node_config.unwrap(), e); std::process::exit(1); }
-        }
-    }
-    else {
-        // Default configuration
-        "input -> passthrough -> output".to_string()
-    };
-
-    let pipeline_config = config_parse(node_config.to_string());
-
-    let graph_info = PipelineGraphInfo {
-        pipeline_infos: vulkan::vkutils::synthesize_config(Rc::clone(&vk_core.device), &pipeline_config),
-        format: args.shader_format.unwrap().to_vk_format(),
-        width: window_width,
-        height: window_height,
-        num_frames: num_frames
-    };
-
-    let mut graph = PipelineGraph::new(&vk_core, graph_info);
-
-    let mut frames : Vec<Frame> = (0..num_frames).map(|_|{
-        Frame::new(&vk_core, pipeline_config.len() as u32)
-    }).collect();
-
-
-    let buffer_size = (window_width as vk::DeviceSize)*(window_height as vk::DeviceSize)*4;
-    let input_image_buffer = vkutils::create_buffer(&vk_core,
+    let input_image_buffer = vkutils::create_buffer(&render.vk_core,
                                                     "input-image-staging-buffer".to_string(),
                                                     buffer_size,
                                                     vk::BufferUsageFlags::TRANSFER_SRC,
                                                     gpu_alloc::MemoryLocation::CpuToGpu);
-    let input_srgb_image = vkutils::create_image(&vk_core,
-                                                 "input-image-srgb".to_string(),
-                                                 vk::Format::R8G8B8A8_SRGB,
-                                                 window_width, window_height);
-
-    // Pipeline-name -> timestamp
-    let mut last_modified_shader_times: HashMap<String, u64> = utils::get_modified_times(&graph.pipelines);
-    let mut last_modified_config_time: u64 = if let Some(node_config) = args.node_config.as_ref() { utils::get_modified_time(node_config) } else { 0 };
 
     let mapped_input_image_data: *mut u8 = input_image_buffer.allocation.mapped_ptr().unwrap().as_ptr() as *mut u8;
-    let mut timer: std::time::Instant = std::time::Instant::now();
-
-    file_decoder.decode(mapped_input_image_data, window_width, window_height);
-    let elapsed_ms = utils::get_elapsed_ms(&timer);
-    println!("File Decode and resize: {:.2?}ms", elapsed_ms);
-
-    let swapchain = SwapChain::new(&vk_core, window_width, window_height);
-
-    let mut avg_ms = 0.0;
-
-    let mut first_run = vec![true; num_frames];
+    file_decoder.decode(mapped_input_image_data, width, height);
 
     render_loop(&mut event_loop, &mut || {
-        static mut FRAME_INDEX: usize = 0;
+        render.wait_for_frame_fence();
 
-        let current_modified_shader_times: HashMap<String, u64> = utils::get_modified_times(&graph.pipelines);
-
-        for (name, last_timestamp) in &last_modified_shader_times {
-            match *current_modified_shader_times.get(name).unwrap() {
-                // If the file was set to 0, we were unable to find it
-                // Ex: File was moved or not available, print an error just once if we previously saw it
-                0 => {
-                    if 0 != *last_timestamp {
-                        eprintln!("Unable to access shader file: {}", graph.pipelines.get(name.as_str()).unwrap().borrow().info.shader.path);
-                    }
-                }
-                modified_timestamp => {
-                    if modified_timestamp != *last_timestamp {
-                        graph.rebuild_pipeline(&name);
-                    }
-                }
-            }
+        if render.reload_changed_config() {
+            first_run.iter_mut().for_each(|b| *b = true);
         }
 
-        last_modified_shader_times = current_modified_shader_times;
-
-        if let Some(node_config) = args.node_config.as_ref() {
-            let current_modified_config_time = utils::get_modified_time(node_config);
-
-            match current_modified_config_time {
-                0 => {
-                    if 0 != last_modified_config_time {
-                        eprintln!("Unable to access config file: {}", node_config);
-                    }
-                },
-                modified_timestamp => {
-                    if modified_timestamp != last_modified_config_time{
-
-                        let config_contents = match std::fs::read_to_string(node_config) {
-                            Ok(contents) => Some(contents),
-                            Err(e) => { eprintln!("Error reading file '{}' : {}", node_config, e); None }
-                        };
-
-                        if let Some(contents) = config_contents {
-                            let pipeline_config = config_parse(contents);
-
-                            let graph_info = PipelineGraphInfo {
-                                pipeline_infos: vulkan::vkutils::synthesize_config(Rc::clone(&vk_core.device), &pipeline_config),
-                                format: args.shader_format.unwrap().to_vk_format(),
-                                width: window_width,
-                                height: window_height,
-                                num_frames: num_frames
-                            };
-
-                            vk_core.device.device_wait_idle().unwrap();
-
-                            frames.iter_mut().for_each(|f| f.rebuild_timer(graph_info.pipeline_infos.len() as u32));
-                            graph = PipelineGraph::new(&vk_core, graph_info);
-
-                            first_run.iter_mut().for_each(|b| *b = true);
-
-                            FRAME_INDEX = 0;
-
-                            last_modified_shader_times = utils::get_modified_times(&graph.pipelines);
-                        }
-                  }
-                }
-            };
-
-            last_modified_config_time = current_modified_config_time;
-        }
-
-        let graph_frame = &graph.frames[FRAME_INDEX];
-        let frame = &mut frames[FRAME_INDEX];
-        let device = &vk_core.device;
-
-        let (present_index, _) = swapchain.loader.acquire_next_image(
-                swapchain.vk,
-                std::u64::MAX,
-                frame.present_complete_semaphore, // Semaphore to signal
-                vk::Fence::null(),
-            )
-            .unwrap();
-
-        device
-            .wait_for_fences(&[frame.fence], true, std::u64::MAX)
-            .expect("Wait for fence failed.");
+        render.reload_changed_pipelines();
+        render.acquire_swapchain();
 
         let elapsed_ms = utils::get_elapsed_ms(&timer);
         avg_ms = utils::moving_avg(avg_ms, elapsed_ms);
         timer = std::time::Instant::now();
 
-        let gpu_times = frame.timer.get_elapsed_ms();
+        let gpu_times = render.last_frame_gpu_times();
         print!("\rFrame: {:.2?}ms , Frame-Avg: {:.2?}ms, GPU: {{{}}}", elapsed_ms, avg_ms, gpu_times);
 
-        device
-            .reset_fences(&[frame.fence])
-            .expect("Reset fences failed.");
+        render.begin_record();
 
-        device
-            .reset_command_buffer(
-                frame.cmd_buffer,
-                vk::CommandBufferResetFlags::RELEASE_RESOURCES,
-            )
-            .expect("Reset command buffer failed.");
-
-
-
-        let command_buffer_begin_info = vk::CommandBufferBeginInfo::default();
-
-        device.begin_command_buffer(frame.cmd_buffer, &command_buffer_begin_info)
-            .expect("Begin commandbuffer");
-
-        device.cmd_reset_query_pool(frame.cmd_buffer,
-                                    frame.timer.query_pool,
-                                    0, // first-query-idx
-                                    frame.timer.query_pool_size);
-
-        if first_run[FRAME_INDEX] {
-            if FRAME_INDEX == 0 {
-                let buffer_regions = vk::BufferImageCopy {
-                    buffer_offset: 0,
-                    image_subresource: vk::ImageSubresourceLayers {
-                        aspect_mask: vk::ImageAspectFlags::COLOR,
-                        layer_count: 1,
-                        ..Default::default()
-                    },
-                    image_extent: vk::Extent3D {
-                        width: window_width as u32,
-                        height: window_height as u32,
-                        depth: 1
-                    },
-                    ..Default::default()
-                };
-
-                let input_image = &graph.get_input_image();
-
-                /* The goal here is to copy the input file from a vulkan buffer to an srgb image
-                 * "input_srgb_image" and then to a linear rgb "input_image" so we have the correct
-                 * gamma */
-
-                // 1. Transition the two input images so they are ready to be transfer destinations
-                command::transition_image_layout(&device, frame.cmd_buffer, input_image.vk, vk::ImageLayout::UNDEFINED, vk::ImageLayout::TRANSFER_DST_OPTIMAL);
-                command::transition_image_layout(&device, frame.cmd_buffer, input_srgb_image.vk, vk::ImageLayout::UNDEFINED, vk::ImageLayout::TRANSFER_DST_OPTIMAL);
-
-                // 2. Copy the buffer to the srgb image and then make it ready to transfer out
-                device.cmd_copy_buffer_to_image(frame.cmd_buffer, input_image_buffer.vk, input_srgb_image.vk, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &[buffer_regions]);
-                command::transition_image_layout(&device, frame.cmd_buffer, input_srgb_image.vk, vk::ImageLayout::UNDEFINED, vk::ImageLayout::TRANSFER_SRC_OPTIMAL);
-
-                // 3. Copy the srgb image to the linear input image and get it ready for general compute
-                //    Note: If a regular image_copy is used here, we will not get the desired gamma
-                //    correction from the format change
-                command::blit_copy(&device, frame.cmd_buffer, &command::BlitCopy {
-                    src_image: input_srgb_image.vk, src_layout: vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
-                    dst_image: input_image.vk,      dst_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-                    width: window_width,
-                    height: window_height
-                });
-                command::transition_image_layout(&device, frame.cmd_buffer, input_image.vk, vk::ImageLayout::TRANSFER_DST_OPTIMAL, vk::ImageLayout::GENERAL);
-            }
-
-            // Transition all intermediate compute images to general
-            for (name, image) in &graph_frame.images {
-                if name != SWAPCHAIN_OUTPUT && name != FILE_INPUT {
-                    command::transition_image_layout(&device, frame.cmd_buffer, image.vk, vk::ImageLayout::UNDEFINED, vk::ImageLayout::GENERAL);
-                }
-            }
-
-            first_run[FRAME_INDEX] = false;
+        if first_run[render.frame_index] {
+            render.record_initial_image_load(&input_image_buffer);
+            render.record_pipeline_image_transitions();
+            first_run[render.frame_index] = false;
         }
 
-        command::transition_image_layout(&device, frame.cmd_buffer, graph_frame.images.get(SWAPCHAIN_OUTPUT).unwrap().vk, vk::ImageLayout::UNDEFINED, vk::ImageLayout::GENERAL);
-
-        command::execute_pipeline_graph(&device, frame, graph_frame, &graph);
-
-        command::transition_image_layout(&device, frame.cmd_buffer, graph_frame.images.get(SWAPCHAIN_OUTPUT).unwrap().vk, vk::ImageLayout::GENERAL, vk::ImageLayout::TRANSFER_SRC_OPTIMAL);
-        command::transition_image_layout(&device, frame.cmd_buffer, swapchain.images[present_index as usize], vk::ImageLayout::UNDEFINED, vk::ImageLayout::TRANSFER_DST_OPTIMAL);
-
-        /* TODO?: Currently, we are using blit_image because it will do the format
-         * conversion for us. However, another alternative is to do copy_image
-         * after specifying th final compute shader destination image as the same
-         * format as the swapchain format. Maybe worth measuring perf difference later */
-        command::blit_copy(device, frame.cmd_buffer, &command::BlitCopy {
-            width: window_width,
-            height: window_height,
-            src_image: graph_frame.images.get(SWAPCHAIN_OUTPUT).unwrap().vk,
-            dst_image: swapchain.images[present_index as usize],
-            src_layout: vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
-            dst_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL
-        });
-
-        command::transition_image_layout(&device, frame.cmd_buffer, swapchain.images[present_index as usize], vk::ImageLayout::TRANSFER_DST_OPTIMAL, vk::ImageLayout::PRESENT_SRC_KHR);
-
-        device.end_command_buffer(frame.cmd_buffer).unwrap();
-
-        let present_complete_semaphore = &[frame.present_complete_semaphore];
-        let cmd_buffers = &[frame.cmd_buffer];
-        let signal_semaphores = &[frame.render_complete_semaphore];
-
-        let submit_info = vk::SubmitInfo::builder()
-            .wait_semaphores(present_complete_semaphore)
-            .wait_dst_stage_mask(&[vk::PipelineStageFlags::COMPUTE_SHADER])
-            .command_buffers(cmd_buffers)
-            .signal_semaphores(signal_semaphores);
-
-        vk_core.device.queue_submit(
-            vk_core.queue,
-            &[submit_info.build()],
-            frame.fence,
-        )
-        .expect("queue submit failed.");
-
-        let wait_semaphores = [frame.render_complete_semaphore];
-        let swapchains = [swapchain.vk];
-        let image_indices = [present_index];
-        let present_info = vk::PresentInfoKHR::builder()
-            .wait_semaphores(&wait_semaphores)
-            .swapchains(&swapchains)
-            .image_indices(&image_indices);
-
-        swapchain.loader
-            .queue_present(vk_core.queue, &present_info)
-            .unwrap();
-
-        FRAME_INDEX = (FRAME_INDEX+1)%num_frames;
+        render.record();
+        render.end_record();
+        render.submit();
     });
 
     }
