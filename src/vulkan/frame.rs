@@ -37,6 +37,10 @@ impl Frame {
         (pool, command_buffer[0])
     }
 
+    pub fn rebuild_timer(&mut self, query_buffer_size: u32) {
+        self.timer = GpuTimer::new(Rc::clone(&self.device), query_buffer_size);
+    }
+
     pub fn new(core: &VkCore, query_buffer_size: u32) -> Frame {
         let semaphore_create_info = vk::SemaphoreCreateInfo::default();
         let fence_create_info =

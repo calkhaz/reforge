@@ -234,15 +234,11 @@ fn main() {
                             };
 
                             vk_core.device.device_wait_idle().unwrap();
+
+                            frames.iter_mut().for_each(|f| f.rebuild_timer(graph_info.pipeline_infos.len() as u32));
                             graph = PipelineGraph::new(&vk_core, graph_info);
 
-                            for frame in &mut frames {
-                                frame.timer.clear();
-                            }
-
-                            for i in 0..num_frames {
-                                first_run[i] = true;
-                            }
+                            first_run.iter_mut().for_each(|b| *b = true);
 
                             FRAME_INDEX = 0;
 

@@ -8,5 +8,6 @@ void main()
 {	
     vec4 res = imageLoad(input_image, ivec2(gl_GlobalInvocationID.xy));
 
+
     imageStore(output_image, ivec2(gl_GlobalInvocationID.xy), res);
 }

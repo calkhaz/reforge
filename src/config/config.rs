@@ -38,7 +38,6 @@ pub fn parse(contents: String) -> HashMap<String, ConfigPipeline> {
     for expr in ast_exprs {
         match *expr {
             ast::NodeExpr::Graph(graph) => {
-                // change this to get the -1 and +1 values for input/output
                 for i in 0..graph.len() {
                     let node = &graph[i];
                     let node_name = &node.0;
