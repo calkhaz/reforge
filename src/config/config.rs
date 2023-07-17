@@ -27,13 +27,17 @@ pub struct ConfigPipeline {
     pub output_buffers:Vec<ConfigDescriptor>
 }
 
-pub fn parse(contents: String) -> HashMap<String, ConfigPipeline> {
+pub fn parse(contents: String) -> Option<HashMap<String, ConfigPipeline>> {
 
-    let ast_exprs: Vec<Box<ast::NodeExpr>> = NodeExprListParser::new()
-        .parse(&contents)
-        .expect("Failed to parse the input");
+    let ast_exprs: Vec<Box<ast::NodeExpr>> =
+        match NodeExprListParser::new().parse(&contents) {
+            Ok(ast) => Some(ast),
+            Err(err) => { eprintln!("Failed to parse the input: {}", err); None }
+        }?;
 
     let mut config_data: HashMap<String, ConfigPipeline> = HashMap::new();
+    let mut found_input  = false;
+    let mut found_output = false;
 
     for expr in ast_exprs {
         match *expr {
@@ -43,9 +47,8 @@ pub fn parse(contents: String) -> HashMap<String, ConfigPipeline> {
                     let node_name = &node.0;
                     let node_descriptor_name = &node.1;
 
-                    if node_name == "input" || node_name == "output" {
-                        continue;
-                    }
+                    if node_name == "input"  { found_input  = true; continue; }
+                    if node_name == "output" { found_output = true; continue; }
 
                     let info = config_data.entry(node_name.to_string()).or_insert(
                         ConfigPipeline{
@@ -86,5 +89,9 @@ pub fn parse(contents: String) -> HashMap<String, ConfigPipeline> {
         };
     }
 
-    config_data
+    if config_data.len() == 0 { eprintln!("Cofiguration had an empty graph"); return None }
+    if !found_input  { eprintln!("'input' is never used in the node configuration");  return None  }
+    if !found_output { eprintln!("'output' is never used in the node configuration"); return None  }
+
+    Some(config_data)
 }

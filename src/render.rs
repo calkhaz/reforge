@@ -59,7 +59,7 @@ impl Render {
             .unwrap()
     }
 
-    fn load_config(config_path: &Option<String>) -> HashMap<String, ConfigPipeline> {
+    fn load_config(config_path: &Option<String>) -> Option<HashMap<String, ConfigPipeline>> {
         let node_config = if config_path.is_some() {
             match std::fs::read_to_string(config_path.clone().unwrap()) {
                 Ok(contents) => contents,
@@ -74,9 +74,11 @@ impl Render {
         config_parse(node_config.to_string())
     }
 
-    unsafe fn create_graph(vk_core: &VkCore, info: &RenderInfo, pipeline_config: &HashMap<String, ConfigPipeline>) -> PipelineGraph {
+    unsafe fn create_graph(vk_core: &VkCore, info: &RenderInfo, pipeline_config: &HashMap<String, ConfigPipeline>) -> Option<PipelineGraph> {
+        let pipeline_infos = vkutils::synthesize_config(Rc::clone(&vk_core.device), &pipeline_config)?;
+
         let graph_info = PipelineGraphInfo {
-            pipeline_infos: vkutils::synthesize_config(Rc::clone(&vk_core.device), &pipeline_config),
+            pipeline_infos: pipeline_infos,
             format: info.format,
             width: info.width,
             height: info.height,
@@ -87,47 +89,62 @@ impl Render {
     }
 
     pub fn reload_changed_config(&mut self) -> bool {
-        let mut reloaded = false;
-
-        if let Some(node_config) = self.info.config_path.as_ref() {
-            let current_modified_config_time = utils::get_modified_time(node_config);
-
-            match current_modified_config_time {
-                0 => {
-                    if 0 != self.last_modified_config_time {
-                        eprintln!("Unable to access config file: {}", node_config);
-                    }
-                },
-                modified_timestamp => {
-                    if modified_timestamp != self.last_modified_config_time{
-
-                        let config_contents = match std::fs::read_to_string(node_config) {
-                            Ok(contents) => Some(contents),
-                            Err(e) => { eprintln!("Error reading file '{}' : {}", node_config, e); None }
-                        };
-
-                        if let Some(contents) = config_contents {
-                            let pipeline_config = config_parse(contents);
-                            reloaded = true;
-
-                            unsafe {
-                            self.vk_core.device.device_wait_idle().unwrap();
-
-                            self.frames.iter_mut().for_each(|f| f.rebuild_timer(pipeline_config.len() as u32));
-                            self.graph = Self::create_graph(&self.vk_core, &self.info, &pipeline_config);
-                            }
-
-                            self.frame_index = 0;
-                            self.last_modified_shader_times = utils::get_modified_times(&self.graph.pipelines);
-                        }
-                  }
-                }
-            };
-
-            self.last_modified_config_time = current_modified_config_time;
+        if self.info.config_path.is_none() {
+            return false;
         }
+        let config_path = self.info.config_path.as_ref().unwrap();
 
-        reloaded
+        let current_modified_config_time = utils::get_modified_time(&config_path);
+
+        match current_modified_config_time {
+            0 => {
+                if 0 != self.last_modified_config_time {
+                    eprintln!("Unable to access config file: {}", config_path);
+                }
+            },
+            modified_timestamp => {
+                if modified_timestamp == self.last_modified_config_time {
+                    return false;
+                }
+
+                self.last_modified_config_time = current_modified_config_time;
+
+                let config_contents = match std::fs::read_to_string(config_path.clone()) {
+                    Ok(contents) => Some(contents),
+                    Err(e) => { eprintln!("Error reading file '{}' : {}", config_path, e); None }
+                };
+
+                if config_contents.is_none() {
+                    return false;
+                }
+
+                let pipeline_config = config_parse(config_contents.unwrap());
+
+                if pipeline_config.is_none() {
+                    return false;
+                }
+
+                unsafe {
+                self.vk_core.device.device_wait_idle().unwrap();
+
+                let num_pipelines = pipeline_config.as_ref().unwrap().len() as u32;
+                let graph = Self::create_graph(&self.vk_core, &self.info, &pipeline_config.unwrap());
+
+                if graph.is_none() {
+                    return false;
+                }
+
+                self.graph = graph.unwrap();
+                self.frames.iter_mut().for_each(|f| f.rebuild_timer(num_pipelines));
+                }
+                self.frame_index = 0;
+                self.last_modified_shader_times = utils::get_modified_times(&self.graph.pipelines);
+
+                return true;
+            }
+        };
+
+        false
     }
 
     pub fn reload_changed_pipelines(&mut self) {
@@ -347,12 +364,12 @@ impl Render {
     pub fn new(info: RenderInfo, event_loop: &EventLoop<()>) -> Render {
         let window = Self::create_window(&event_loop, info.width, info.height);
 
-        let pipeline_config = Self::load_config(&info.config_path);
+        let pipeline_config = Self::load_config(&info.config_path).unwrap();
 
         unsafe {
         let vk_core = VkCore::new(&window);
 
-        let graph = Self::create_graph(&vk_core, &info, &pipeline_config);
+        let graph = Self::create_graph(&vk_core, &info, &pipeline_config).unwrap();
 
         let frames : Vec<Frame> = (0..info.num_frames).map(|_|{
             Frame::new(&vk_core, pipeline_config.len() as u32)

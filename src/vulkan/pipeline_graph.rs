@@ -234,7 +234,7 @@ impl PipelineGraphFrame {
 }
 
 impl PipelineGraph {
-    pub fn flatten_graph(pipelines: &HashMap<String, Rc<RefCell<Pipeline>>>) -> Vec<GraphAction> {
+    pub fn flatten_graph(pipelines: &HashMap<String, Rc<RefCell<Pipeline>>>) -> Option<Vec<GraphAction>> {
         let mut flattened_graph: Vec<GraphAction> = Vec::new();
         let mut unexecuted_nodes_set: HashSet<String> = pipelines.keys().cloned().collect();
 
@@ -290,7 +290,7 @@ impl PipelineGraph {
 
             if unexecuted_nodes.len() == unexecuted_nodes_set.len() {
                 eprintln!("Graph incorrectly constructed. Failed to add nodes into execution: {:?}", unexecuted_nodes);
-                std::process::abort();
+                return None
             }
 
             // We want barriers between groups of nodes but no barriers at the very end
@@ -299,7 +299,7 @@ impl PipelineGraph {
             }
         }
 
-        flattened_graph
+        Some(flattened_graph)
     }
 
     pub unsafe fn rebuild_pipeline(&mut self, name: &str) {
@@ -397,7 +397,7 @@ impl PipelineGraph {
         }))
     }
 
-    pub unsafe fn new(core: &VkCore, gi: PipelineGraphInfo) -> PipelineGraph {
+    pub unsafe fn new(core: &VkCore, gi: PipelineGraphInfo) -> Option<PipelineGraph> {
         // Track descriptor pool sizes by descriptor type
         let mut pool_sizes: HashMap<vk::DescriptorType, u32> = HashMap::new();
         let mut pipelines: HashMap<String, Rc<RefCell<Pipeline>>> = HashMap::new();
@@ -451,9 +451,9 @@ impl PipelineGraph {
             frames.push(PipelineGraphFrame::new(core, &graph_frame_info));
         }
 
-        let flattened_execution = Self::flatten_graph(&pipelines);
+        let flattened_execution = Self::flatten_graph(&pipelines)?;
 
-        PipelineGraph {
+        Some(PipelineGraph {
             device: Rc::clone(&core.device),
             frames: frames,
             width: gi.width,
@@ -463,7 +463,7 @@ impl PipelineGraph {
             _sampler: sampler,
             descriptor_pool: descriptor_pool,
             flattened: flattened_execution
-        }
+        })
     }
 }
 

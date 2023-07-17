@@ -44,8 +44,10 @@ impl Shader {
     }
 
     fn create_spirv(path: &str) -> Option<CompilationArtifact> {
-        let glsl_source = std::fs::read_to_string(path)
-            .expect("Should have been able to read the file");
+        let glsl_source = match std::fs::read_to_string(path) {
+            Ok(contents) => Some(contents),
+            Err(err) => { eprintln!("Failed to read the file '{path}': {}", err); None }
+        }?;
 
         let compiler = shaderc::Compiler::new().unwrap();
         let options = shaderc::CompileOptions::new().unwrap();

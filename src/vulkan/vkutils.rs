@@ -7,8 +7,10 @@ use gpu_allocator::vulkan as gpu_alloc_vk;
 use ash::vk;
 use spirv_reflect::types::ReflectDescriptorBinding;
 use spirv_reflect::types::ReflectDescriptorType;
+use crate::config::config::ConfigDescriptor;
 use crate::vulkan::core::VkCore;
 use crate::vulkan::shader::ShaderBindings;
+use crate::vulkan::shader::Shader;
 use crate::vulkan::pipeline_graph::PipelineInfo;
 
 use std::rc::Rc;
@@ -128,18 +130,13 @@ impl GpuTimer{
     }
 }
 
-pub fn synthesize_config(device: Rc<ash::Device>, config: &HashMap<String, ConfigPipeline>) -> HashMap<String, PipelineInfo> {
-
-    use crate::vulkan::pipeline_graph::{SWAPCHAIN_OUTPUT, FILE_INPUT};
-    use crate::vulkan::shader::Shader;
-
+pub fn synthesize_config(device: Rc<ash::Device>, config: &HashMap<String, ConfigPipeline>) -> Option<HashMap<String, PipelineInfo>> {
     let mut infos: HashMap<String, PipelineInfo> = HashMap::new();
 
-    for (name, data) in config {
-        let shader_path = &data.shader_path;
+    for (pipeline_name, config_bindings) in config {
+        let shader_path = &config_bindings.shader_path;
 
-
-        let shader = Shader::new(&device, shader_path).expect(&format!("Failed to create shader: {shader_path}"));
+        let shader = Shader::new(&device, shader_path)?;
 
         let mut info = PipelineInfo {
             shader: shader,
@@ -147,32 +144,30 @@ pub fn synthesize_config(device: Rc<ash::Device>, config: &HashMap<String, Confi
             input_ssbos : Vec::new(), output_ssbos : Vec::new()
         };
 
-        for image in &data.input_images {
-            let desc = info.shader.bindings.images.get(&image.descriptor_name).expect(&format!("Shader {shader_path} has no binding named: {}", image.descriptor_name));
-            let resource_name = if image.resource_name == "input_image" { FILE_INPUT.to_string() } else { image.resource_name.clone() };
-            info.input_images.push((resource_name, desc.clone()));
-        }
+        let add_resource_and_descriptor = |config_bindings: &Vec<ConfigDescriptor>, shader_bindings: &HashMap<String, ReflectDescriptorBinding> | -> Option<Vec<(String, ReflectDescriptorBinding)>> {
+            let mut info_bindings: Vec<(String, ReflectDescriptorBinding)> = Vec::new();
 
-        for image in &data.output_images {
-            let desc = info.shader.bindings.images.get(&image.descriptor_name).expect(&format!("Shader {shader_path} has no binding named: {}", image.descriptor_name));
-            let resource_name = if image.resource_name == "output_image" { SWAPCHAIN_OUTPUT.to_string() } else { image.resource_name.clone() };
-            info.output_images.push((resource_name, desc.clone()));
-        }
+            for binding in config_bindings {
+                let desc_binding = match shader_bindings.get(&binding.descriptor_name) {
+                    Some(binding) => Some(binding),
+                    None => { eprintln!("Shader {shader_path} has no binding named: {}", binding.descriptor_name); None }
+                }?;
 
-        for buffer in &data.input_buffers {
-            let desc = info.shader.bindings.ssbos.get(&buffer.descriptor_name).expect(&format!("Shader {shader_path} has no binding named: {}", buffer.descriptor_name));
-            info.input_ssbos.push((buffer.resource_name.clone(), desc.clone()));
-        }
+                info_bindings.push((binding.resource_name.clone(), desc_binding.clone()));
+            }
 
-        for buffer in &data.output_buffers {
-            let desc = info.shader.bindings.ssbos.get(&buffer.descriptor_name).expect(&format!("Shader {shader_path} has no binding named: {}", buffer.descriptor_name));
-            info.output_ssbos.push((buffer.resource_name.clone(), desc.clone()));
-        }
+            Some(info_bindings)
+        };
 
-        infos.insert(name.clone(), info);
+        info.input_images   = add_resource_and_descriptor(&config_bindings.input_images  , &info.shader.bindings.images)?;
+        info.output_images  = add_resource_and_descriptor(&config_bindings.output_images , &info.shader.bindings.images)?;
+        info.input_ssbos    = add_resource_and_descriptor(&config_bindings.input_buffers , &info.shader.bindings.ssbos)?;
+        info.output_ssbos   = add_resource_and_descriptor(&config_bindings.output_buffers, &info.shader.bindings.ssbos)?;
+
+        infos.insert(pipeline_name.clone(), info);
     }
 
-    infos
+    Some(infos)
 }
 
 pub unsafe fn create_buffer(core: &VkCore,
