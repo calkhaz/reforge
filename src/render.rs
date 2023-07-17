@@ -41,9 +41,9 @@ pub struct Render {
     last_modified_shader_times: HashMap<String, u64>,
     present_index: u32,
     pub frame_index: usize,
-    pub vk_core: VkCore,
     swapchain: SwapChain,
     _window: winit::window::Window,
+    pub vk_core: VkCore,
 }
 
 impl Render {
