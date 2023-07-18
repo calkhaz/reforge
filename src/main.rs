@@ -92,13 +92,6 @@ fn main() {
 
     let (width, height) = utils::get_dim(file_decoder.width, file_decoder.height, args.width, args.height);
 
-    let mut timer: std::time::Instant = std::time::Instant::now();
-
-    let elapsed_ms = utils::get_elapsed_ms(&timer);
-    println!("File Decode and resize: {:.2?}ms", elapsed_ms);
-
-    let mut avg_ms = 0.0;
-
     let render_info = RenderInfo {
         width: width,
         height: height,
@@ -124,9 +117,16 @@ fn main() {
                                                     vk::BufferUsageFlags::TRANSFER_SRC,
                                                     gpu_alloc::MemoryLocation::CpuToGpu);
 
-    // Decode the file into the staging buffer
+    let mut avg_ms = 0.0;
     let mapped_input_image_data: *mut u8 = input_image_buffer.allocation.mapped_ptr().unwrap().as_ptr() as *mut u8;
+
+    let mut timer: std::time::Instant = std::time::Instant::now();
+
+    // Decode the file into the staging buffer
     file_decoder.decode(mapped_input_image_data, width, height);
+
+    let elapsed_ms = utils::get_elapsed_ms(&timer);
+    println!("File Decode and resize: {:.2?}ms", elapsed_ms);
 
     render_loop(&mut event_loop, &mut || {
         // Wait for the previous iteration of this frame before
