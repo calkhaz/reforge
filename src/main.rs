@@ -112,27 +112,36 @@ fn main() {
 
     let mut first_run = vec![true; num_frames];
 
+    // We use rgba8 as the input file format
     let buffer_size = (width as vk::DeviceSize)*(height as vk::DeviceSize)*4;
 
     unsafe {
 
+    // This staging buffer will be used to transfer the original input file into an mimage
     let input_image_buffer = vkutils::create_buffer(&render.vk_core,
                                                     "input-image-staging-buffer".to_string(),
                                                     buffer_size,
                                                     vk::BufferUsageFlags::TRANSFER_SRC,
                                                     gpu_alloc::MemoryLocation::CpuToGpu);
 
+    // Decode the file into the staging buffer
     let mapped_input_image_data: *mut u8 = input_image_buffer.allocation.mapped_ptr().unwrap().as_ptr() as *mut u8;
     file_decoder.decode(mapped_input_image_data, width, height);
 
     render_loop(&mut event_loop, &mut || {
+        // Wait for the previous iteration of this frame before
+        // changing or executing on its resources
         render.wait_for_frame_fence();
 
+        // If our configuration has changed, live reload it
         if render.reload_changed_config() {
             first_run.iter_mut().for_each(|b| *b = true);
         }
 
+        // If any of our shaders have changed, live reload them
         render.reload_changed_pipelines();
+
+        // Pull in the next image from the swapchain
         render.acquire_swapchain();
 
         let elapsed_ms = utils::get_elapsed_ms(&timer);
@@ -144,6 +153,9 @@ fn main() {
 
         render.begin_record();
 
+        // On the first run, we:
+        // 1. Transitioned images as needed
+        // 2. Load the staging input buffer into an image and convert it to linear
         if first_run[render.frame_index] {
             render.record_initial_image_load(&input_image_buffer);
             render.record_pipeline_image_transitions();
@@ -152,6 +164,8 @@ fn main() {
 
         render.record();
         render.end_record();
+
+        // Send the work to the gpu
         render.submit();
     });
 
