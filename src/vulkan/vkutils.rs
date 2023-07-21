@@ -37,7 +37,8 @@ pub struct Buffer {
     device: Rc<ash::Device>,
     allocator: Rc<RefCell<gpu_alloc_vk::Allocator>>,
     pub allocation: gpu_alloc_vk::Allocation,
-    pub vk: vk::Buffer
+    pub vk: vk::Buffer,
+    pub mapped_data: *mut u8
 }
 
 pub struct GpuTimer {
@@ -198,7 +199,14 @@ pub unsafe fn create_buffer(core: &VkCore,
 
     core.device.bind_buffer_memory(buffer, allocation.memory(), allocation.offset()).unwrap();
 
-    Buffer{device: Rc::clone(&core.device), allocator: Rc::clone(&allocator), vk: buffer, allocation: allocation}
+    let mapped_data : *mut u8 = if mem_type == gpu_alloc::MemoryLocation::CpuToGpu {
+        allocation.mapped_ptr().unwrap().as_ptr() as *mut u8
+    }
+    else {
+        std::ptr::null_mut()
+    };
+
+    Buffer{device: Rc::clone(&core.device), allocator: Rc::clone(&allocator), vk: buffer, allocation: allocation, mapped_data: mapped_data}
 }
 
 pub unsafe fn create_image(core: &VkCore, name: String, format: vk::Format, width: u32, height: u32) -> Image {

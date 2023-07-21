@@ -3,7 +3,7 @@ extern crate shaderc;
 extern crate gpu_allocator;
 
 use ash::vk;
-use spirv_reflect::types::ReflectDescriptorBinding;
+use spirv_reflect::types::{ReflectDescriptorBinding, ReflectDescriptorType, ReflectBlockVariable, ReflectTypeFlags};
 use std::collections::HashSet;
 use std::ffi::CStr;
 use std::default::Default;
@@ -49,6 +49,7 @@ pub struct Pipeline {
 pub struct PipelineGraphFrame {
     pub images: HashMap<String, Image>,
     pub buffers: HashMap<String, Buffer>,
+    pub ubos: HashMap<String, HashMap<String, BufferBlock>>,
     pub descriptor_sets: HashMap<String, vk::DescriptorSet>
 }
 
@@ -84,6 +85,13 @@ struct PipelineGraphFrameInfo<'a> {
     pub sampler: &'a Sampler
 }
 
+pub struct BufferBlock {
+    pub size: u32,
+    pub offset:u32,
+    pub block_type: ReflectTypeFlags,
+    pub buffer: Rc<Buffer>
+}
+
 impl PipelineGraphFrame {
     unsafe fn image_write(image: &Image, infos: &mut Vec<vk::DescriptorImageInfo>, binding: &ReflectDescriptorBinding, set: vk::DescriptorSet, sampler: &Sampler) -> vk::WriteDescriptorSet {
         infos.push(vk::DescriptorImageInfo {
@@ -102,7 +110,7 @@ impl PipelineGraphFrame {
         }
     }
 
-    unsafe fn buffer_write(buffer: &Buffer, infos: &mut Vec<vk::DescriptorBufferInfo>, binding_idx: u32, set: vk::DescriptorSet) -> vk::WriteDescriptorSet {
+    unsafe fn buffer_write(buffer: &Buffer, desc_type: vk::DescriptorType, infos: &mut Vec<vk::DescriptorBufferInfo>, binding_idx: u32, set: vk::DescriptorSet) -> vk::WriteDescriptorSet {
         // TODO: If we get a different allocator, we'll want to change the offset and range here
         infos.push(vk::DescriptorBufferInfo {
             buffer: buffer.vk,
@@ -114,7 +122,7 @@ impl PipelineGraphFrame {
             dst_set: set,
             dst_binding: binding_idx,
             descriptor_count: 1,
-            descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
+            descriptor_type: desc_type,
             p_buffer_info: infos.last().unwrap(),
             ..Default::default()
         }
@@ -130,6 +138,8 @@ impl PipelineGraphFrame {
         let mut descriptor_sets: HashMap<String, vk::DescriptorSet> = HashMap::new();
 
         let mut ssbo_sizes: HashMap<String, u32> = HashMap::new();
+        // Pipeline -> <buffer-name -> block/buffer>
+        let mut ubos: HashMap<String, HashMap<String, BufferBlock>> = HashMap::new();
 
         for (_, pipeline) in frame_info.pipelines {
             let info = &pipeline.borrow().info;
@@ -164,11 +174,11 @@ impl PipelineGraphFrame {
                 Vec::with_capacity(info.input_images.len() + info.output_images.len());
 
             let mut desc_buffer_infos: Vec<vk::DescriptorBufferInfo> =
-                Vec::with_capacity(info.input_ssbos.len() + info.output_ssbos.len());
+                Vec::with_capacity(info.shader.bindings.buffers.len());
 
             let mut descriptor_writes: Vec<vk::WriteDescriptorSet> =
                 Vec::with_capacity(info.input_images.len()  + info.output_images .len() +
-                                   info.input_ssbos.len() + info.output_ssbos.len());
+                                   info.shader.bindings.buffers.len());
 
             {
             // Create descriptor writes and create images as needed
@@ -205,13 +215,13 @@ impl PipelineGraphFrame {
 
                     match buffers.get(buffer_name) {
                         Some(buffer) => {
-                            descriptor_writes.push(Self::buffer_write(&buffer, &mut desc_buffer_infos, binding_idx, descriptor_set));
+                            descriptor_writes.push(Self::buffer_write(&buffer, vk::DescriptorType::STORAGE_BUFFER, &mut desc_buffer_infos, binding_idx, descriptor_set));
                         }
                         None => {
                             let usage = vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST;
                             let size = *ssbo_sizes.get(buffer_name).unwrap();
                             let buffer = vkutils::create_buffer(core, buffer_name.to_string(), size as u64, usage, gpu_allocator::MemoryLocation::CpuToGpu);
-                            descriptor_writes.push(Self::buffer_write(&buffer, &mut desc_buffer_infos, binding_idx, descriptor_set));
+                            descriptor_writes.push(Self::buffer_write(&buffer, vk::DescriptorType::STORAGE_BUFFER, &mut desc_buffer_infos, binding_idx, descriptor_set));
                             buffers.insert(buffer_name.to_string(), buffer);
                         }
                     }
@@ -223,12 +233,47 @@ impl PipelineGraphFrame {
 
             }
 
+            // ubos for this pipeline
+            let mut pipeline_ubos: HashMap<String, BufferBlock> = HashMap::new();
+
+            fn recurse_block(reflect_block: &ReflectBlockVariable, base_name: &String, buffer: &Rc<Buffer>, ubos: &mut HashMap<String, BufferBlock>) { // -> BufferBlock {
+                let block = BufferBlock {
+                    size: reflect_block.size,
+                    offset: reflect_block.offset,
+                    block_type: reflect_block.type_description.as_ref().unwrap().type_flags,
+                    buffer: Rc::clone(buffer),
+                };
+
+                let name = if base_name.is_empty() { reflect_block.name.clone() }
+                else                               { format!("{}.{}", base_name, reflect_block.name.clone()) };
+
+                if !reflect_block.name.is_empty() {
+                    ubos.insert(name.clone(), block);
+                }
+
+                reflect_block.members.iter().for_each(|member| recurse_block(&member, &name, &buffer, ubos));
+            }
+
+            for buffer_reflect in &info.shader.bindings.buffers {
+                if buffer_reflect.descriptor_type == ReflectDescriptorType::UniformBuffer {
+                    let buffer_name = format!("{}:{}", pipeline.borrow().name, buffer_reflect.type_description.as_ref().unwrap().type_name.clone());
+                    let usage = vk::BufferUsageFlags::UNIFORM_BUFFER | vk::BufferUsageFlags::TRANSFER_DST;
+
+                    let buffer = Rc::new(vkutils::create_buffer(core, buffer_name, buffer_reflect.block.size as u64, usage, gpu_allocator::MemoryLocation::CpuToGpu));
+                    descriptor_writes.push(Self::buffer_write(&buffer, vk::DescriptorType::UNIFORM_BUFFER, &mut desc_buffer_infos, buffer_reflect.binding, descriptor_set));
+
+                    recurse_block(&buffer_reflect.block, &"".to_string(), &buffer, &mut pipeline_ubos);
+                }
+            }
+
+            ubos.insert(name.clone(), pipeline_ubos);
+
             device.update_descriptor_sets(&descriptor_writes, &[]);
             descriptor_sets.insert(name.to_string(), descriptor_set);
         }
 
         PipelineGraphFrame {
-            images, buffers, descriptor_sets
+            images, buffers, ubos, descriptor_sets
         }
     }
 }
