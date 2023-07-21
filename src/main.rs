@@ -121,6 +121,7 @@ fn main() {
     let mapped_input_image_data: *mut u8 = input_image_buffer.allocation.mapped_ptr().unwrap().as_ptr() as *mut u8;
 
     let mut timer: std::time::Instant = std::time::Instant::now();
+    let time_since_start: std::time::Instant = std::time::Instant::now();
 
     // Decode the file into the staging buffer
     file_decoder.decode(mapped_input_image_data, width, height);
@@ -140,6 +141,8 @@ fn main() {
 
         // If any of our shaders have changed, live reload them
         render.reload_changed_pipelines();
+
+        render.update_ubos(time_since_start.elapsed().as_secs_f32());
 
         // Pull in the next image from the swapchain
         render.acquire_swapchain();

@@ -147,6 +147,19 @@ impl Render {
         false
     }
 
+    pub fn update_ubos(&mut self, time: f32) {
+        self.graph.frames[self.frame_index].ubos.iter_mut().for_each(|(_pipeline_name, buffer_block_map)| {
+            buffer_block_map.iter_mut().for_each(|(buffer_member_name, buffer_block)| {
+                if buffer_member_name.ends_with("_rf_time") {
+                    unsafe {
+                    let ptr = buffer_block.buffer.mapped_data.offset(buffer_block.offset as isize) as *mut f32;
+                    std::ptr::copy_nonoverlapping(&time, ptr, 1)
+                    }
+                }
+            });
+        });
+    }
+
     pub fn reload_changed_pipelines(&mut self) {
         let current_modified_shader_times: HashMap<String, u64> = utils::get_modified_times(&self.graph.pipelines);
 
