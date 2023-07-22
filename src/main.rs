@@ -127,7 +127,7 @@ fn main() {
     file_decoder.decode(mapped_input_image_data, width, height);
 
     let elapsed_ms = utils::get_elapsed_ms(&timer);
-    println!("File Decode and resize: {:.2?}ms", elapsed_ms);
+    println!("File Decode and resize: {:.2}ms", elapsed_ms);
 
     render_loop(&mut event_loop, &mut || {
         // Wait for the previous iteration of this frame before
@@ -152,7 +152,7 @@ fn main() {
         timer = std::time::Instant::now();
 
         let gpu_times = render.last_frame_gpu_times();
-        print!("\rFrame: {:.2?}ms , Frame-Avg: {:.2?}ms, GPU: {{{}}}", elapsed_ms, avg_ms, gpu_times);
+        print!("\rFrame: {:5.2}ms, Frame-Avg: {:5.2}ms, GPU: {{{}}}", elapsed_ms, avg_ms, gpu_times);
 
         render.begin_record();
 
