@@ -7,6 +7,8 @@ use crate::config::ast;
 
 use crate::vulkan::pipeline_graph::{SWAPCHAIN_OUTPUT, FILE_INPUT};
 
+use crate::warnln;
+
  // Synthesized by LALRPOP
 lalrpop_mod!(pub config_gramar, "/config/config_grammar.rs");
 
@@ -37,7 +39,7 @@ pub fn parse(contents: String) -> Option<Config> {
     let ast_exprs: Vec<Box<ast::Expr>> =
         match ExprListParser::new().parse(&contents) {
             Ok(ast) => Some(ast),
-            Err(err) => { eprintln!("Failed to parse the input: {}", err); None }
+            Err(err) => { warnln!("Failed to parse the input: {}", err); None }
         }?;
 
     let mut config = Config {
@@ -100,9 +102,9 @@ pub fn parse(contents: String) -> Option<Config> {
         };
     }
 
-    if config.graph_pipelines.len() == 0 { eprintln!("Cofiguration had an empty graph");  return None }
-    if !found_input  { eprintln!("'input' is never used in the pipeline configuration");  return None }
-    if !found_output { eprintln!("'output' is never used in the pipeline configuration"); return None }
+    if config.graph_pipelines.len() == 0 { warnln!("Cofiguration had an empty graph");  return None }
+    if !found_input  { warnln!("'input' is never used in the pipeline configuration");  return None }
+    if !found_output { warnln!("'output' is never used in the pipeline configuration"); return None }
 
     Some(config)
 }

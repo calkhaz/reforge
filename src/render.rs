@@ -14,6 +14,7 @@ use crate::vulkan::swapchain::SwapChain;
 use crate::vulkan::vkutils;
 use crate::vulkan::vkutils::Buffer;
 use crate::vulkan::vkutils::Image;
+use crate::warnln;
 
 use std::collections::HashMap;
 use std::default::Default;
@@ -63,7 +64,7 @@ impl Render {
         let pipeline_config = if config_path.is_some() {
             match std::fs::read_to_string(config_path.clone().unwrap()) {
                 Ok(contents) => contents,
-                Err(e) => { eprintln!("Error reading file '{}' : {}", config_path.as_ref().unwrap(), e); std::process::exit(1); }
+                Err(e) => { warnln!("Error reading file '{}' : {}", config_path.as_ref().unwrap(), e); std::process::exit(1); }
             }
         }
         else {
@@ -99,7 +100,7 @@ impl Render {
         match current_modified_config_time {
             0 => {
                 if 0 != self.last_modified_config_time {
-                    eprintln!("Unable to access config file: {}", config_path);
+                    warnln!("Unable to access config file: {}", config_path);
                 }
             },
             modified_timestamp => {
@@ -111,7 +112,7 @@ impl Render {
 
                 let config_contents = match std::fs::read_to_string(config_path.clone()) {
                     Ok(contents) => Some(contents),
-                    Err(e) => { eprintln!("Error reading file '{}' : {}", config_path, e); None }
+                    Err(e) => { warnln!("Error reading file '{}' : {}", config_path, e); None }
                 };
 
                 if config_contents.is_none() {
@@ -169,7 +170,7 @@ impl Render {
                 // Ex: File was moved or not available, print an error just once if we previously saw it
                 0 => {
                     if 0 != *last_timestamp {
-                        eprintln!("Unable to access shader file: {}", self.graph.pipelines.get(name.as_str()).unwrap().borrow().info.shader.path);
+                        warnln!("Unable to access shader file: {}", self.graph.pipelines.get(name.as_str()).unwrap().borrow().info.shader.path);
                     }
                 }
                 modified_timestamp => {

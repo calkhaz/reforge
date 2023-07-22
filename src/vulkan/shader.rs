@@ -5,6 +5,8 @@ use spirv_reflect::types::{ReflectDescriptorType, ReflectDescriptorBinding};
 
 use std::collections::HashMap;
 
+use crate::warnln;
+
 #[derive(Debug)]
 pub struct ShaderBindings {
     pub images: HashMap<String, ReflectDescriptorBinding>,
@@ -38,7 +40,7 @@ impl Shader {
         unsafe {
         match device.create_shader_module(&shader_info, None) {
             Ok(module) => Some(module),
-            Err(e) => { eprintln!("{:?}", e); None }
+            Err(e) => { warnln!("{:?}", e); None }
         }
         }
     }
@@ -46,11 +48,11 @@ impl Shader {
     fn create_spirv(path: &str) -> Option<CompilationArtifact> {
         let glsl_source = match std::fs::read_to_string(path) {
             Ok(contents) => Some(contents),
-            Err(err) => { eprintln!("Failed to read the file '{path}': {}", err); None }
+            Err(err) => { warnln!("Failed to read the file '{path}': {}", err); None }
         }?;
 
         if glsl_source.is_empty() {
-            eprintln!("File was empty: {path}");
+            warnln!("File was empty: {path}");
             return None
         }
 
@@ -67,7 +69,11 @@ impl Shader {
 
                 Some(binary)
             } ,
-            Err(e) => { eprintln!("{:?}", e); None }
+
+            // Remove extra newline from error before printing
+            // Remove the "compilation error:\n" before a single error, which is not very useful
+            // On multiple errors, it may say "2 compilation errors:", which can be useful
+            Err(e) => { warnln!("{}", e.to_string().trim_start_matches("compilation error:\n").trim_end_matches('\n')); None }
         }
     }
 
@@ -85,12 +91,12 @@ impl Shader {
     fn reflect_descriptors(binary: &[u32]) ->  Option<ShaderBindings> {
         let module = match spirv_reflect::ShaderModule::load_u32_data(binary) {
             Ok(module) => Some(module),
-            Err(e) => { eprintln!("{:?}", e); None }
+            Err(e) => { warnln!("{:?}", e); None }
         }?;
 
         let sets = match module.enumerate_descriptor_sets(None) {
             Ok(sets) => { Some(sets) } ,
-            Err(err) => {eprint!("{:?}", err); None }
+            Err(err) => {warnln!("{:?}", err); None }
         }?;
 
         // The bindings for the pipeline
@@ -99,7 +105,7 @@ impl Shader {
         let mut ssbos : HashMap<String, ReflectDescriptorBinding> = HashMap::new();
 
         if sets.len() > 1 {
-            eprintln!("Warning: Cannot currently handle more than one descriptor set per shader");
+            warnln!("Warning: Cannot currently handle more than one descriptor set per shader");
         }
 
         for set in &sets {
@@ -115,7 +121,7 @@ impl Shader {
                 let desc_type = Self::reflect_desc_to_vk(binding.descriptor_type);
 
                 if desc_type.is_none() {
-                    eprintln!("Warning: Unable to handle descriptor type '{:?}'", desc_type); 
+                    warnln!("Warning: Unable to handle descriptor type '{:?}'", desc_type); 
                     break;
                 }
 

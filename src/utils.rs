@@ -60,3 +60,9 @@ pub fn get_elapsed_ms(inst: &std::time::Instant) -> f64{
     return (inst.elapsed().as_nanos() as f64)/1e6 as f64;
 }
 
+#[macro_export]
+macro_rules! warnln {
+    ($($arg:tt)*) => {{
+        eprintln!("\r\x1b[2K\x1b[33m{}\x1b[0m", format_args!($($arg)*));
+    }}
+}

@@ -137,6 +137,8 @@ fn main() {
         // If our configuration has changed, live reload it
         if render.reload_changed_config() {
             first_run.iter_mut().for_each(|b| *b = true);
+            // Clear current line of timers
+            eprint!("\r\x1b[2K");
         }
 
         // If any of our shaders have changed, live reload them
@@ -152,7 +154,7 @@ fn main() {
         timer = std::time::Instant::now();
 
         let gpu_times = render.last_frame_gpu_times();
-        print!("\rFrame: {:5.2}ms, Frame-Avg: {:5.2}ms, GPU: {{{}}}", elapsed_ms, avg_ms, gpu_times);
+        eprint!("\rFrame: {:5.2}ms, Frame-Avg: {:5.2}ms, GPU: {{{}}}", elapsed_ms, avg_ms, gpu_times);
 
         render.begin_record();
 

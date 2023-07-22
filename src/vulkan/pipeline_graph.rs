@@ -16,6 +16,7 @@ use crate::vulkan::core::VkCore;
 use crate::vulkan::vkutils;
 use crate::vulkan::vkutils::{Buffer, Image, Sampler};
 use crate::vulkan::shader::Shader;
+use crate::warnln;
 
 pub const FILE_INPUT: &str = "rf:file-input";
 pub const SWAPCHAIN_OUTPUT: &str = "rf:swapchain";
@@ -334,7 +335,7 @@ impl PipelineGraph {
             }
 
             if unexecuted_nodes.len() == unexecuted_nodes_set.len() {
-                eprintln!("Graph incorrectly constructed. Failed to add nodes into execution: {:?}", unexecuted_nodes);
+                warnln!("Graph incorrectly constructed. Failed to add nodes into execution: {:?}", unexecuted_nodes);
                 return None
             }
 

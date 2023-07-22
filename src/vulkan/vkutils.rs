@@ -12,6 +12,7 @@ use crate::vulkan::core::VkCore;
 use crate::vulkan::shader::ShaderBindings;
 use crate::vulkan::shader::Shader;
 use crate::vulkan::pipeline_graph::PipelineInfo;
+use crate::warnln;
 
 use std::rc::Rc;
 use std::cell::RefCell;
@@ -177,7 +178,7 @@ pub fn synthesize_config(device: Rc<ash::Device>, config: &Config) -> Option<Has
                         Some(binding) => {
                             buffer_bindings.push((config_binding.resource_name.clone(), binding.clone()));
                         }
-                        None => { eprintln!("Shader {shader_path} has no binding named: {}", config_binding.descriptor_name); return None }
+                        None => { warnln!("Shader {shader_path} has no binding named: {}", config_binding.descriptor_name); return None }
                     }
                 };
             }
