@@ -133,12 +133,14 @@ impl GpuTimer{
 
 /* Take the parsed configuration and read the shader of each corresponding pipeline
  * We then match up the bindings parsed from the spirv of the shader and the
- * configuration to craeate the PipelineInfo(s) */
+ * configuration to create the PipelineInfo(s) */
 pub fn synthesize_config(device: Rc<ash::Device>, config: &Config) -> Option<HashMap<String, PipelineInfo>> {
     let mut infos: HashMap<String, PipelineInfo> = HashMap::new();
 
     for (pipeline_name, config_bindings) in &config.graph_pipelines {
 
+        // First we look for pipeline instance that has been specified and use its type
+        // If that does not exist, we assume the specified name is also the type
         let pipeline_type = {
             let instance = config.pipeline_instances.get(pipeline_name);
             match instance {
@@ -157,25 +159,35 @@ pub fn synthesize_config(device: Rc<ash::Device>, config: &Config) -> Option<Has
             input_ssbos : Vec::new(), output_ssbos : Vec::new()
         };
 
-        let add_resource_and_descriptor = |config_bindings: &Vec<ConfigDescriptor>, shader_bindings: &HashMap<String, ReflectDescriptorBinding> | -> Option<Vec<(String, ReflectDescriptorBinding)>> {
-            let mut info_bindings: Vec<(String, ReflectDescriptorBinding)> = Vec::new();
+        // Match up the parsed configuration with what the parsed spirv bindings of the shader
+        let add_resource_and_descriptor = |config_bindings: &Vec<ConfigDescriptor> |
+                                           -> Option<(Vec<(String, ReflectDescriptorBinding)>, Vec<(String, ReflectDescriptorBinding)>)> {
+            let mut image_bindings : Vec<(String, ReflectDescriptorBinding)> = Vec::new();
+            let mut buffer_bindings: Vec<(String, ReflectDescriptorBinding)> = Vec::new();
 
-            for binding in config_bindings {
-                let desc_binding = match shader_bindings.get(&binding.descriptor_name) {
-                    Some(binding) => Some(binding),
-                    None => { eprintln!("Shader {shader_path} has no binding named: {}", binding.descriptor_name); None }
-                }?;
+            for config_binding in config_bindings {
+                match info.shader.bindings.images.get(&config_binding.descriptor_name) {
+                    // Try to find a matching image descriptor
+                    Some(binding) => {
+                        image_bindings.push((config_binding.resource_name.clone(), binding.clone()));
+                    },
+                    None => match info.shader.bindings.ssbos.get(&config_binding.descriptor_name) {
 
-                info_bindings.push((binding.resource_name.clone(), desc_binding.clone()));
+                        // Try to find a matching buffer descriptor if no image descriptor was found
+                        Some(binding) => {
+                            buffer_bindings.push((config_binding.resource_name.clone(), binding.clone()));
+                        }
+                        None => { eprintln!("Shader {shader_path} has no binding named: {}", config_binding.descriptor_name); return None }
+                    }
+                };
             }
 
-            Some(info_bindings)
+            Some((image_bindings, buffer_bindings))
         };
 
-        info.input_images   = add_resource_and_descriptor(&config_bindings.input_images  , &info.shader.bindings.images)?;
-        info.output_images  = add_resource_and_descriptor(&config_bindings.output_images , &info.shader.bindings.images)?;
-        info.input_ssbos    = add_resource_and_descriptor(&config_bindings.input_buffers , &info.shader.bindings.ssbos)?;
-        info.output_ssbos   = add_resource_and_descriptor(&config_bindings.output_buffers, &info.shader.bindings.ssbos)?;
+
+        (info.input_images , info.input_ssbos)  = add_resource_and_descriptor(&config_bindings.inputs)?;
+        (info.output_images, info.output_ssbos) = add_resource_and_descriptor(&config_bindings.outputs)?;
 
         infos.insert(pipeline_name.clone(), info);
     }

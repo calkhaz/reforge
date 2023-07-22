@@ -18,13 +18,9 @@ pub struct ConfigDescriptor {
 
 #[derive(Default, Debug)]
 pub struct GraphPipeline {
-    pub shader_path: String,
-    // images
-    pub input_images: Vec<ConfigDescriptor>,
-    pub output_images: Vec<ConfigDescriptor>,
-    // buffers (ssbo)
-    pub input_buffers: Vec<ConfigDescriptor>,
-    pub output_buffers:Vec<ConfigDescriptor>
+    // images and ssbos
+    pub inputs : Vec<ConfigDescriptor>,
+    pub outputs: Vec<ConfigDescriptor>,
 }
 
 pub struct PipelineInstance {
@@ -65,12 +61,11 @@ pub fn parse(contents: String) -> Option<Config> {
 
                     let info = config.graph_pipelines.entry(pipeline_name.to_string()).or_insert(
                         GraphPipeline{
-                            shader_path: format!("shaders/{pipeline_name}.comp"),
                             ..Default::default()
                         }
                     );
 
-                    // Input images
+                    // Inputs
                     if i > 0 {
                         let input_pipeline = &graph[i-1];
                         let input_pipeline_name = &input_pipeline.0;
@@ -81,10 +76,10 @@ pub fn parse(contents: String) -> Option<Config> {
                         let resource_name = if input_pipeline_name == "input" { FILE_INPUT.to_string() } 
                                             else { format!("{input_pipeline_name}:{}", input_descriptor.unwrap_or("output_image".to_string())) };
 
-                        info.input_images.push(ConfigDescriptor{resource_name, descriptor_name});
+                        info.inputs.push(ConfigDescriptor{resource_name, descriptor_name});
                     }
 
-                    // Output images
+                    // Outputs
                     if i+1 < graph.len() {
                         let output_pipeline = &graph[i+1];
                         let output_pipeline_name = &output_pipeline.0;
@@ -94,7 +89,7 @@ pub fn parse(contents: String) -> Option<Config> {
                         let resource_name = if output_pipeline_name == "output" { SWAPCHAIN_OUTPUT.to_string() }
                                             else { format!("{pipeline_name}:{descriptor_name}") };
 
-                        info.output_images.push(ConfigDescriptor{resource_name, descriptor_name});
+                        info.outputs.push(ConfigDescriptor{resource_name, descriptor_name});
                     }
                 }
             },
