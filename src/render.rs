@@ -1,6 +1,6 @@
 use ash::vk;
 
-use crate::config::config::ConfigPipeline;
+use crate::config::config::Config;
 use crate::config::config::parse as config_parse;
 use crate::utils;
 use crate::vulkan::command;
@@ -59,7 +59,7 @@ impl Render {
             .unwrap()
     }
 
-    fn load_config(config_path: &Option<String>) -> Option<HashMap<String, ConfigPipeline>> {
+    fn load_config(config_path: &Option<String>) -> Option<Config> {
         let pipeline_config = if config_path.is_some() {
             match std::fs::read_to_string(config_path.clone().unwrap()) {
                 Ok(contents) => contents,
@@ -74,7 +74,7 @@ impl Render {
         config_parse(pipeline_config.to_string())
     }
 
-    unsafe fn create_graph(vk_core: &VkCore, info: &RenderInfo, pipeline_config: &HashMap<String, ConfigPipeline>) -> Option<PipelineGraph> {
+    unsafe fn create_graph(vk_core: &VkCore, info: &RenderInfo, pipeline_config: &Config) -> Option<PipelineGraph> {
         let pipeline_infos = vkutils::synthesize_config(Rc::clone(&vk_core.device), &pipeline_config)?;
 
         let graph_info = PipelineGraphInfo {
@@ -127,7 +127,7 @@ impl Render {
                 unsafe {
                 self.vk_core.device.device_wait_idle().unwrap();
 
-                let num_pipelines = pipeline_config.as_ref().unwrap().len() as u32;
+                let num_pipelines = pipeline_config.as_ref().unwrap().graph_pipelines.len() as u32;
                 let graph = Self::create_graph(&self.vk_core, &self.info, &pipeline_config.unwrap());
 
                 if graph.is_none() {
@@ -385,7 +385,7 @@ impl Render {
         let graph = Self::create_graph(&vk_core, &info, &pipeline_config).unwrap();
 
         let frames : Vec<Frame> = (0..info.num_frames).map(|_|{
-            Frame::new(&vk_core, pipeline_config.len() as u32)
+            Frame::new(&vk_core, pipeline_config.graph_pipelines.len() as u32)
         }).collect();
 
         let input_srgb_image = vkutils::create_image(&vk_core,

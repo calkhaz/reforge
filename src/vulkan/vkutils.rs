@@ -18,7 +18,7 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 
-use crate::config::config::ConfigPipeline;
+use crate::config::config::Config;
 
 pub struct Sampler {
     device: Rc<ash::Device>,
@@ -134,13 +134,22 @@ impl GpuTimer{
 /* Take the parsed configuration and read the shader of each corresponding pipeline
  * We then match up the bindings parsed from the spirv of the shader and the
  * configuration to craeate the PipelineInfo(s) */
-pub fn synthesize_config(device: Rc<ash::Device>, config: &HashMap<String, ConfigPipeline>) -> Option<HashMap<String, PipelineInfo>> {
+pub fn synthesize_config(device: Rc<ash::Device>, config: &Config) -> Option<HashMap<String, PipelineInfo>> {
     let mut infos: HashMap<String, PipelineInfo> = HashMap::new();
 
-    for (pipeline_name, config_bindings) in config {
-        let shader_path = &config_bindings.shader_path;
+    for (pipeline_name, config_bindings) in &config.graph_pipelines {
 
-        let shader = Shader::new(&device, shader_path)?;
+        let pipeline_type = {
+            let instance = config.pipeline_instances.get(pipeline_name);
+            match instance {
+                Some(inst) => inst.pipeline_type.clone(),
+                None       => pipeline_name.clone()
+            }
+        };
+
+        let shader_path = format!("shaders/{pipeline_type}.comp");
+
+        let shader = Shader::new(&device, &shader_path)?;
 
         let mut info = PipelineInfo {
             shader: shader,

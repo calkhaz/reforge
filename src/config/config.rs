@@ -17,7 +17,7 @@ pub struct ConfigDescriptor {
 }
 
 #[derive(Default, Debug)]
-pub struct ConfigPipeline {
+pub struct GraphPipeline {
     pub shader_path: String,
     // images
     pub input_images: Vec<ConfigDescriptor>,
@@ -27,7 +27,16 @@ pub struct ConfigPipeline {
     pub output_buffers:Vec<ConfigDescriptor>
 }
 
-pub fn parse(contents: String) -> Option<HashMap<String, ConfigPipeline>> {
+pub struct PipelineInstance {
+    pub pipeline_type: String
+}
+
+pub struct Config {
+    pub graph_pipelines: HashMap<String, GraphPipeline>,
+    pub pipeline_instances: HashMap<String, PipelineInstance>
+}
+
+pub fn parse(contents: String) -> Option<Config> {
 
     let ast_exprs: Vec<Box<ast::Expr>> =
         match ExprListParser::new().parse(&contents) {
@@ -35,7 +44,11 @@ pub fn parse(contents: String) -> Option<HashMap<String, ConfigPipeline>> {
             Err(err) => { eprintln!("Failed to parse the input: {}", err); None }
         }?;
 
-    let mut config_data: HashMap<String, ConfigPipeline> = HashMap::new();
+    let mut config = Config {
+        graph_pipelines: HashMap::new(),
+        pipeline_instances: HashMap::new()
+    };
+
     let mut found_input  = false;
     let mut found_output = false;
 
@@ -50,8 +63,8 @@ pub fn parse(contents: String) -> Option<HashMap<String, ConfigPipeline>> {
                     if pipeline_name == "input"  { found_input  = true; continue; }
                     if pipeline_name == "output" { found_output = true; continue; }
 
-                    let info = config_data.entry(pipeline_name.to_string()).or_insert(
-                        ConfigPipeline{
+                    let info = config.graph_pipelines.entry(pipeline_name.to_string()).or_insert(
+                        GraphPipeline{
                             shader_path: format!("shaders/{pipeline_name}.comp"),
                             ..Default::default()
                         }
@@ -85,15 +98,16 @@ pub fn parse(contents: String) -> Option<HashMap<String, ConfigPipeline>> {
                     }
                 }
             },
-            ast::Expr::Pipeline(_pipeline) => {
+            ast::Expr::Pipeline(pipeline) => {
+                config.pipeline_instances.insert(pipeline.name, PipelineInstance {pipeline_type: pipeline.pipeline_type});
             }
             _ => {}
         };
     }
 
-    if config_data.len() == 0 { eprintln!("Cofiguration had an empty graph"); return None }
-    if !found_input  { eprintln!("'input' is never used in the pipeline configuration");  return None  }
-    if !found_output { eprintln!("'output' is never used in the pipeline configuration"); return None  }
+    if config.graph_pipelines.len() == 0 { eprintln!("Cofiguration had an empty graph");  return None }
+    if !found_input  { eprintln!("'input' is never used in the pipeline configuration");  return None }
+    if !found_output { eprintln!("'output' is never used in the pipeline configuration"); return None }
 
-    Some(config_data)
+    Some(config)
 }
