@@ -49,6 +49,11 @@ impl Shader {
             Err(err) => { eprintln!("Failed to read the file '{path}': {}", err); None }
         }?;
 
+        if glsl_source.is_empty() {
+            eprintln!("File was empty: {path}");
+            return None
+        }
+
         let compiler = shaderc::Compiler::new().unwrap();
         let options = shaderc::CompileOptions::new().unwrap();
 
