@@ -17,6 +17,7 @@ use clap::Parser;
 use imagefileio::ImageFileDecoder;
 use render::Render;
 use render::RenderInfo;
+use utils::TERM_CLEAR;
 use vulkan::vkutils;
 
 use winit::{
@@ -138,7 +139,7 @@ fn main() {
         if render.reload_changed_config() {
             first_run.iter_mut().for_each(|b| *b = true);
             // Clear current line of timers
-            eprint!("\r\x1b[2K");
+            eprint!("{TERM_CLEAR}");
         }
 
         // If any of our shaders have changed, live reload them

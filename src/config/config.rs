@@ -7,6 +7,7 @@ use crate::config::ast;
 
 use crate::vulkan::pipeline_graph::{SWAPCHAIN_OUTPUT, FILE_INPUT};
 
+use crate::utils::{TERM_RED, TERM_YELLOW};
 use crate::warnln;
 
  // Synthesized by LALRPOP
@@ -34,12 +35,64 @@ pub struct Config {
     pub pipeline_instances: HashMap<String, PipelineInstance>
 }
 
+// Find the line number, contents and offset in the line for a given buffer and offset
+fn get_line_number_and_contents(buffer: &str, mut offset: usize) -> (usize, &str, usize) {
+    let mut line_number = 1;
+    let mut line_contents = "";
+
+    for line in buffer.lines() {
+        let line_length = line.len() + 1; // Add 1 for the newline character
+        if offset < line_length {
+            line_contents = line;
+            break;
+        } else {
+            offset -= line_length;
+            line_number += 1;
+        }
+    }
+    (line_number, line_contents, offset)
+}
+
 pub fn parse(contents: String) -> Option<Config> {
+
+    if contents.trim().is_empty() {
+        warnln!("Empty configuration given to parse");
+        return None
+    }
 
     let ast_exprs: Vec<Box<ast::Expr>> =
         match ExprListParser::new().parse(&contents) {
             Ok(ast) => Some(ast),
-            Err(err) => { warnln!("Failed to parse the input: {}", err); None }
+            Err(lalrpop_util::ParseError::InvalidToken { location }) => {
+                let (line_num, line, line_offset) = get_line_number_and_contents(&contents, location);
+                let token = contents.chars().nth(location).unwrap();
+                let before_token = &line[0..line_offset];
+                let after_token = &line[line_offset+1..];
+                warnln!("Invalid token '{token}' at line {line_num}: {before_token}{TERM_RED}{token}{TERM_YELLOW}{after_token}");
+                None
+            },
+            Err(lalrpop_util::ParseError::UnrecognizedToken { token, expected }) => {
+                let (line_num, line, line_offset) = get_line_number_and_contents(&contents, token.0);
+                let (line_num2, line2, line_offset2) = get_line_number_and_contents(&contents, token.2);
+                let token_str = &contents[token.0 .. token.2].trim_end_matches('\n');
+
+                let before_token = &line[0..line_offset];
+                let after_token = if line_num == line_num2 { &line2[line_offset2..] } else { "" };
+
+                // Take the expected vector and turn it into a string with all the extra stuff trimmed
+                let expected_trimmed: Vec<String> = expected.clone().iter().map(|exp| {
+                    format!("'{}'", exp.trim_matches('"')
+                       .trim_start_matches("r#\"")
+                       .trim_end_matches("\"#"))
+                } ).collect();
+                let expected_str = expected_trimmed.join(", ");
+
+                warnln!("Unrecognized token '{token_str}' at line {line_num}: {before_token}{TERM_RED}{token_str}{TERM_YELLOW}{after_token}");
+                warnln!("Expected to find: {expected_str}");
+
+                None
+            },
+            Err(err) => { warnln!("Error while parsing: {:?}", err); None }
         }?;
 
     let mut config = Config {

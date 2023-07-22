@@ -5,6 +5,9 @@ use crate::vulkan::pipeline_graph::Pipeline;
 use std::rc::Rc;
 use std::cell::RefCell;
 
+pub const TERM_CLEAR : &str = "\r\x1b[2K";
+pub const TERM_RED   : &str = "\x1b[31m";
+pub const TERM_YELLOW: &str = "\x1b[33m";
 const MOVING_AVG_SIZE: f64 = 60.0;
 
 pub fn get_modified_time(path: &String) -> u64 {
