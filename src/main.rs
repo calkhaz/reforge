@@ -54,8 +54,8 @@ pub struct Args {
     #[arg(long, default_value = "rgba32f", help = "Shader image format")]
     shader_format: Option<ShaderFormat>,
 
-    #[arg(long, value_name="node-config", help = "Path to the node configuration file")]
-    node_config: Option<String>,
+    #[arg(long, value_name="config", help = "Path to the pipeline configuration file")]
+    config: Option<String>,
 
     #[arg(long, default_value= "2", help = "Number of frame-in-flight to be used when displaying to the swapchain")]
     num_frames: Option<usize>,
@@ -96,7 +96,7 @@ fn main() {
         width: width,
         height: height,
         num_frames: num_frames,
-        config_path: args.node_config,
+        config_path: args.config,
         format: args.shader_format.unwrap().to_vk_format()
     };
 

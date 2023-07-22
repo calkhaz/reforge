@@ -60,7 +60,7 @@ impl Render {
     }
 
     fn load_config(config_path: &Option<String>) -> Option<HashMap<String, ConfigPipeline>> {
-        let node_config = if config_path.is_some() {
+        let pipeline_config = if config_path.is_some() {
             match std::fs::read_to_string(config_path.clone().unwrap()) {
                 Ok(contents) => contents,
                 Err(e) => { eprintln!("Error reading file '{}' : {}", config_path.as_ref().unwrap(), e); std::process::exit(1); }
@@ -71,7 +71,7 @@ impl Render {
             "input -> passthrough -> output".to_string()
         };
 
-        config_parse(node_config.to_string())
+        config_parse(pipeline_config.to_string())
     }
 
     unsafe fn create_graph(vk_core: &VkCore, info: &RenderInfo, pipeline_config: &HashMap<String, ConfigPipeline>) -> Option<PipelineGraph> {
@@ -394,7 +394,7 @@ impl Render {
                                                      info.width, info.height);
 
         let last_modified_shader_times: HashMap<String, u64> = utils::get_modified_times(&graph.pipelines);
-        let last_modified_config_time: u64 = if let Some(node_config) = info.config_path.as_ref() { utils::get_modified_time(node_config) } else { 0 };
+        let last_modified_config_time: u64 = if let Some(pipeline_config) = info.config_path.as_ref() { utils::get_modified_time(pipeline_config) } else { 0 };
 
         let swapchain = SwapChain::new(&vk_core, info.width, info.height);
 

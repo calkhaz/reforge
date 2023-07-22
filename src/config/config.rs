@@ -2,7 +2,7 @@ extern crate lalrpop_util;
 
 use std::collections::HashMap;
 
-use crate::config::config::config_gramar::NodeExprListParser;
+use crate::config::config::config_gramar::ExprListParser;
 use crate::config::ast;
 
 use crate::vulkan::pipeline_graph::{SWAPCHAIN_OUTPUT, FILE_INPUT};
@@ -29,8 +29,8 @@ pub struct ConfigPipeline {
 
 pub fn parse(contents: String) -> Option<HashMap<String, ConfigPipeline>> {
 
-    let ast_exprs: Vec<Box<ast::NodeExpr>> =
-        match NodeExprListParser::new().parse(&contents) {
+    let ast_exprs: Vec<Box<ast::Expr>> =
+        match ExprListParser::new().parse(&contents) {
             Ok(ast) => Some(ast),
             Err(err) => { eprintln!("Failed to parse the input: {}", err); None }
         }?;
@@ -41,57 +41,59 @@ pub fn parse(contents: String) -> Option<HashMap<String, ConfigPipeline>> {
 
     for expr in ast_exprs {
         match *expr {
-            ast::NodeExpr::Graph(graph) => {
+            ast::Expr::Graph(graph) => {
                 for i in 0..graph.len() {
-                    let node = &graph[i];
-                    let node_name = &node.0;
-                    let node_descriptor_name = &node.1;
+                    let pipeline = &graph[i];
+                    let pipeline_name = &pipeline.0;
+                    let pipeline_descriptor_name = &pipeline.1;
 
-                    if node_name == "input"  { found_input  = true; continue; }
-                    if node_name == "output" { found_output = true; continue; }
+                    if pipeline_name == "input"  { found_input  = true; continue; }
+                    if pipeline_name == "output" { found_output = true; continue; }
 
-                    let info = config_data.entry(node_name.to_string()).or_insert(
+                    let info = config_data.entry(pipeline_name.to_string()).or_insert(
                         ConfigPipeline{
-                            shader_path: format!("shaders/{node_name}.comp"),
+                            shader_path: format!("shaders/{pipeline_name}.comp"),
                             ..Default::default()
                         }
                     );
 
                     // Input images
                     if i > 0 {
-                        let input_node = &graph[i-1];
-                        let input_node_name = &input_node.0;
+                        let input_pipeline = &graph[i-1];
+                        let input_pipeline_name = &input_pipeline.0;
 
-                        let descriptor_name = node_descriptor_name.clone().unwrap_or("input_image".to_string());
-                        let input_descriptor = input_node.1.clone();
+                        let descriptor_name = pipeline_descriptor_name.clone().unwrap_or("input_image".to_string());
+                        let input_descriptor = input_pipeline.1.clone();
 
-                        let resource_name = if input_node_name == "input" { FILE_INPUT.to_string() } 
-                                            else { format!("{input_node_name}:{}", input_descriptor.unwrap_or("output_image".to_string())) };
+                        let resource_name = if input_pipeline_name == "input" { FILE_INPUT.to_string() } 
+                                            else { format!("{input_pipeline_name}:{}", input_descriptor.unwrap_or("output_image".to_string())) };
 
                         info.input_images.push(ConfigDescriptor{resource_name, descriptor_name});
                     }
 
                     // Output images
                     if i+1 < graph.len() {
-                        let output_node = &graph[i+1];
-                        let output_node_name = &output_node.0;
+                        let output_pipeline = &graph[i+1];
+                        let output_pipeline_name = &output_pipeline.0;
 
-                        let descriptor_name = node_descriptor_name.clone().unwrap_or("output_image".to_string());
+                        let descriptor_name = pipeline_descriptor_name.clone().unwrap_or("output_image".to_string());
 
-                        let resource_name = if output_node_name == "output" { SWAPCHAIN_OUTPUT.to_string() }
-                                            else { format!("{node_name}:{descriptor_name}") };
+                        let resource_name = if output_pipeline_name == "output" { SWAPCHAIN_OUTPUT.to_string() }
+                                            else { format!("{pipeline_name}:{descriptor_name}") };
 
                         info.output_images.push(ConfigDescriptor{resource_name, descriptor_name});
                     }
                 }
             },
+            ast::Expr::Pipeline(_pipeline) => {
+            }
             _ => {}
         };
     }
 
     if config_data.len() == 0 { eprintln!("Cofiguration had an empty graph"); return None }
-    if !found_input  { eprintln!("'input' is never used in the node configuration");  return None  }
-    if !found_output { eprintln!("'output' is never used in the node configuration"); return None  }
+    if !found_input  { eprintln!("'input' is never used in the pipeline configuration");  return None  }
+    if !found_output { eprintln!("'output' is never used in the pipeline configuration"); return None  }
 
     Some(config_data)
 }
