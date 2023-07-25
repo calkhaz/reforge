@@ -2,6 +2,7 @@ extern crate ash;
 extern crate clap;
 extern crate gpu_allocator;
 extern crate shaderc;
+extern crate ffmpeg_sys_next as ffmpeg;
 #[macro_use] extern crate lalrpop_util;
 
 use gpu_allocator as gpu_alloc;
@@ -92,7 +93,10 @@ fn main() {
 
     imagefileio::init();
 
-    let mut file_decoder = ImageFileDecoder::new(&args.input_file);
+    let mut file_decoder = match ImageFileDecoder::new(&args.input_file) {
+        Ok(decoder) => decoder,
+        Err(err) => panic!("{}", err)
+    };
 
     let (width, height) = utils::get_dim(file_decoder.width, file_decoder.height, args.width, args.height);
 
@@ -129,7 +133,7 @@ fn main() {
     let time_since_start: std::time::Instant = std::time::Instant::now();
 
     // Decode the file into the staging buffer
-    file_decoder.decode(mapped_input_image_data, width, height);
+    file_decoder.decode(mapped_input_image_data, width, height).unwrap_or_else(|err| panic!("Error: {}", err));
 
     let elapsed_ms = utils::get_elapsed_ms(&timer);
     println!("File Decode and resize: {:.2}ms", elapsed_ms);
