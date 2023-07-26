@@ -31,6 +31,7 @@ pub struct RenderInfo {
     pub num_frames: usize,
     pub config_path: Option<String>,
     pub format: vk::Format,
+    pub swapchain: bool
 }
 
 pub struct Render {
@@ -42,12 +43,16 @@ pub struct Render {
     last_modified_shader_times: HashMap<String, u64>,
     present_index: u32,
     pub frame_index: usize,
-    swapchain: SwapChain,
-    _window: winit::window::Window,
+    swapchain: Option<SwapChain>,
+    _window: Option<winit::window::Window>,
     pub vk_core: VkCore,
 }
 
 impl Render {
+    fn get_swapchain(&self) -> &SwapChain {
+        &self.swapchain.as_ref().expect("No swapchain created")
+    }
+
     fn create_window(event_loop: &EventLoop<()>, width: u32, height:u32) -> winit::window::Window {
         WindowBuilder::new()
             .with_title("Reforge")
@@ -187,8 +192,9 @@ impl Render {
     }
 
     pub unsafe fn acquire_swapchain(&mut self) {
-        let (present_index, _) = self.swapchain.loader.acquire_next_image(
-                self.swapchain.vk,
+        let swapchain = self.get_swapchain();
+        let (present_index, _) = swapchain.loader.acquire_next_image(
+                swapchain.vk,
                 std::u64::MAX,
                 self.frames[self.frame_index].present_complete_semaphore, // Semaphore to signal
                 vk::Fence::null(),
@@ -291,9 +297,9 @@ impl Render {
 
     pub fn record(&mut self) {
         let graph_frame = &self.graph.frames[self.frame_index];
+        let swapchain_image = if self.swapchain.is_some() { Some(self.get_swapchain().images[self.present_index as usize]) } else { None };
         let frame = &mut self.frames[self.frame_index];
         let device = &self.vk_core.device;
-        let swapchain_image = self.swapchain.images[self.present_index as usize];
 
         unsafe {
         device.cmd_reset_query_pool(frame.cmd_buffer,
@@ -306,22 +312,25 @@ impl Render {
         command::execute_pipeline_graph(&device, frame, graph_frame, &self.graph);
 
         command::transition_image_layout(&device, frame.cmd_buffer, graph_frame.images.get(SWAPCHAIN_OUTPUT).unwrap().vk, vk::ImageLayout::GENERAL, vk::ImageLayout::TRANSFER_SRC_OPTIMAL);
-        command::transition_image_layout(&device, frame.cmd_buffer, swapchain_image, vk::ImageLayout::UNDEFINED, vk::ImageLayout::TRANSFER_DST_OPTIMAL);
 
-        /* TODO?: Currently, we are using blit_image because it will do the format
-         * conversion for us. However, another alternative is to do copy_image
-         * after specifying th final compute shader destination image as the same
-         * format as the swapchain format. Maybe worth measuring perf difference later */
-        command::blit_copy(device, frame.cmd_buffer, &command::BlitCopy {
-            width: self.info.width,
-            height: self.info.height,
-            src_image: graph_frame.images.get(SWAPCHAIN_OUTPUT).unwrap().vk,
-            dst_image: swapchain_image,
-            src_layout: vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
-            dst_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL
-        });
+        if self.swapchain.is_some() {
+            command::transition_image_layout(&device, frame.cmd_buffer, swapchain_image.unwrap(), vk::ImageLayout::UNDEFINED, vk::ImageLayout::TRANSFER_DST_OPTIMAL);
 
-        command::transition_image_layout(&device, frame.cmd_buffer, swapchain_image, vk::ImageLayout::TRANSFER_DST_OPTIMAL, vk::ImageLayout::PRESENT_SRC_KHR);
+            /* TODO?: Currently, we are using blit_image because it will do the format
+             * conversion for us. However, another alternative is to do copy_image
+             * after specifying th final compute shader destination image as the same
+             * format as the swapchain format. Maybe worth measuring perf difference later */
+            command::blit_copy(device, frame.cmd_buffer, &command::BlitCopy {
+                width: self.info.width,
+                height: self.info.height,
+                src_image: graph_frame.images.get(SWAPCHAIN_OUTPUT).unwrap().vk,
+                dst_image: swapchain_image.unwrap(),
+                src_layout: vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+                dst_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL
+            });
+
+            command::transition_image_layout(&device, frame.cmd_buffer, swapchain_image.unwrap(), vk::ImageLayout::TRANSFER_DST_OPTIMAL, vk::ImageLayout::PRESENT_SRC_KHR);
+        }
 
         }
     }
@@ -339,11 +348,16 @@ impl Render {
         let cmd_buffers = &[frame.cmd_buffer];
         let signal_semaphores = &[frame.render_complete_semaphore];
 
-        let submit_info = vk::SubmitInfo::builder()
-            .wait_semaphores(present_complete_semaphore)
-            .wait_dst_stage_mask(&[vk::PipelineStageFlags::COMPUTE_SHADER])
-            .command_buffers(cmd_buffers)
-            .signal_semaphores(signal_semaphores);
+        let mut submit_info = vk::SubmitInfo::builder()
+            .command_buffers(cmd_buffers);
+
+        // Semaphores only needed if we use a swapchain
+        if self.swapchain.is_some() {
+            submit_info = submit_info
+                .wait_dst_stage_mask(&[vk::PipelineStageFlags::COMPUTE_SHADER])
+                .wait_semaphores(present_complete_semaphore)
+                .signal_semaphores(signal_semaphores);
+        }
 
         unsafe {
         self.vk_core.device.queue_submit(
@@ -353,18 +367,21 @@ impl Render {
         ).expect("queue submit failed.");
         }
 
-        let wait_semaphores = [frame.render_complete_semaphore];
-        let swapchains = [self.swapchain.vk];
-        let image_indices = [self.present_index];
-        let present_info = vk::PresentInfoKHR::builder()
-            .wait_semaphores(&wait_semaphores)
-            .swapchains(&swapchains)
-            .image_indices(&image_indices);
+        if self.swapchain.is_some() {
+            let wait_semaphores = [frame.render_complete_semaphore];
+            let swapchain = self.get_swapchain();
+            let swapchains = [swapchain.vk];
+            let image_indices = [self.present_index];
+            let present_info = vk::PresentInfoKHR::builder()
+                .wait_semaphores(&wait_semaphores)
+                .swapchains(&swapchains)
+                .image_indices(&image_indices);
 
-        unsafe {
-        self.swapchain.loader
-            .queue_present(self.vk_core.queue, &present_info)
-            .unwrap();
+            unsafe {
+            swapchain.loader
+                .queue_present(self.vk_core.queue, &present_info)
+                .unwrap();
+            }
         }
 
         self.frame_index = (self.frame_index+1)%self.info.num_frames;
@@ -376,7 +393,7 @@ impl Render {
 
 
     pub fn new(info: RenderInfo, event_loop: &EventLoop<()>) -> Render {
-        let window = Self::create_window(&event_loop, info.width, info.height);
+        let window = if info.swapchain { Some(Self::create_window(&event_loop, info.width, info.height)) } else { None };
 
         let pipeline_config = Self::load_config(&info.config_path).unwrap();
 
@@ -397,8 +414,7 @@ impl Render {
         let last_modified_shader_times: HashMap<String, u64> = utils::get_modified_times(&graph.pipelines);
         let last_modified_config_time: u64 = if let Some(pipeline_config) = info.config_path.as_ref() { utils::get_modified_time(pipeline_config) } else { 0 };
 
-        let swapchain = SwapChain::new(&vk_core, info.width, info.height);
-
+        let swapchain = if info.swapchain { Some(SwapChain::new(&vk_core, info.width, info.height)) } else { None };
 
         Render {
             frames: frames,

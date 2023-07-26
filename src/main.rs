@@ -85,7 +85,10 @@ fn render_loop<F: FnMut()>(event_loop: &mut EventLoop<()>, f: &mut F) {
 
 fn main() {
     let args = Args::parse();
-    let num_frames = args.num_frames.unwrap();
+    let use_swapchain = true;
+
+    // Only one frame to be in flight if we aren't using the swapchain
+    let num_frames = if use_swapchain { args.num_frames.unwrap() } else { 1 } ;
 
     imagefileio::init();
 
@@ -98,7 +101,8 @@ fn main() {
         height: height,
         num_frames: num_frames,
         config_path: args.config,
-        format: args.shader_format.unwrap().to_vk_format()
+        format: args.shader_format.unwrap().to_vk_format(),
+        swapchain: use_swapchain
     };
 
     let mut event_loop = EventLoop::new();
@@ -130,7 +134,7 @@ fn main() {
     let elapsed_ms = utils::get_elapsed_ms(&timer);
     println!("File Decode and resize: {:.2}ms", elapsed_ms);
 
-    render_loop(&mut event_loop, &mut || {
+    let mut render_fn = || {
         // Wait for the previous iteration of this frame before
         // changing or executing on its resources
         render.wait_for_frame_fence();
@@ -148,7 +152,9 @@ fn main() {
         render.update_ubos(time_since_start.elapsed().as_secs_f32());
 
         // Pull in the next image from the swapchain
-        render.acquire_swapchain();
+        if use_swapchain {
+            render.acquire_swapchain();
+        }
 
         let elapsed_ms = utils::get_elapsed_ms(&timer);
         avg_ms = utils::moving_avg(avg_ms, elapsed_ms);
@@ -173,7 +179,15 @@ fn main() {
 
         // Send the work to the gpu
         render.submit();
-    });
+    };
+
+    if use_swapchain {
+        render_loop(&mut event_loop, &mut render_fn);
+    }
+    else {
+        render_fn();
+        render.wait_for_frame_fence();
+    }
 
     }
 }

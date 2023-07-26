@@ -57,16 +57,17 @@ pub struct VkCore {
     pub queue_family_index: u32,
     pub debug_utils_loader: ash::extensions::ext::DebugUtils,
     pub debug_callback: ash::vk::DebugUtilsMessengerEXT,
-    pub surface: vk::SurfaceKHR,
-    pub surface_loader: khr::Surface
+    pub surface: Option<vk::SurfaceKHR>,
+    pub surface_loader: Option<khr::Surface>
 }
 
 
 impl VkCore {
-    pub unsafe fn new(window: &Window) -> Self {
-        let mut extension_names = ash_window::enumerate_required_extensions(window.raw_display_handle())
-                    .unwrap()
-                    .to_vec();
+    pub unsafe fn new(window: &Option<Window>) -> Self {
+        let mut extension_names: Vec<*const i8> = Vec::new();
+        if window.is_some() {
+            extension_names.extend(ash_window::enumerate_required_extensions(window.as_ref().unwrap().raw_display_handle()).unwrap().to_vec());
+        }
         extension_names.push(ash::extensions::ext::DebugUtils::name().as_ptr());
 
         #[cfg(any(target_os = "macos", target_os = "ios"))]
@@ -81,14 +82,24 @@ impl VkCore {
         let instance = Self::create_instance(&entry, &extension_names);
         let (debug_callback, debug_utils) = Self::create_debug_utils(&instance, &entry);
 
-        let (surface, surface_loader) = Self::create_surface(&entry, &instance, &window);
+        let (surface, surface_loader) = match window {
+            Some(window) => {
+                let (surface, surface_loader) = Self::create_surface(&entry, &instance, &window);
+                (Some(surface), Some(surface_loader))
+            }
+            None => (None, None)
+        };
+
         let (pdevice, queue_family_index) = Self::create_physical_device(&instance, surface, &surface_loader);
 
-        let device_extension_names_raw : Vec<*const i8> = vec![
-            khr::Swapchain::name().as_ptr(),
+        let mut device_extension_names_raw : Vec<*const i8> = vec![
             #[cfg(any(target_os = "macos", target_os = "ios"))]
             ash::vk::KhrPortabilitySubsetFn::name().as_ptr(),
         ];
+
+        if window.is_some() {
+            device_extension_names_raw.push(khr::Swapchain::name().as_ptr());
+        }
 
         let features = vk::PhysicalDeviceFeatures {
             shader_clip_distance: 1,
@@ -215,7 +226,7 @@ impl VkCore {
         instance
     }
 
-    unsafe fn create_physical_device(instance: &ash::Instance, surface: vk::SurfaceKHR, surface_loader: &khr::Surface) -> (vk::PhysicalDevice, u32) {
+    unsafe fn create_physical_device(instance: &ash::Instance, surface: Option<vk::SurfaceKHR>, surface_loader: &Option<khr::Surface>) -> (vk::PhysicalDevice, u32) {
         let pdevices = instance
             .enumerate_physical_devices()
             .expect("Physical device error");
@@ -228,15 +239,16 @@ impl VkCore {
                     .iter()
                     .enumerate()
                     .find_map(|(index, info)| {
-                        let supports_graphic_and_surface =
-                            info.queue_flags.contains(vk::QueueFlags::GRAPHICS | vk::QueueFlags::COMPUTE)
-                                && surface_loader
-                                    .get_physical_device_surface_support(
-                                        *pdevice,
-                                        index as u32,
-                                        surface,
-                                    )
-                                    .unwrap();
+                        let mut supports_graphic_and_surface = info.queue_flags.contains(vk::QueueFlags::GRAPHICS | vk::QueueFlags::COMPUTE);
+
+                        if surface.is_some() {
+                            supports_graphic_and_surface &= surface_loader.as_ref().unwrap().get_physical_device_surface_support(
+                                *pdevice,
+                                index as u32,
+                                surface.unwrap(),
+                            ).unwrap();
+                        }
+
                         if supports_graphic_and_surface {
                             Some((*pdevice, index))
                         } else {
@@ -265,7 +277,9 @@ impl Drop for VkCore {
 
             self.device.device_wait_idle().unwrap();
             self.device.destroy_device(None);
-            self.surface_loader.destroy_surface(self.surface, None);
+            if self.surface.is_some() {
+                self.surface_loader.as_ref().unwrap().destroy_surface(self.surface.unwrap(), None);
+            }
             self.debug_utils_loader.destroy_debug_utils_messenger(self.debug_callback, None);
             self.instance.destroy_instance(None);
         }

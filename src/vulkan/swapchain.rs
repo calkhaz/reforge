@@ -17,12 +17,15 @@ pub struct SwapChain {
 
 impl SwapChain {
     pub unsafe fn new(core: &VkCore, width: u32, height: u32) -> SwapChain {
-        let surface_capabilities = core.surface_loader
-            .get_physical_device_surface_capabilities(core.pdevice, core.surface)
+        let surface = core.surface.expect("Cannot create swapchain without a valid surface");
+        let surface_loader = core.surface_loader.as_ref().expect("Cannot create swapchain without a valid surface loader");
+
+        let surface_capabilities = surface_loader
+            .get_physical_device_surface_capabilities(core.pdevice, surface)
             .unwrap();
 
-        let surface_format = core.surface_loader
-            .get_physical_device_surface_formats(core.pdevice, core.surface)
+        let surface_format = surface_loader
+            .get_physical_device_surface_formats(core.pdevice, surface)
             .expect("Found no valid formats for the swapchain")
             .iter().cloned()
             .find(|&format| format.format == vk::Format::B8G8R8A8_SRGB &&
@@ -50,8 +53,8 @@ impl SwapChain {
         } else {
             surface_capabilities.current_transform
         };
-        let present_modes = core.surface_loader
-            .get_physical_device_surface_present_modes(core.pdevice, core.surface)
+        let present_modes = surface_loader
+            .get_physical_device_surface_present_modes(core.pdevice, surface)
             .unwrap();
         let present_mode = present_modes
             .iter()
@@ -62,7 +65,7 @@ impl SwapChain {
         let swapchain_loader = khr::Swapchain::new(&core.instance, &core.device);
 
         let swapchain_create_info = vk::SwapchainCreateInfoKHR::builder()
-            .surface(core.surface)
+            .surface(surface)
             .min_image_count(desired_image_count)
             .image_color_space(surface_format.color_space)
             .image_format(surface_format.format)
