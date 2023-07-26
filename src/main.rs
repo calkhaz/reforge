@@ -47,6 +47,9 @@ pub struct Args {
     #[arg(value_name="input-file")]
     input_file: String,
 
+    #[arg(value_name="output-file")]
+    output_file: Option<String>,
+
     #[arg(long)]
     width: Option<u32>,
 
@@ -86,7 +89,7 @@ fn render_loop<F: FnMut()>(event_loop: &mut EventLoop<()>, f: &mut F) {
 
 fn main() {
     let args = Args::parse();
-    let use_swapchain = true;
+    let use_swapchain = args.output_file.is_none();
 
     // Only one frame to be in flight if we aren't using the swapchain
     let num_frames = if use_swapchain { args.num_frames.unwrap() } else { 1 } ;
@@ -120,20 +123,25 @@ fn main() {
     unsafe {
 
     // This staging buffer will be used to transfer the original input file into an mimage
-    let input_image_buffer = vkutils::create_buffer(&render.vk_core,
+    let staging_buffer = vkutils::create_buffer(&render.vk_core,
                                                     "input-image-staging-buffer".to_string(),
                                                     buffer_size,
-                                                    vk::BufferUsageFlags::TRANSFER_SRC,
+                                                    vk::BufferUsageFlags::TRANSFER_SRC | vk::BufferUsageFlags::TRANSFER_DST,
                                                     gpu_alloc::MemoryLocation::CpuToGpu);
 
+    let final_output = vkutils::create_image(&render.vk_core, "output".to_string(), vk::Format::R8G8B8A8_SRGB, width, height);
+
     let mut avg_ms = 0.0;
-    let mapped_input_image_data: *mut u8 = input_image_buffer.allocation.mapped_ptr().unwrap().as_ptr() as *mut u8;
+    let mapped_input_image_data: *mut u8 = staging_buffer.allocation.mapped_ptr().unwrap().as_ptr() as *mut u8;
 
     let mut timer: std::time::Instant = std::time::Instant::now();
     let time_since_start: std::time::Instant = std::time::Instant::now();
 
     // Decode the file into the staging buffer
     file_decoder.decode(mapped_input_image_data, width, height).unwrap_or_else(|err| panic!("Error: {}", err));
+
+//    ImageFileEncoder::new(&args.input_file, mapped_input_image_data, width as i32, height as i32);
+//    std::process::exit(0);
 
     let elapsed_ms = utils::get_elapsed_ms(&timer);
     println!("File Decode and resize: {:.2}ms", elapsed_ms);
@@ -173,12 +181,17 @@ fn main() {
         // 1. Transitioned images as needed
         // 2. Load the staging input buffer into an image and convert it to linear
         if first_run[render.frame_index] {
-            render.record_initial_image_load(&input_image_buffer);
+            render.record_initial_image_load(&staging_buffer);
             render.record_pipeline_image_transitions();
             first_run[render.frame_index] = false;
         }
 
         render.record();
+
+        if !use_swapchain {
+            render.write_output_to_buffer(&final_output, &staging_buffer);
+        }
+
         render.end_record();
 
         // Send the work to the gpu
@@ -191,6 +204,7 @@ fn main() {
     else {
         render_fn();
         render.wait_for_frame_fence();
+        imagefileio::encode(&args.output_file.unwrap(), mapped_input_image_data, width as i32, height as i32).unwrap_or_else(|err| panic!("Encoding error: {}", err));
     }
 
     }

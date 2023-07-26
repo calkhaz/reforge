@@ -1,6 +1,7 @@
 extern crate ash;
 use ash::vk;
 
+use crate::vulkan::vkutils::Image;
 use crate::vulkan::frame::Frame;
 use crate::vulkan::pipeline_graph::GraphAction;
 use crate::vulkan::pipeline_graph::PipelineGraph;
@@ -82,6 +83,13 @@ pub struct BlitCopy {
     pub dst_layout: vk::ImageLayout
 }
 
+pub struct ImageToBuffer<'a> {
+    pub width: u32,
+    pub height: u32,
+    pub src_image: &'a Image,
+    pub dst_buffer: vk::Buffer,
+}
+
 pub fn blit_copy(device: &ash::Device, cmd: vk::CommandBuffer, info: &BlitCopy) {
         let copy_subresource = vk::ImageSubresourceLayers {
             aspect_mask: vk::ImageAspectFlags::COLOR,
@@ -113,6 +121,28 @@ pub fn blit_copy(device: &ash::Device, cmd: vk::CommandBuffer, info: &BlitCopy) 
                               &[blit],
                               vk::Filter::LINEAR);
         }
+}
+
+pub fn copy_image_to_buffer(device: &ash::Device, cmd: vk::CommandBuffer, info: &ImageToBuffer) {
+    let copy_subresource = vk::ImageSubresourceLayers {
+        aspect_mask: vk::ImageAspectFlags::COLOR,
+        mip_level: 0,
+        base_array_layer: 0,
+        layer_count: 1
+    };
+
+    let region = vk::BufferImageCopy {
+        buffer_offset: 0,
+        buffer_row_length: info.width,
+        buffer_image_height: info.height,
+        image_subresource: copy_subresource,
+        image_offset: vk::Offset3D{x: 0, y: 0, z: 0},
+        image_extent: vk::Extent3D{width: info.width, height: info.height, depth: 1}
+    };
+
+    unsafe {
+    device.cmd_copy_image_to_buffer(cmd, info.src_image.vk, vk::ImageLayout::TRANSFER_SRC_OPTIMAL, info.dst_buffer, &[region]);
+    }
 }
 
 

@@ -335,6 +335,32 @@ impl Render {
         }
     }
 
+    pub fn write_output_to_buffer(&self, dst_image: &Image, dst_buffer: &Buffer) {
+        let graph_frame = &self.graph.frames[self.frame_index];
+        let frame = &self.frames[self.frame_index];
+        let device = &self.vk_core.device;
+
+        command::transition_image_layout(&device, frame.cmd_buffer, dst_image.vk, vk::ImageLayout::UNDEFINED, vk::ImageLayout::TRANSFER_DST_OPTIMAL);
+
+        command::blit_copy(device, frame.cmd_buffer, &command::BlitCopy {
+            width: self.info.width,
+            height: self.info.height,
+            src_image: graph_frame.images.get(SWAPCHAIN_OUTPUT).unwrap().vk,
+            dst_image: dst_image.vk,
+            src_layout: vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+            dst_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL
+        });
+
+        command::transition_image_layout(&device, frame.cmd_buffer, dst_image.vk, vk::ImageLayout::TRANSFER_DST_OPTIMAL, vk::ImageLayout::TRANSFER_SRC_OPTIMAL);
+
+        command::copy_image_to_buffer(device, frame.cmd_buffer, &command::ImageToBuffer {
+            width: self.info.width,
+            height: self.info.height,
+            src_image: dst_image,
+            dst_buffer: dst_buffer.vk
+        })
+    }
+
     pub fn end_record(&self) {
         unsafe {
         self.vk_core.device.end_command_buffer(self.frames[self.frame_index].cmd_buffer).unwrap();
@@ -390,7 +416,6 @@ impl Render {
     pub fn last_frame_gpu_times(&mut self) -> String {
         self.frames[self.frame_index].timer.get_elapsed_ms()
     }
-
 
     pub fn new(info: RenderInfo, event_loop: &EventLoop<()>) -> Render {
         let window = if info.swapchain { Some(Self::create_window(&event_loop, info.width, info.height)) } else { None };

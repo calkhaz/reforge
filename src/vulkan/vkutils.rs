@@ -32,6 +32,7 @@ pub struct Image {
     pub allocation: gpu_alloc_vk::Allocation,
     pub vk: vk::Image,
     pub view: Option<vk::ImageView>,
+    pub format: vk::Format
 }
 
 pub struct Buffer {
@@ -292,6 +293,7 @@ pub unsafe fn create_image(core: &VkCore, name: String, format: vk::Format, widt
 
     Image {
         device: Rc::clone(&core.device),
+        format: format,
         allocator: Rc::clone(&allocator),
         vk: vk_image,
         view: image_view,
