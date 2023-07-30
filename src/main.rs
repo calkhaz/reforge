@@ -45,10 +45,10 @@ impl ShaderFormat {
 
 #[derive(clap::Parser)]
 pub struct Args {
-    #[arg(value_name="input-file")]
+    #[arg(value_name="input-file", help = "Required file to read from")]
     input_file: String,
 
-    #[arg(value_name="output-file")]
+    #[arg(value_name="output-file", help = "Optional jpg file to write to")]
     output_file: Option<String>,
 
     #[arg(long)]
