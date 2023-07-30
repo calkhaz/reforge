@@ -16,6 +16,7 @@ mod vulkan;
 use ash::vk;
 use clap::Parser;
 use imagefileio::ImageFileDecoder;
+use imagefileio::ImageFileEncoder;
 use render::Render;
 use render::RenderInfo;
 use utils::TERM_CLEAR;
@@ -204,7 +205,7 @@ fn main() {
     else {
         render_fn();
         render.wait_for_frame_fence();
-        imagefileio::encode(&args.output_file.unwrap(), mapped_input_image_data, width as i32, height as i32).unwrap_or_else(|err| panic!("Encoding error: {}", err));
+        ImageFileEncoder::encode(&args.output_file.unwrap(), mapped_input_image_data, width as i32, height as i32).unwrap_or_else(|err| panic!("Encoding error: {}", err));
     }
 
     }

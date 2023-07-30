@@ -3,12 +3,34 @@ use std::os::raw::c_int;
 use std::os::raw::c_char;
 use std::{ptr, mem};
 
+pub struct ImageFileEncoder {
+    codec_type: ffmpeg::AVCodecID,
+    width: i32,
+    height: i32,
+    input_pix_fmt : ffmpeg::AVPixelFormat,
+    output_pix_fmt: ffmpeg::AVPixelFormat,
+    input_format_name: CString,
+}
+
 pub struct ImageFileDecoder {
     format_ctx: *mut ffmpeg::AVFormatContext,
     codec: *mut ffmpeg::AVCodec,
     codec_ctx: *mut ffmpeg::AVCodecContext,
     pub width: u32,
     pub height: u32
+}
+
+// We're allocating a lot of C data and potentially exiting at any point 
+// if any error occurs. So, we use this struct to conveniently drop/free data on exit
+struct EncoderData {
+    codec_context:  *mut ffmpeg::AVCodecContext,
+    format_context: *mut ffmpeg::AVFormatContext,
+    rgba_frame:     *mut ffmpeg::AVFrame,
+    yuv_frame:      *mut ffmpeg::AVFrame,
+    yuv_data:       *mut c_void,
+    sws_context:    *mut ffmpeg::SwsContext,
+    packet:         *mut ffmpeg::AVPacket,
+    open:           bool
 }
 
 trait AvOk<T> {
@@ -156,172 +178,179 @@ impl ImageFileDecoder {
     }
 }
 
-pub fn encode(file_path: &str, buffer: *const u8, width: i32, height: i32) -> Result<(), String> {
-    let codec_type = ffmpeg::AVCodecID::AV_CODEC_ID_MJPEG;
-    let output_pix_fmt = ffmpeg::AVPixelFormat::AV_PIX_FMT_YUVJ420P;
-    let input_format_name = CString::new("mjpeg").unwrap();
-
-    let input_pix_fmt  = ffmpeg::AVPixelFormat::AV_PIX_FMT_RGBA;
-
-    // PNG
-    //let codec_type = ffmpeg::AVCodecID::AV_CODEC_ID_PNG;
-    //let output_pix_fmt = ffmpeg::AVPixelFormat::AV_PIX_FMT_RGBA;
-
-    // BMP
-    //let codec_type = ffmpeg::AVCodecID::AV_CODEC_ID_BMP;
-    //let output_pix_fmt = ffmpeg::AVPixelFormat::AV_PIX_FMT_BGRA;
-
-    // We're allocating a lot of C data and potentially exiting at any point 
-    // if any error occurs. So, we use this struct to conveniently drop/free data on exit
-    struct Data {
-        codec_context:  *mut ffmpeg::AVCodecContext,
-        format_context: *mut ffmpeg::AVFormatContext,
-        rgba_frame:     *mut ffmpeg::AVFrame,
-        yuv_frame:      *mut ffmpeg::AVFrame,
-        yuv_data:       *mut c_void,
-        sws_context:    *mut ffmpeg::SwsContext,
-        packet:         *mut ffmpeg::AVPacket,
-        open:           bool
+impl ImageFileEncoder {
+    unsafe fn create_codec_context(&self, codec: *mut ffmpeg::AVCodec,) -> Result<*mut ffmpeg::AVCodecContext, String> {
+        // Create a codec context
+        let codec_context = ffmpeg::avcodec_alloc_context3(codec)
+            .is_av_ok("Failed to allocate codec context")?;
+    
+        // Set codec parameters
+        (*codec_context).codec_type = ffmpeg::AVMediaType::AVMEDIA_TYPE_VIDEO;
+        (*codec_context).width = self.width;
+        (*codec_context).height = self.height;
+        (*codec_context).pix_fmt = self.output_pix_fmt;
+        (*codec_context).time_base = ffmpeg::AVRational { num: 1, den: 30 };
+    
+        Ok(codec_context)
     }
 
-    impl Drop for Data {
-        fn drop(&mut self) {
-            unsafe {
-                ffmpeg::avcodec_free_context(&mut self.codec_context);
-                ffmpeg::av_frame_free(&mut self.rgba_frame);
-                ffmpeg::av_frame_free(&mut self.yuv_frame);
-                ffmpeg::av_free(self.yuv_data);
-                ffmpeg::sws_freeContext(self.sws_context);
-                ffmpeg::av_packet_free(&mut self.packet);
-                if self.open {
-                    ffmpeg::avio_close((*self.format_context).pb);
+    unsafe fn create_format_context(&self, codec: *mut ffmpeg::AVCodec) -> Result<*mut ffmpeg::AVFormatContext, String> {
+        let format_context = ffmpeg::avformat_alloc_context().is_av_ok("Failed to allocate format context")?;
+    
+        (*format_context).oformat = ffmpeg::av_guess_format(self.input_format_name.as_ptr(), std::ptr::null(), std::ptr::null()).is_av_ok("Could not find format name")?;
+        (*format_context).video_codec_id = (*codec).id;
+    
+        Ok(format_context)
+    }
+
+    unsafe fn create_stream(&self, format_context: *mut ffmpeg::AVFormatContext, codec: *mut ffmpeg::AVCodec)
+        -> Result<*mut ffmpeg::AVStream, String> {
+
+        let stream = ffmpeg::avformat_new_stream(format_context, codec).is_av_ok("Failed to open stream")?;
+    
+        (*(*stream).codecpar).codec_type = ffmpeg::AVMediaType::AVMEDIA_TYPE_VIDEO;
+        (*(*stream).codecpar).codec_id = self.codec_type;
+        (*(*stream).codecpar).width = self.width;
+        (*(*stream).codecpar).height = self.height;
+
+        Ok(stream)
+    }
+
+    unsafe fn create_frame(&self, format: ffmpeg::AVPixelFormat, buffer: *const u8) -> Result<*mut ffmpeg::AVFrame, String> {
+        // Allocate RGBA frame and buffer
+        let frame = ffmpeg::av_frame_alloc().is_av_ok("Failed to allocate frame")?;
+
+        ffmpeg::av_image_fill_arrays((*frame).data.as_mut_ptr(), (*frame).linesize.as_mut_ptr(), buffer,
+                                     format, self.width, self.height, 1).is_av_ok("Failed to fill arrays")?;
+    
+        // Set RGBA frame properties
+        (*frame).width = self.width;
+        (*frame).height = self.height;
+        (*frame).format = format as i32;
+
+        Ok(frame)
+    }
+
+    unsafe fn convert_frame_format(&self, input_frame: *mut ffmpeg::AVFrame, output_frame: *mut ffmpeg::AVFrame) -> Result<*mut ffmpeg::SwsContext, String> {
+        // Create scaling context
+        let sws_context = ffmpeg::sws_getContext(
+            self.width, self.height, self.input_pix_fmt,
+            self.width, self.height, self.output_pix_fmt,
+            ffmpeg::SWS_FAST_BILINEAR, ptr::null_mut(), ptr::null_mut(), ptr::null_mut())
+            .is_av_ok("Failed to create scaling context")?;
+    
+        // Convert input frame type to output frame
+        ffmpeg::sws_scale(
+            sws_context, (*input_frame).data.as_ptr() as *const *const u8, (*input_frame).linesize.as_mut_ptr(),
+            0, self.height, (*output_frame).data.as_mut_ptr(), (*output_frame).linesize.as_mut_ptr());
+
+        Ok(sws_context)
+    }
+
+    unsafe fn write_to_file(d: &EncoderData) -> Result<(), String> {
+        // Write the header of the file out
+        ffmpeg::avformat_write_header(d.format_context, std::ptr::null_mut()).is_av_ok("Failed to write header")?;
+    
+        let write_to_encoder = || -> Result<(), String> {
+            let mut ret = ffmpeg::avcodec_send_frame(d.codec_context, d.yuv_frame)
+                .is_av_ok("Failed to send frame")?;
+    
+            while ret >= 0 {
+                ret = ffmpeg::avcodec_receive_packet(d.codec_context, d.packet);
+    
+                if ret == ffmpeg::AVERROR(ffmpeg::EAGAIN) || ret == ffmpeg::AVERROR_EOF {
+                    break;
                 }
-                ffmpeg::avformat_free_context(self.format_context);
+                ret.is_av_ok("Failed to receive packet")?;
+    
+                ffmpeg::av_write_frame(d.format_context, d.packet).is_av_ok("Failed to write frame")?;
+                ffmpeg::av_packet_unref(d.packet);
             }
-        }
-    }
-
-    // Initialize and zero out all the pointers
-    let mut d: Data = unsafe { mem::zeroed() };
-
-    unsafe {
-
-    // Find the JPEG encoder
-    let codec_name_cstr = CStr::from_ptr(ffmpeg::avcodec_get_name(codec_type));
-    let codec_name = codec_name_cstr.to_string_lossy().into_owned();
-
-    let codec = ffmpeg::avcodec_find_encoder(codec_type)
-        .is_av_ok(&format!("Failed to find suitable encoder for type: {}", codec_name))?;
-
-    // Create a codec context
-    d.codec_context = ffmpeg::avcodec_alloc_context3(codec)
-        .is_av_ok("Failed to allocate codec context")?;
-
-    // Set codec parameters
-    (*d.codec_context).codec_type = ffmpeg::AVMediaType::AVMEDIA_TYPE_VIDEO;
-    (*d.codec_context).width = width;
-    (*d.codec_context).height = height;
-    (*d.codec_context).pix_fmt = output_pix_fmt;
-    (*d.codec_context).time_base = ffmpeg::AVRational { num: 1, den: 30 };
-
-    // Open the codec
-    ffmpeg::avcodec_open2(d.codec_context, codec, ptr::null_mut())
-        .is_av_ok("Failed to open codec")?;
-
-    d.format_context = ffmpeg::avformat_alloc_context().is_av_ok("Failed to allocate format context")?;
-
-    (*d.format_context).oformat = ffmpeg::av_guess_format(input_format_name.as_ptr(), std::ptr::null(), std::ptr::null()).is_av_ok("Could not find format name")?;
-    (*d.format_context).video_codec_id = (*codec).id;
-
-    // Open the output file
-    let c_file_path  = CString::new(file_path).unwrap();
-    ffmpeg::avio_open(&mut (*d.format_context).pb, c_file_path.as_ptr(), ffmpeg::AVIO_FLAG_WRITE).is_av_ok("Failed to open file")?;
-    d.open = true;
-
-    let stream = ffmpeg::avformat_new_stream(d.format_context, codec).is_av_ok("Failed to open stream")?;
-
-    (*(*stream).codecpar).codec_type = ffmpeg::AVMediaType::AVMEDIA_TYPE_VIDEO;
-    (*(*stream).codecpar).codec_id = codec_type;
-    (*(*stream).codecpar).width = width;
-    (*(*stream).codecpar).height = height;
-
-    // Write the header of the file out
-    ffmpeg::avformat_write_header(d.format_context, std::ptr::null_mut()).is_av_ok("Failed to write header")?;
-
-    // Allocate RGBA frame and buffer
-    d.rgba_frame = ffmpeg::av_frame_alloc();
-
-    ffmpeg::av_image_fill_arrays((*d.rgba_frame).data.as_mut_ptr(), (*d.rgba_frame).linesize.as_mut_ptr(), buffer as *const u8,
-                                 input_pix_fmt, width, height, 1);
-
-    // Set RGBA frame properties
-    (*d.rgba_frame).width = width;
-    (*d.rgba_frame).height = height;
-    (*d.rgba_frame).format = input_pix_fmt as i32;
-
-    // Allocate YUV frame and buffer
-    d.yuv_frame = ffmpeg::av_frame_alloc().is_av_ok("Failed to allocate frame")?;
-    let yuv_data_size = ffmpeg::av_image_get_buffer_size(output_pix_fmt, width, height, 1)
-        .is_av_ok("Failed to get buffer size")?;
-
-    d.yuv_data = ffmpeg::av_malloc(yuv_data_size as usize).is_av_ok("Failed to allocate YUV data")?;
-
-    ffmpeg::av_image_fill_arrays(
-        (*d.yuv_frame).data.as_mut_ptr(), (*d.yuv_frame).linesize.as_mut_ptr(), d.yuv_data as *const u8,
-        output_pix_fmt, width, height, 1).is_av_ok("Failed to fill yuv data frame array")?;
-
-    // Set YUV frame properties
-    (*d.yuv_frame).width = width;
-    (*d.yuv_frame).height = height;
-    (*d.yuv_frame).format = output_pix_fmt as i32;
-
-    // Create scaling context
-    d.sws_context = ffmpeg::sws_getContext(
-        width, height, input_pix_fmt,
-        width, height, output_pix_fmt,
-        ffmpeg::SWS_FAST_BILINEAR, ptr::null_mut(), ptr::null_mut(), ptr::null_mut())
-        .is_av_ok("Failed to create scaling context")?;
-
-    // Convert RGBA to YUVJ444P
-    ffmpeg::sws_scale(
-        d.sws_context, (*d.rgba_frame).data.as_ptr() as *const *const u8, (*d.rgba_frame).linesize.as_mut_ptr(),
-        0, height, (*d.yuv_frame).data.as_mut_ptr(), (*d.yuv_frame).linesize.as_mut_ptr());
-
-    // Encode and write frames
-    d.packet = ffmpeg::av_packet_alloc().is_av_ok("Failed to allocate packet")?;
-
-    (*d.packet).stream_index = (*stream).index;
-
-    let write_to_encoder = || -> Result<(), String> {
-        let mut ret = ffmpeg::avcodec_send_frame(d.codec_context, d.yuv_frame)
-            .is_av_ok("Failed to send frame")?;
-
-        while ret >= 0 {
-            ret = ffmpeg::avcodec_receive_packet(d.codec_context, d.packet);
-
-            if ret == ffmpeg::AVERROR(ffmpeg::EAGAIN) || ret == ffmpeg::AVERROR_EOF {
-                break;
-            }
-            ret.is_av_ok("Failed to receive packet")?;
-
-//                output_file.write_all(std::slice::from_raw_parts((*d.packet).data, (*d.packet).size as usize)).unwrap();
-            ffmpeg::av_write_frame(d.format_context, d.packet).is_av_ok("Failed to write frame")?;
-            ffmpeg::av_packet_unref(d.packet);
-        }
+    
+            Ok(())
+        };
+    
+        // Write data out to the encoder
+        write_to_encoder()?;
+    
+        // A second time flushes the encoder
+        write_to_encoder()?;
+    
+        ffmpeg::av_write_trailer(d.format_context).is_av_ok("Failed to write trailer")?;
 
         Ok(())
-    };
-
-    // Write data out to the encoder
-    write_to_encoder()?;
-
-    // A second time flushes the encoder
-    write_to_encoder()?;
-
-    ffmpeg::av_write_trailer(d.format_context).is_av_ok("Failed to write trailer")?;
-
     }
-    Ok(())
+
+    pub fn encode(file_path: &str, buffer: *const u8, width: i32, height: i32) -> Result<(), String> {
+        let e = ImageFileEncoder {
+            width: width,
+            height: height,
+            codec_type: ffmpeg::AVCodecID::AV_CODEC_ID_MJPEG,
+            output_pix_fmt: ffmpeg::AVPixelFormat::AV_PIX_FMT_YUVJ420P,
+            input_format_name: CString::new("mjpeg").unwrap(),
+            input_pix_fmt: ffmpeg::AVPixelFormat::AV_PIX_FMT_RGBA
+        };
+    
+        // PNG
+        //let codec_type = ffmpeg::AVCodecID::AV_CODEC_ID_PNG;
+        //let output_pix_fmt = ffmpeg::AVPixelFormat::AV_PIX_FMT_RGBA;
+    
+        // BMP
+        //let codec_type = ffmpeg::AVCodecID::AV_CODEC_ID_BMP;
+        //let output_pix_fmt = ffmpeg::AVPixelFormat::AV_PIX_FMT_BGRA;
+    
+        // Initialize and zero out all the pointers
+        let mut d: EncoderData = unsafe { mem::zeroed() };
+    
+        unsafe {
+    
+        // Find a suitable encoder
+        let codec_name_cstr = CStr::from_ptr(ffmpeg::avcodec_get_name(e.codec_type));
+        let codec_name = codec_name_cstr.to_string_lossy().into_owned();
+    
+        let codec = ffmpeg::avcodec_find_encoder(e.codec_type)
+            .is_av_ok(&format!("Failed to find suitable encoder for type: {}", codec_name))?;
+    
+        // Create the encoder context
+        d.codec_context = e.create_codec_context(codec)?;
+
+        // Open the codec
+        ffmpeg::avcodec_open2(d.codec_context, codec, ptr::null_mut())
+            .is_av_ok("Failed to open codec")?;
+    
+        // Create the format context
+        d.format_context = e.create_format_context(codec)?;
+    
+        // Open the output file
+        let c_file_path  = CString::new(file_path).unwrap();
+        ffmpeg::avio_open(&mut (*d.format_context).pb, c_file_path.as_ptr(), ffmpeg::AVIO_FLAG_WRITE).is_av_ok("Failed to open file")?;
+        d.open = true;
+    
+        // Create format context stream
+        let stream = e.create_stream(d.format_context, codec)?;
+
+        // Create the input rgba frame
+        d.rgba_frame = e.create_frame(e.input_pix_fmt, buffer as *const u8)?;
+    
+        // Create the output YUV frame
+        let yuv_data_size = ffmpeg::av_image_get_buffer_size(e.output_pix_fmt, width, height, 1)
+            .is_av_ok("Failed to get buffer size")?;
+        d.yuv_data = ffmpeg::av_malloc(yuv_data_size as usize).is_av_ok("Failed to allocate YUV data")?;
+        d.yuv_frame = e.create_frame(e.output_pix_fmt, d.yuv_data as *const u8)?;
+    
+        // Convert input to output frame
+        e.convert_frame_format(d.rgba_frame, d.yuv_frame)?;
+    
+        // Create packet to encoding
+        d.packet = ffmpeg::av_packet_alloc().is_av_ok("Failed to allocate packet")?;
+        (*d.packet).stream_index = (*stream).index;
+
+        // Write header, body and trailer to output
+        Self::write_to_file(&d)?;
+    
+        }
+        Ok(())
+    }
 }
 
 impl Drop for ImageFileDecoder {
@@ -333,3 +362,22 @@ impl Drop for ImageFileDecoder {
         }
     }
 }
+
+impl Drop for EncoderData {
+    fn drop(&mut self) {
+        unsafe {
+            ffmpeg::avcodec_free_context(&mut self.codec_context);
+            ffmpeg::av_frame_free(&mut self.rgba_frame);
+            ffmpeg::av_frame_free(&mut self.yuv_frame);
+            ffmpeg::av_free(self.yuv_data);
+            ffmpeg::sws_freeContext(self.sws_context);
+            ffmpeg::av_packet_free(&mut self.packet);
+            if self.open {
+                ffmpeg::avio_close((*self.format_context).pb);
+            }
+            ffmpeg::avformat_free_context(self.format_context);
+        }
+    }
+}
+
+
