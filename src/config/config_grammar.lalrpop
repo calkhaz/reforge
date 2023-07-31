@@ -72,5 +72,5 @@ ParamValueOp: Box<ParamValue> = {
     r"[0-9]+" => Box::new(ParamValue::Number(i32::from_str(<>).unwrap())),
 };
 
-// C-like identifier
-Str: String = <s:r"[a-zA-Z_][a-zA-Z0-9_]+"> => s.to_string();
+// C-like identifier + '-'
+Str: String = <s:r"[a-zA-Z_][a-zA-Z0-9_-]+"> => s.to_string();
