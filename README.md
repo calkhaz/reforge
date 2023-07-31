@@ -24,15 +24,17 @@ Any syntax errors that happen when compiling your glsl will be outputted in deta
 
 ## Usage
 ```
-Usage: reforge [OPTIONS] <input-file>
+Usage: reforge [OPTIONS] <input-file> [output-file]
 
 Arguments:
-  <input-file>
+  <input-file>   Required file to read from
+  [output-file]  Optional jpg file to write to
 
 Options:
       --width <WIDTH>
       --height <HEIGHT>
       --shader-format <SHADER_FORMAT>  Shader image format [default: rgba32f] [possible values: rgba8, rgba32f]
+      --config <config>                Path to the pipeline configuration file
       --num-frames <NUM_FRAMES>        Number of frame-in-flight to be used when displaying to the swapchain [default: 2]
   -h, --help                           Print help
 ```
