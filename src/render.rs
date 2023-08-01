@@ -38,7 +38,8 @@ pub struct Render {
     frames: Vec<Frame>,
     graph: PipelineGraph,
     info: RenderInfo,
-    input_srgb_image: Image,
+    // Used to bring buffer -> srgba8 -> X or X -> srgba8 -> buffer
+    staging_srgb_image: Image,
     last_modified_config_time: u64,
     last_modified_shader_times: HashMap<String, u64>,
     present_index: u32,
@@ -226,24 +227,24 @@ impl Render {
         let input_image = &self.graph.get_input_image();
 
         /* The goal here is to copy the input file from a vulkan buffer to an srgb image
-         * "input_srgb_image" and then to a linear rgb "input_image" so we have the correct
+         * "staging_srgb_image" and then to a linear rgb "input_image" so we have the correct
          * gamma */
 
         // 1. Transition the two input images so they are ready to be transfer destinations
         command::transition_image_layout(&device, frame.cmd_buffer, input_image.vk, vk::ImageLayout::UNDEFINED, vk::ImageLayout::TRANSFER_DST_OPTIMAL);
-        command::transition_image_layout(&device, frame.cmd_buffer, self.input_srgb_image.vk, vk::ImageLayout::UNDEFINED, vk::ImageLayout::TRANSFER_DST_OPTIMAL);
+        command::transition_image_layout(&device, frame.cmd_buffer, self.staging_srgb_image.vk, vk::ImageLayout::UNDEFINED, vk::ImageLayout::TRANSFER_DST_OPTIMAL);
 
         // 2. Copy the buffer to the srgb image and then make it ready to transfer out
         unsafe {
-        device.cmd_copy_buffer_to_image(frame.cmd_buffer, input_image_buffer.vk, self.input_srgb_image.vk, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &[buffer_regions]);
+        device.cmd_copy_buffer_to_image(frame.cmd_buffer, input_image_buffer.vk, self.staging_srgb_image.vk, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &[buffer_regions]);
         }
-        command::transition_image_layout(&device, frame.cmd_buffer, self.input_srgb_image.vk, vk::ImageLayout::UNDEFINED, vk::ImageLayout::TRANSFER_SRC_OPTIMAL);
+        command::transition_image_layout(&device, frame.cmd_buffer, self.staging_srgb_image.vk, vk::ImageLayout::UNDEFINED, vk::ImageLayout::TRANSFER_SRC_OPTIMAL);
 
         // 3. Copy the srgb image to the linear input image and get it ready for general compute
         //    Note: If a regular image_copy is used here, we will not get the desired gamma
         //    correction from the format change
         command::blit_copy(&device, frame.cmd_buffer, &command::BlitCopy {
-            src_image: self.input_srgb_image.vk, src_layout: vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+            src_image: self.staging_srgb_image.vk, src_layout: vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
             dst_image: input_image.vk,      dst_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
             width: self.info.width,
             height: self.info.height 
@@ -335,28 +336,28 @@ impl Render {
         }
     }
 
-    pub fn write_output_to_buffer(&self, dst_image: &Image, dst_buffer: &Buffer) {
+    pub fn write_output_to_buffer(&self, dst_buffer: &Buffer) {
         let graph_frame = &self.graph.frames[self.frame_index];
         let frame = &self.frames[self.frame_index];
         let device = &self.vk_core.device;
 
-        command::transition_image_layout(&device, frame.cmd_buffer, dst_image.vk, vk::ImageLayout::UNDEFINED, vk::ImageLayout::TRANSFER_DST_OPTIMAL);
+        command::transition_image_layout(&device, frame.cmd_buffer, self.staging_srgb_image.vk, vk::ImageLayout::UNDEFINED, vk::ImageLayout::TRANSFER_DST_OPTIMAL);
 
         command::blit_copy(device, frame.cmd_buffer, &command::BlitCopy {
             width: self.info.width,
             height: self.info.height,
             src_image: graph_frame.images.get(SWAPCHAIN_OUTPUT).unwrap().vk,
-            dst_image: dst_image.vk,
+            dst_image: self.staging_srgb_image.vk,
             src_layout: vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
             dst_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL
         });
 
-        command::transition_image_layout(&device, frame.cmd_buffer, dst_image.vk, vk::ImageLayout::TRANSFER_DST_OPTIMAL, vk::ImageLayout::TRANSFER_SRC_OPTIMAL);
+        command::transition_image_layout(&device, frame.cmd_buffer, self.staging_srgb_image.vk, vk::ImageLayout::TRANSFER_DST_OPTIMAL, vk::ImageLayout::TRANSFER_SRC_OPTIMAL);
 
         command::copy_image_to_buffer(device, frame.cmd_buffer, &command::ImageToBuffer {
             width: self.info.width,
             height: self.info.height,
-            src_image: dst_image,
+            src_image: &self.staging_srgb_image,
             dst_buffer: dst_buffer.vk
         })
     }
@@ -431,10 +432,10 @@ impl Render {
             Frame::new(&vk_core, pipeline_config.graph_pipelines.len() as u32)
         }).collect();
 
-        let input_srgb_image = vkutils::create_image(&vk_core,
-                                                     "input-image-srgb".to_string(),
-                                                     vk::Format::R8G8B8A8_SRGB,
-                                                     info.width, info.height);
+        let staging_srgb_image = vkutils::create_image(&vk_core,
+                                                       "input-image-srgb".to_string(),
+                                                       vk::Format::R8G8B8A8_SRGB,
+                                                       info.width, info.height);
 
         let last_modified_shader_times: HashMap<String, u64> = utils::get_modified_times(&graph.pipelines);
         let last_modified_config_time: u64 = if let Some(pipeline_config) = info.config_path.as_ref() { utils::get_modified_time(pipeline_config) } else { 0 };
@@ -445,7 +446,7 @@ impl Render {
             frames: frames,
             graph: graph,
             info: info,
-            input_srgb_image: input_srgb_image,
+            staging_srgb_image: staging_srgb_image,
             last_modified_config_time: last_modified_config_time,
             last_modified_shader_times: last_modified_shader_times,
             present_index: 0,

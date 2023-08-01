@@ -130,8 +130,6 @@ fn main() {
                                                     vk::BufferUsageFlags::TRANSFER_SRC | vk::BufferUsageFlags::TRANSFER_DST,
                                                     gpu_alloc::MemoryLocation::CpuToGpu);
 
-    let final_output = vkutils::create_image(&render.vk_core, "output".to_string(), vk::Format::R8G8B8A8_SRGB, width, height);
-
     let mut avg_ms = 0.0;
     let mapped_input_image_data: *mut u8 = staging_buffer.allocation.mapped_ptr().unwrap().as_ptr() as *mut u8;
 
@@ -190,7 +188,7 @@ fn main() {
         render.record();
 
         if !use_swapchain {
-            render.write_output_to_buffer(&final_output, &staging_buffer);
+            render.write_output_to_buffer(&staging_buffer);
         }
 
         render.end_record();
