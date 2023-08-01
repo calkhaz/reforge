@@ -5,8 +5,6 @@ extern crate shaderc;
 extern crate ffmpeg_sys_next as ffmpeg;
 #[macro_use] extern crate lalrpop_util;
 
-use gpu_allocator as gpu_alloc;
-
 mod config;
 mod imagefileio;
 mod render;
@@ -20,7 +18,6 @@ use imagefileio::ImageFileEncoder;
 use render::Render;
 use render::RenderInfo;
 use utils::TERM_CLEAR;
-use vulkan::vkutils;
 
 use winit::{
     event::{ElementState, Event, KeyboardInput, VirtualKeyCode, WindowEvent},
@@ -118,29 +115,15 @@ fn main() {
 
     let mut first_run = vec![true; num_frames];
 
-    // We use rgba8 as the input file format
-    let buffer_size = (width as vk::DeviceSize)*(height as vk::DeviceSize)*4;
-
     unsafe {
-
-    // This staging buffer will be used to transfer the original input file into an mimage
-    let staging_buffer = vkutils::create_buffer(&render.vk_core,
-                                                    "input-image-staging-buffer".to_string(),
-                                                    buffer_size,
-                                                    vk::BufferUsageFlags::TRANSFER_SRC | vk::BufferUsageFlags::TRANSFER_DST,
-                                                    gpu_alloc::MemoryLocation::CpuToGpu);
-
     let mut avg_ms = 0.0;
-    let mapped_input_image_data: *mut u8 = staging_buffer.allocation.mapped_ptr().unwrap().as_ptr() as *mut u8;
+    let mapped_input_image_data: *mut u8 = render.staging_buffer_ptr();
 
     let mut timer: std::time::Instant = std::time::Instant::now();
     let time_since_start: std::time::Instant = std::time::Instant::now();
 
     // Decode the file into the staging buffer
     file_decoder.decode(mapped_input_image_data, width, height).unwrap_or_else(|err| panic!("Error: {}", err));
-
-//    ImageFileEncoder::new(&args.input_file, mapped_input_image_data, width as i32, height as i32);
-//    std::process::exit(0);
 
     let elapsed_ms = utils::get_elapsed_ms(&timer);
     println!("File Decode and resize: {:.2}ms", elapsed_ms);
@@ -180,7 +163,7 @@ fn main() {
         // 1. Transitioned images as needed
         // 2. Load the staging input buffer into an image and convert it to linear
         if first_run[render.frame_index] {
-            render.record_initial_image_load(&staging_buffer);
+            render.record_initial_image_load();
             render.record_pipeline_image_transitions();
             first_run[render.frame_index] = false;
         }
@@ -188,7 +171,7 @@ fn main() {
         render.record();
 
         if !use_swapchain {
-            render.write_output_to_buffer(&staging_buffer);
+            render.write_output_to_buffer();
         }
 
         render.end_record();

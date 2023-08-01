@@ -1,4 +1,5 @@
 use ash::vk;
+use gpu_allocator as gpu_alloc;
 
 use crate::config::config::Config;
 use crate::config::config::parse as config_parse;
@@ -40,6 +41,7 @@ pub struct Render {
     info: RenderInfo,
     // Used to bring buffer -> srgba8 -> X or X -> srgba8 -> buffer
     staging_srgb_image: Image,
+    pub staging_buffer: Buffer,
     last_modified_config_time: u64,
     last_modified_shader_times: HashMap<String, u64>,
     present_index: u32,
@@ -50,6 +52,10 @@ pub struct Render {
 }
 
 impl Render {
+    pub fn staging_buffer_ptr(&mut self) -> *mut u8 {
+        self.staging_buffer.allocation.mapped_ptr().unwrap().as_ptr() as *mut u8
+    }
+
     fn get_swapchain(&self) -> &SwapChain {
         &self.swapchain.as_ref().expect("No swapchain created")
     }
@@ -205,7 +211,7 @@ impl Render {
         self.present_index = present_index;
     }
 
-    pub fn record_initial_image_load(&self, input_image_buffer: &Buffer) {
+    pub fn record_initial_image_load(&self) {
         let frame = &self.frames[self.frame_index];
         let device = &self.vk_core.device;
 
@@ -236,7 +242,7 @@ impl Render {
 
         // 2. Copy the buffer to the srgb image and then make it ready to transfer out
         unsafe {
-        device.cmd_copy_buffer_to_image(frame.cmd_buffer, input_image_buffer.vk, self.staging_srgb_image.vk, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &[buffer_regions]);
+        device.cmd_copy_buffer_to_image(frame.cmd_buffer, self.staging_buffer.vk, self.staging_srgb_image.vk, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &[buffer_regions]);
         }
         command::transition_image_layout(&device, frame.cmd_buffer, self.staging_srgb_image.vk, vk::ImageLayout::UNDEFINED, vk::ImageLayout::TRANSFER_SRC_OPTIMAL);
 
@@ -336,7 +342,7 @@ impl Render {
         }
     }
 
-    pub fn write_output_to_buffer(&self, dst_buffer: &Buffer) {
+    pub fn write_output_to_buffer(&self) {
         let graph_frame = &self.graph.frames[self.frame_index];
         let frame = &self.frames[self.frame_index];
         let device = &self.vk_core.device;
@@ -358,7 +364,7 @@ impl Render {
             width: self.info.width,
             height: self.info.height,
             src_image: &self.staging_srgb_image,
-            dst_buffer: dst_buffer.vk
+            dst_buffer: self.staging_buffer.vk
         })
     }
 
@@ -432,6 +438,16 @@ impl Render {
             Frame::new(&vk_core, pipeline_config.graph_pipelines.len() as u32)
         }).collect();
 
+        // We use rgba8 as the input file format
+        let buffer_size = (info.width as vk::DeviceSize)*(info.height as vk::DeviceSize)*4;
+
+        // This staging buffer will be used to transfer the original input file into an mimage
+        let staging_buffer = vkutils::create_buffer(&vk_core,
+                                                        "input-image-staging-buffer".to_string(),
+                                                        buffer_size,
+                                                        vk::BufferUsageFlags::TRANSFER_SRC | vk::BufferUsageFlags::TRANSFER_DST,
+                                                        gpu_alloc::MemoryLocation::CpuToGpu);
+
         let staging_srgb_image = vkutils::create_image(&vk_core,
                                                        "input-image-srgb".to_string(),
                                                        vk::Format::R8G8B8A8_SRGB,
@@ -447,6 +463,7 @@ impl Render {
             graph: graph,
             info: info,
             staging_srgb_image: staging_srgb_image,
+            staging_buffer: staging_buffer,
             last_modified_config_time: last_modified_config_time,
             last_modified_shader_times: last_modified_shader_times,
             present_index: 0,
