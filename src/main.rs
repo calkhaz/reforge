@@ -134,7 +134,7 @@ fn main() {
         render.wait_for_frame_fence();
 
         // If our configuration has changed, live reload it
-        if render.reload_changed_config() {
+        if render.reload_changed_config().is_some() {
             first_run.iter_mut().for_each(|b| *b = true);
             // Clear current line of timers
             eprint!("{TERM_CLEAR}");

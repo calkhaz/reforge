@@ -86,9 +86,9 @@ impl Render {
         PipelineGraph::new(&vk_core, graph_info)
     }
 
-    pub fn reload_changed_config(&mut self) -> bool {
+    pub fn reload_changed_config(&mut self) -> Option<()> {
         if self.info.config_path.is_none() {
-            return false;
+            return None;
         }
         let config_path = self.info.config_path.as_ref().unwrap();
 
@@ -102,44 +102,32 @@ impl Render {
             },
             modified_timestamp => {
                 if modified_timestamp == self.last_modified_config_time {
-                    return false;
+                    return None;
                 }
 
                 self.last_modified_config_time = current_modified_config_time;
 
-                let config_contents = utils::load_file_contents(&config_path);
+                let config_contents = utils::load_file_contents(&config_path)?;
 
-                if config_contents.is_none() {
-                    return false;
-                }
-
-                let pipeline_config = config_parse(config_contents.unwrap());
-
-                if pipeline_config.is_none() {
-                    return false;
-                }
+                let pipeline_config = config_parse(config_contents)?;
 
                 unsafe {
                 self.vk_core.device.device_wait_idle().unwrap();
 
-                let num_pipelines = pipeline_config.as_ref().unwrap().graph_pipelines.len() as u32;
-                let graph = Self::create_graph(&self.vk_core, &self.info, &pipeline_config.unwrap());
+                let num_pipelines = pipeline_config.graph_pipelines.len() as u32;
+                let graph = Self::create_graph(&self.vk_core, &self.info, &pipeline_config)?;
 
-                if graph.is_none() {
-                    return false;
-                }
-
-                self.graph = graph.unwrap();
+                self.graph = graph;
                 self.frames.iter_mut().for_each(|f| f.rebuild_timer(num_pipelines));
                 }
                 self.frame_index = 0;
                 self.last_modified_shader_times = utils::get_modified_times(&self.graph.pipelines);
 
-                return true;
+                return Some(());
             }
         };
 
-        false
+        None
     }
 
     pub fn update_ubos(&mut self, time: f32) {
