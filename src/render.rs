@@ -72,21 +72,6 @@ impl Render {
             .unwrap()
     }
 
-    fn load_config(config_path: &Option<String>) -> Option<Config> {
-        let pipeline_config = if config_path.is_some() {
-            match std::fs::read_to_string(config_path.clone().unwrap()) {
-                Ok(contents) => contents,
-                Err(e) => { warnln!("Error reading file '{}' : {}", config_path.as_ref().unwrap(), e); std::process::exit(1); }
-            }
-        }
-        else {
-            // Default configuration
-            "input -> passthrough -> output".to_string()
-        };
-
-        config_parse(pipeline_config.to_string())
-    }
-
     unsafe fn create_graph(vk_core: &VkCore, info: &RenderInfo, pipeline_config: &Config) -> Option<PipelineGraph> {
         let pipeline_infos = vkutils::synthesize_config(Rc::clone(&vk_core.device), &pipeline_config)?;
 
@@ -122,10 +107,7 @@ impl Render {
 
                 self.last_modified_config_time = current_modified_config_time;
 
-                let config_contents = match std::fs::read_to_string(config_path.clone()) {
-                    Ok(contents) => Some(contents),
-                    Err(e) => { warnln!("Error reading file '{}' : {}", config_path, e); None }
-                };
+                let config_contents = utils::load_file_contents(&config_path);
 
                 if config_contents.is_none() {
                     return false;
@@ -427,7 +409,14 @@ impl Render {
     pub fn new(info: RenderInfo, event_loop: &EventLoop<()>) -> Render {
         let window = if info.swapchain { Some(Self::create_window(&event_loop, info.width, info.height)) } else { None };
 
-        let pipeline_config = Self::load_config(&info.config_path).unwrap();
+        let pipeline_config = match info.config_path.as_ref() {
+            Some(path) => { 
+                let contents = utils::load_file_contents(&path);
+                if contents.is_none() { std::process::exit(1); }
+                config_parse(contents.unwrap())
+            }
+            None => config_parse("input -> passthrough -> output".to_string())
+        }.unwrap();
 
         unsafe {
         let vk_core = VkCore::new(&window);

@@ -46,10 +46,7 @@ impl Shader {
     }
 
     fn create_spirv(path: &str) -> Option<CompilationArtifact> {
-        let glsl_source = match std::fs::read_to_string(path) {
-            Ok(contents) => Some(contents),
-            Err(err) => { warnln!("Failed to read the file '{path}': {}", err); None }
-        }?;
+        let glsl_source = crate::utils::load_file_contents(path)?;
 
         if glsl_source.is_empty() {
             warnln!("File was empty: {path}");

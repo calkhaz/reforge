@@ -10,6 +10,20 @@ pub const TERM_RED   : &str = "\x1b[31m";
 pub const TERM_YELLOW: &str = "\x1b[33m";
 const MOVING_AVG_SIZE: f64 = 60.0;
 
+#[macro_export]
+macro_rules! warnln {
+    ($($arg:tt)*) => {{
+        eprintln!("\r\x1b[2K\x1b[33m{}\x1b[0m", format_args!($($arg)*));
+    }}
+}
+
+pub fn load_file_contents(config_path: &str) -> Option<String> {
+    match std::fs::read_to_string(config_path) {
+        Ok(contents) => Some(contents),
+        Err(e) => { warnln!("Error reading file '{}' : {}", config_path, e); None }
+    }
+}
+
 pub fn get_modified_time(path: &String) -> u64 {
     match std::fs::metadata(path) {
         Ok(metadata) => {
@@ -63,9 +77,3 @@ pub fn get_elapsed_ms(inst: &std::time::Instant) -> f64{
     return (inst.elapsed().as_nanos() as f64)/1e6 as f64;
 }
 
-#[macro_export]
-macro_rules! warnln {
-    ($($arg:tt)*) => {{
-        eprintln!("\r\x1b[2K\x1b[33m{}\x1b[0m", format_args!($($arg)*));
-    }}
-}
