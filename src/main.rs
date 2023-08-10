@@ -42,8 +42,8 @@ impl ShaderFormat {
 
 #[derive(clap::Parser)]
 pub struct Args {
-    #[arg(value_name="input-file", help = "Required file to read from")]
-    input_file: String,
+    #[arg(value_name="input-file", help = "Optional file to read from")]
+    input_file: Option<String>,
 
     #[arg(value_name="output-file", help = "Optional jpg file to write to")]
     output_file: Option<String>,
@@ -94,12 +94,20 @@ fn main() {
 
     imagefileio::init();
 
-    let mut file_decoder = match ImageFileDecoder::new(&args.input_file) {
-        Ok(decoder) => decoder,
-        Err(err) => panic!("{}", err)
+    let file_decoder = match args.input_file.as_ref() {
+        Some(input_file) => {
+            match ImageFileDecoder::new(&input_file) {
+                Ok(decoder) => Some(decoder),
+                Err(err) => panic!("{}", err)
+            }
+        },
+        None => None
     };
 
-    let (width, height) = utils::get_dim(file_decoder.width, file_decoder.height, args.width, args.height);
+    let (width, height) = match file_decoder.as_ref() {
+        Some(decoder) => utils::get_dim(decoder.width, decoder.height, args.width, args.height),
+        None => utils::get_dim(800, 600, args.width, args.height)
+    };
 
     let render_info = RenderInfo {
         width: width,
@@ -107,7 +115,8 @@ fn main() {
         num_frames: num_frames,
         config_path: args.config,
         format: args.shader_format.unwrap().to_vk_format(),
-        swapchain: use_swapchain
+        swapchain: use_swapchain,
+        has_input_image: args.input_file.is_some()
     };
 
     let mut event_loop = EventLoop::new();
@@ -123,7 +132,9 @@ fn main() {
     let time_since_start: std::time::Instant = std::time::Instant::now();
 
     // Decode the file into the staging buffer
-    file_decoder.decode(mapped_input_image_data, width, height).unwrap_or_else(|err| panic!("Error: {}", err));
+    if file_decoder.as_ref().is_some() {
+        file_decoder.unwrap().decode(mapped_input_image_data, width, height).unwrap_or_else(|err| panic!("Error: {}", err));
+    }
 
     let elapsed_ms = utils::get_elapsed_ms(&timer);
     println!("File Decode and resize: {:.2}ms", elapsed_ms);
@@ -163,7 +174,9 @@ fn main() {
         // 1. Transitioned images as needed
         // 2. Load the staging input buffer into an image and convert it to linear
         if first_run[render.frame_index] {
-            render.record_initial_image_load();
+            if args.input_file.is_some() {
+                render.record_initial_image_load();
+            }
             render.record_pipeline_image_transitions();
             first_run[render.frame_index] = false;
         }

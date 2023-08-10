@@ -53,7 +53,7 @@ fn get_line_number_and_contents(buffer: &str, mut offset: usize) -> (usize, &str
     (line_number, line_contents, offset)
 }
 
-pub fn parse(contents: String) -> Option<Config> {
+pub fn parse(contents: String, expects_input: bool) -> Option<Config> {
 
     if contents.trim().is_empty() {
         warnln!("Empty configuration given to parse");
@@ -156,7 +156,7 @@ pub fn parse(contents: String) -> Option<Config> {
     }
 
     if config.graph_pipelines.len() == 0 { warnln!("Cofiguration had an empty graph");  return None }
-    if !found_input  { warnln!("'input' is never used in the pipeline configuration");  return None }
+    if found_input && !expects_input { warnln!("Found 'input' in pipeline configuration but no input image was specified");  return None }
     if !found_output { warnln!("'output' is never used in the pipeline configuration"); return None }
 
     Some(config)

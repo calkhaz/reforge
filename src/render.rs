@@ -32,7 +32,8 @@ pub struct RenderInfo {
     pub num_frames: usize,
     pub config_path: Option<String>,
     pub format: vk::Format,
-    pub swapchain: bool
+    pub swapchain: bool,
+    pub has_input_image: bool
 }
 
 pub struct Render {
@@ -109,7 +110,7 @@ impl Render {
 
                 let config_contents = utils::load_file_contents(&config_path)?;
 
-                let pipeline_config = config_parse(config_contents)?;
+                let pipeline_config = config_parse(config_contents, self.info.has_input_image)?;
 
                 unsafe {
                 self.vk_core.device.device_wait_idle().unwrap();
@@ -401,9 +402,9 @@ impl Render {
             Some(path) => { 
                 let contents = utils::load_file_contents(&path);
                 if contents.is_none() { std::process::exit(1); }
-                config_parse(contents.unwrap())
+                config_parse(contents.unwrap(), info.has_input_image)
             }
-            None => config_parse("input -> passthrough -> output".to_string())
+            None => config_parse("input -> passthrough -> output".to_string(), true)
         }.unwrap();
 
         unsafe {
