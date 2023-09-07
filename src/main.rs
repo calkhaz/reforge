@@ -64,27 +64,6 @@ pub struct Args {
     num_frames: Option<usize>,
 }
 
-fn render_loop<F: FnMut()>(event_loop: &mut EventLoop<()>, f: &mut F) {
-    event_loop.run_return(|event, _, control_flow| {
-        *control_flow = ControlFlow::Poll;
-        match event {
-            Event::WindowEvent {
-                event: WindowEvent::CloseRequested | WindowEvent::KeyboardInput {
-                    input: KeyboardInput {
-                        state: ElementState::Pressed,
-                        virtual_keycode: Some(VirtualKeyCode::Escape),
-                        ..
-                    },
-                    ..
-                },
-            ..
-            } => *control_flow = ControlFlow::Exit,
-            Event::MainEventsCleared => f(),
-            _ => (),
-        }
-    });
-}
-
 fn main() {
     let args = Args::parse();
     let use_swapchain = args.output_file.is_none();
@@ -139,7 +118,7 @@ fn main() {
     let elapsed_ms = utils::get_elapsed_ms(&timer);
     println!("File Decode and resize: {:.2}ms", elapsed_ms);
 
-    let mut render_fn = || {
+    let mut render_fn = |render: &mut Render| {
         // Wait for the previous iteration of this frame before
         // changing or executing on its resources
         render.wait_for_frame_fence();
@@ -193,11 +172,44 @@ fn main() {
         render.submit();
     };
 
+    let mut first_resize = true;
+
     if use_swapchain {
-        render_loop(&mut event_loop, &mut render_fn);
+        event_loop.run_return(|event, _, control_flow| {
+            *control_flow = ControlFlow::Poll;
+            match event {
+                Event::WindowEvent {
+                    event: WindowEvent::Resized(size),
+                    ..
+                } => {
+                    // This event gets triggered on initial window creation
+                    // and we don't want to recreate the swapchain at that point
+                    if !first_resize {
+                        render.rebuild_swapchain(size.width, size.height);
+                    }
+
+                    first_resize = false;
+                },
+                Event::WindowEvent {
+                    event: WindowEvent::CloseRequested | WindowEvent::KeyboardInput {
+                        input: KeyboardInput {
+                            state: ElementState::Pressed,
+                            virtual_keycode: Some(VirtualKeyCode::Escape),
+                            ..
+                        },
+                        ..
+                    },
+                ..
+                } => *control_flow = ControlFlow::Exit,
+                Event::MainEventsCleared => render_fn(&mut render),
+                _ => (),
+            }
+
+        });
+        //render_loop(&mut event_loop, &mut render_fn);
     }
     else {
-        render_fn();
+        render_fn(&mut render);
         render.wait_for_frame_fence();
         ImageFileEncoder::encode(&args.output_file.unwrap(), mapped_input_image_data, width as i32, height as i32).unwrap_or_else(|err| panic!("Encoding error: {}", err));
     }

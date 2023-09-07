@@ -382,9 +382,18 @@ impl Render {
                 .image_indices(&image_indices);
 
             unsafe {
-            swapchain.loader
-                .queue_present(self.vk_core.queue, &present_info)
-                .unwrap();
+            match swapchain.loader.queue_present(self.vk_core.queue, &present_info) {
+                Ok(suboptimal) => {
+                    if suboptimal {
+                        self.rebuild_swapchain(self.info.width, self.info.height);
+                    }
+                },
+                Err(err) => {
+                    if err == vk::Result::ERROR_OUT_OF_DATE_KHR {
+                        self.rebuild_swapchain(self.info.width, self.info.height);
+                    }
+                }
+            }
             }
         }
 
@@ -393,6 +402,13 @@ impl Render {
 
     pub fn last_frame_gpu_times(&mut self) -> String {
         self.frames[self.frame_index].timer.get_elapsed_ms()
+    }
+
+    pub fn rebuild_swapchain(&mut self, width: u32, height: u32) {
+        unsafe {
+        self.vk_core.device.device_wait_idle().unwrap();
+        self.swapchain.as_mut().unwrap().rebuild(&self.vk_core, width, height);
+        }
     }
 
     pub fn new(info: RenderInfo, event_loop: &EventLoop<()>) -> Render {

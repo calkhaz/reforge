@@ -17,6 +17,47 @@ pub struct SwapChain {
 
 impl SwapChain {
     pub unsafe fn new(core: &VkCore, width: u32, height: u32) -> SwapChain {
+        let swapchain_loader = khr::Swapchain::new(&core.instance, &core.device);
+        let (swapchain, surface_format) = SwapChain::build(core, width, height, &swapchain_loader, None);
+
+        let images = swapchain_loader.get_swapchain_images(swapchain).unwrap();
+        let views = SwapChain::create_present_image_views(core, &images, surface_format);
+
+        return SwapChain {
+            device: Rc::clone(&core.device),
+            vk: swapchain,
+            loader: swapchain_loader,
+            images: images,
+            views: views
+        }
+    }
+
+    unsafe fn create_present_image_views(core: &VkCore, images: &Vec<vk::Image>, surface_format: vk::SurfaceFormatKHR) -> Vec<vk::ImageView> {
+        images
+            .iter()
+            .map(|&image| {
+                let create_view_info = vk::ImageViewCreateInfo::builder()
+                    .view_type(vk::ImageViewType::TYPE_2D)
+                    .format(surface_format.format)
+                    .components(vk::ComponentMapping {
+                        r: vk::ComponentSwizzle::R,
+                        g: vk::ComponentSwizzle::G,
+                        b: vk::ComponentSwizzle::B,
+                        a: vk::ComponentSwizzle::A,
+                    })
+                    .subresource_range(vk::ImageSubresourceRange {
+                        aspect_mask: vk::ImageAspectFlags::COLOR,
+                        base_mip_level: 0,
+                        level_count: 1,
+                        base_array_layer: 0,
+                        layer_count: 1,
+                    })
+                    .image(image);
+                core.device.create_image_view(&create_view_info, None).unwrap()
+            }).collect()
+    }
+
+    unsafe fn build(core: &VkCore, width: u32, height: u32, swapchain_loader: &khr::Swapchain, old_swapchain: Option<vk::SwapchainKHR>) -> (vk::SwapchainKHR, vk::SurfaceFormatKHR) {
         let surface = core.surface.expect("Cannot create swapchain without a valid surface");
         let surface_loader = core.surface_loader.as_ref().expect("Cannot create swapchain without a valid surface loader");
 
@@ -62,8 +103,6 @@ impl SwapChain {
             .find(|&mode| mode == vk::PresentModeKHR::MAILBOX)
             .unwrap_or(vk::PresentModeKHR::FIFO);
 
-        let swapchain_loader = khr::Swapchain::new(&core.instance, &core.device);
-
         let swapchain_create_info = vk::SwapchainCreateInfoKHR::builder()
             .surface(surface)
             .min_image_count(desired_image_count)
@@ -76,44 +115,24 @@ impl SwapChain {
             .composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE)
             .present_mode(present_mode)
             .clipped(true)
-            .image_array_layers(1);
+            .image_array_layers(1)
+            .old_swapchain(old_swapchain.unwrap_or(vk::SwapchainKHR::default()));
 
-        let swapchain = swapchain_loader
-            .create_swapchain(&swapchain_create_info, None)
-            .unwrap();
+        (swapchain_loader.create_swapchain(&swapchain_create_info, None).unwrap(), surface_format)
+    }
 
-        let present_images = swapchain_loader.get_swapchain_images(swapchain).unwrap();
+    pub unsafe fn rebuild(&mut self, core: &VkCore, width: u32, height: u32) {
+        for &view in &self.views {
+            self.device.destroy_image_view(view, None);
+        }
+        self.views.clear();
+        self.images.clear();
 
-        let present_image_views: Vec<vk::ImageView> = present_images
-            .iter()
-            .map(|&image| {
-                let create_view_info = vk::ImageViewCreateInfo::builder()
-                    .view_type(vk::ImageViewType::TYPE_2D)
-                    .format(surface_format.format)
-                    .components(vk::ComponentMapping {
-                        r: vk::ComponentSwizzle::R,
-                        g: vk::ComponentSwizzle::G,
-                        b: vk::ComponentSwizzle::B,
-                        a: vk::ComponentSwizzle::A,
-                    })
-                    .subresource_range(vk::ImageSubresourceRange {
-                        aspect_mask: vk::ImageAspectFlags::COLOR,
-                        base_mip_level: 0,
-                        level_count: 1,
-                        base_array_layer: 0,
-                        layer_count: 1,
-                    })
-                    .image(image);
-                core.device.create_image_view(&create_view_info, None).unwrap()
-           }).collect();
+        let (swapchain, surface_format) = Self::build(core, width, height, &self.loader, Some(self.vk));
 
-        return SwapChain {
-            device: Rc::clone(&core.device),
-            vk: swapchain,
-            loader: swapchain_loader,
-            images: present_images,
-            views: present_image_views
-        };
+        self.vk = swapchain;
+        self.images = self.loader.get_swapchain_images(swapchain).unwrap();
+        self.views = SwapChain::create_present_image_views(core, &self.images, surface_format);
     }
 }
 
