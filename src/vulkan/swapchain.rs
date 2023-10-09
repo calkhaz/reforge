@@ -12,7 +12,9 @@ pub struct SwapChain {
     pub loader: khr::Swapchain,
     pub images: Vec<vk::Image>,
     pub views: Vec<vk::ImageView>,
-    device: Rc<ash::Device>
+    device: Rc<ash::Device>,
+    pub width: u32,
+    pub height: u32
 }
 
 impl SwapChain {
@@ -28,7 +30,9 @@ impl SwapChain {
             vk: swapchain,
             loader: swapchain_loader,
             images: images,
-            views: views
+            views: views,
+            width: width,
+            height: height,
         }
     }
 
@@ -133,6 +137,8 @@ impl SwapChain {
         self.vk = swapchain;
         self.images = self.loader.get_swapchain_images(swapchain).unwrap();
         self.views = SwapChain::create_present_image_views(core, &self.images, surface_format);
+        self.width = width;
+        self.height = height;
     }
 }
 

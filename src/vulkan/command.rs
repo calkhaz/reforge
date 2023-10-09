@@ -74,13 +74,17 @@ pub fn transition_image_layout(device: &ash::Device, cmd: vk::CommandBuffer, ima
 
 }
 
+#[derive(Default)]
 pub struct BlitCopy {
-    pub width: u32,
-    pub height: u32,
+    pub src_width: u32,
+    pub src_height: u32,
+    pub dst_width: u32,
+    pub dst_height: u32,
     pub src_image: vk::Image,
     pub dst_image: vk::Image,
     pub src_layout: vk::ImageLayout,
-    pub dst_layout: vk::ImageLayout
+    pub dst_layout: vk::ImageLayout,
+    pub center: bool
 }
 
 pub struct ImageToBuffer<'a> {
@@ -98,18 +102,31 @@ pub fn blit_copy(device: &ash::Device, cmd: vk::CommandBuffer, info: &BlitCopy) 
             layer_count: 1
         };
 
-        let begin_offset = vk::Offset3D {
-            x: 0, y: 0, z: 0
-        };
-        let end_offset = vk::Offset3D {
-            x: info.width as i32, y: info.height as i32, z: 1
-        };
+        let src_begin_offset = vk::Offset3D { x: 0, y: 0, z: 0 };
+        let src_end_offset = vk::Offset3D { x: info.src_width as i32, y: info.src_height as i32, z: 1 };
+        let mut dst_begin_offset = vk::Offset3D { x: 0, y: 0, z: 0 };
+        let mut dst_end_offset = vk::Offset3D { x: info.dst_width as i32, y: info.dst_height as i32, z: 1 };
+
+        // Center the src image into the dst image
+        if info.center {
+            let calc_dst_offset = |src_dim: i32, dst_dim: i32| -> (i32, i32) {
+                let diff  = std::cmp::max(dst_dim - src_dim, 0);
+                let padding = diff/2;
+                let begin_offset = padding;
+                let end_offset = dst_dim - padding;
+
+                (begin_offset, end_offset)
+            };
+
+            (dst_begin_offset.x, dst_end_offset.x) = calc_dst_offset(info.src_width as i32, info.dst_width as i32);
+            (dst_begin_offset.y, dst_end_offset.y) = calc_dst_offset(info.src_height as i32, info.dst_height as i32);
+        }
 
         let blit = vk::ImageBlit {
             src_subresource: copy_subresource,
-            src_offsets: [begin_offset, end_offset],
+            src_offsets: [src_begin_offset, src_end_offset],
             dst_subresource: copy_subresource,
-            dst_offsets: [begin_offset, end_offset]
+            dst_offsets: [dst_begin_offset, dst_end_offset]
         };
 
         unsafe {

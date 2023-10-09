@@ -221,10 +221,13 @@ impl Render {
         //    Note: If a regular image_copy is used here, we will not get the desired gamma
         //    correction from the format change
         command::blit_copy(&device, frame.cmd_buffer, &command::BlitCopy {
-            src_image: self.staging_srgb_image.vk, src_layout: vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
-            dst_image: input_image.vk,      dst_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-            width: self.info.width,
-            height: self.info.height 
+            src_width:  self.info.width,
+            src_height: self.info.height,
+            dst_width:  self.info.width,
+            dst_height: self.info.height,
+            src_image:  self.staging_srgb_image.vk, src_layout: vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+            dst_image:  input_image.vk, dst_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+            ..Default::default()
         });
         command::transition_image_layout(&device, frame.cmd_buffer, input_image.vk, vk::ImageLayout::TRANSFER_DST_OPTIMAL, vk::ImageLayout::GENERAL);
     }
@@ -299,12 +302,15 @@ impl Render {
              * after specifying th final compute shader destination image as the same
              * format as the swapchain format. Maybe worth measuring perf difference later */
             command::blit_copy(device, frame.cmd_buffer, &command::BlitCopy {
-                width: self.info.width,
-                height: self.info.height,
+                src_width: self.info.width,
+                src_height: self.info.height,
+                dst_width: self.swapchain.as_ref().unwrap().width,
+                dst_height: self.swapchain.as_ref().unwrap().height,
                 src_image: graph_frame.images.get(SWAPCHAIN_OUTPUT).unwrap().vk,
                 dst_image: swapchain_image.unwrap(),
                 src_layout: vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
-                dst_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL
+                dst_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                center: true
             });
 
             command::transition_image_layout(&device, frame.cmd_buffer, swapchain_image.unwrap(), vk::ImageLayout::TRANSFER_DST_OPTIMAL, vk::ImageLayout::PRESENT_SRC_KHR);
@@ -321,12 +327,15 @@ impl Render {
         command::transition_image_layout(&device, frame.cmd_buffer, self.staging_srgb_image.vk, vk::ImageLayout::UNDEFINED, vk::ImageLayout::TRANSFER_DST_OPTIMAL);
 
         command::blit_copy(device, frame.cmd_buffer, &command::BlitCopy {
-            width: self.info.width,
-            height: self.info.height,
+            src_width:  self.info.width,
+            src_height: self.info.height,
+            dst_width:  self.info.width,
+            dst_height: self.info.height,
             src_image: graph_frame.images.get(SWAPCHAIN_OUTPUT).unwrap().vk,
             dst_image: self.staging_srgb_image.vk,
             src_layout: vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
-            dst_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL
+            dst_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+            ..Default::default()
         });
 
         command::transition_image_layout(&device, frame.cmd_buffer, self.staging_srgb_image.vk, vk::ImageLayout::TRANSFER_DST_OPTIMAL, vk::ImageLayout::TRANSFER_SRC_OPTIMAL);
