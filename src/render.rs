@@ -88,7 +88,7 @@ impl Render {
         PipelineGraph::new(&vk_core, graph_info)
     }
 
-    pub fn recreate_graph(&mut self) -> Option<()> {
+    fn recreate_graph(&mut self) -> Option<()> {
         let config_path = self.info.config_path.as_ref().unwrap();
         let config_contents = utils::load_file_contents(&config_path)?;
 
@@ -108,7 +108,7 @@ impl Render {
         Some(())
     }
 
-    pub fn config_changed(&mut self) -> bool {
+    fn config_changed(&mut self) -> bool {
         if self.info.config_path.is_none() {
             return false;
         }
@@ -150,7 +150,7 @@ impl Render {
         });
     }
 
-    pub fn reload_changed_pipelines(&mut self) {
+    fn reload_changed_pipelines(&mut self) {
         let current_modified_shader_times: HashMap<String, u64> = utils::get_modified_times(&self.graph.pipelines);
 
         for (name, last_timestamp) in &self.last_modified_shader_times {
@@ -419,11 +419,12 @@ impl Render {
     pub fn trigger_reloads(&mut self) -> bool {
         let mut full_reload_performed = false;
 
-        // 
+        // If the window has changed, we need to reload the swapchain
         if self.swapchain_rebuilt_required {
             self.rebuild_swapchain();
             self.recreate_graph();
             full_reload_performed = true;
+            self.swapchain_rebuilt_required = false;
         }
 
         // If our configuration has changed, live reload it
@@ -442,7 +443,7 @@ impl Render {
         self.frames[self.frame_index].timer.get_elapsed_ms()
     }
 
-    pub fn rebuild_swapchain(&mut self) {
+    fn rebuild_swapchain(&mut self) {
         let window_size = self.window.as_ref().unwrap().inner_size();
         unsafe {
         self.vk_core.device.device_wait_idle().unwrap();
@@ -451,7 +452,6 @@ impl Render {
             self.info.height = window_size.height;
         }
         self.swapchain.as_mut().unwrap().rebuild(&self.vk_core, window_size.width, window_size.height);
-        self.swapchain_rebuilt_required = false;
         }
     }
 
