@@ -108,9 +108,9 @@ impl Render {
         Some(())
     }
 
-    pub fn reload_changed_config(&mut self) -> Option<()> {
+    pub fn config_changed(&mut self) -> bool {
         if self.info.config_path.is_none() {
-            return None;
+            return false;
         }
         let config_path = self.info.config_path.as_ref().unwrap();
 
@@ -124,20 +124,17 @@ impl Render {
             },
             modified_timestamp => {
                 if modified_timestamp == self.last_modified_config_time {
-                    return None;
+                    return false;
                 }
 
                 self.last_modified_config_time = current_modified_config_time;
-
-                self.recreate_graph();
-
                 self.last_modified_shader_times = utils::get_modified_times(&self.graph.pipelines);
 
-                return Some(());
+                return true;
             }
         };
 
-        None
+        false
     }
 
     pub fn update_ubos(&mut self, time: f32) {
@@ -430,7 +427,8 @@ impl Render {
         }
 
         // If our configuration has changed, live reload it
-        if self.reload_changed_config().is_some() {
+        if self.config_changed() {
+            self.recreate_graph();
             full_reload_performed = true;
         }
 
