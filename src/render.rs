@@ -48,8 +48,9 @@ pub struct Render {
     present_index: u32,
     pub frame_index: usize,
     swapchain: Option<SwapChain>,
-    _window: Option<winit::window::Window>,
+    window: Option<winit::window::Window>,
     pub vk_core: VkCore,
+    pub swapchain_rebuilt_required: bool
 }
 
 impl Render {
@@ -68,7 +69,7 @@ impl Render {
                 f64::from(width),
                 f64::from(height),
             ))
-            .with_resizable(false)
+            .with_resizable(true)
             .build(&event_loop)
             .unwrap()
     }
@@ -85,6 +86,26 @@ impl Render {
         };
 
         PipelineGraph::new(&vk_core, graph_info)
+    }
+
+    pub fn recreate_graph(&mut self) -> Option<()> {
+        let config_path = self.info.config_path.as_ref().unwrap();
+        let config_contents = utils::load_file_contents(&config_path)?;
+
+        let pipeline_config = config_parse(config_contents, self.info.has_input_image)?;
+
+        unsafe {
+        self.vk_core.device.device_wait_idle().unwrap();
+
+        let num_pipelines = pipeline_config.graph_pipelines.len() as u32;
+        let graph = Self::create_graph(&self.vk_core, &self.info, &pipeline_config)?;
+
+        self.graph = graph;
+        self.frames.iter_mut().for_each(|f| f.rebuild_timer(num_pipelines));
+        }
+        self.frame_index = 0;
+
+        Some(())
     }
 
     pub fn reload_changed_config(&mut self) -> Option<()> {
@@ -108,20 +129,8 @@ impl Render {
 
                 self.last_modified_config_time = current_modified_config_time;
 
-                let config_contents = utils::load_file_contents(&config_path)?;
+                self.recreate_graph();
 
-                let pipeline_config = config_parse(config_contents, self.info.has_input_image)?;
-
-                unsafe {
-                self.vk_core.device.device_wait_idle().unwrap();
-
-                let num_pipelines = pipeline_config.graph_pipelines.len() as u32;
-                let graph = Self::create_graph(&self.vk_core, &self.info, &pipeline_config)?;
-
-                self.graph = graph;
-                self.frames.iter_mut().for_each(|f| f.rebuild_timer(num_pipelines));
-                }
-                self.frame_index = 0;
                 self.last_modified_shader_times = utils::get_modified_times(&self.graph.pipelines);
 
                 return Some(());
@@ -302,8 +311,8 @@ impl Render {
              * after specifying th final compute shader destination image as the same
              * format as the swapchain format. Maybe worth measuring perf difference later */
             command::blit_copy(device, frame.cmd_buffer, &command::BlitCopy {
-                src_width: self.info.width,
-                src_height: self.info.height,
+                src_width: if self.info.has_input_image { self.info.width } else { self.swapchain.as_ref().unwrap().width },
+                src_height: if self.info.has_input_image { self.info.height } else { self.swapchain.as_ref().unwrap().height },
                 dst_width: self.swapchain.as_ref().unwrap().width,
                 dst_height: self.swapchain.as_ref().unwrap().height,
                 src_image: graph_frame.images.get(SWAPCHAIN_OUTPUT).unwrap().vk,
@@ -391,15 +400,16 @@ impl Render {
                 .image_indices(&image_indices);
 
             unsafe {
+
             match swapchain.loader.queue_present(self.vk_core.queue, &present_info) {
                 Ok(suboptimal) => {
                     if suboptimal {
-                        self.rebuild_swapchain(self.info.width, self.info.height);
+                        self.swapchain_rebuilt_required = true;
                     }
                 },
                 Err(err) => {
                     if err == vk::Result::ERROR_OUT_OF_DATE_KHR {
-                        self.rebuild_swapchain(self.info.width, self.info.height);
+                        self.swapchain_rebuilt_required = true;
                     }
                 }
             }
@@ -409,14 +419,41 @@ impl Render {
         self.frame_index = (self.frame_index+1)%self.info.num_frames;
     }
 
+    pub fn trigger_reloads(&mut self) -> bool {
+        let mut full_reload_performed = false;
+
+        // 
+        if self.swapchain_rebuilt_required {
+            self.rebuild_swapchain();
+            self.recreate_graph();
+            full_reload_performed = true;
+        }
+
+        // If our configuration has changed, live reload it
+        if self.reload_changed_config().is_some() {
+            full_reload_performed = true;
+        }
+
+        // If any of our shaders have changed, live reload them
+        self.reload_changed_pipelines();
+
+        full_reload_performed
+    }
+
     pub fn last_frame_gpu_times(&mut self) -> String {
         self.frames[self.frame_index].timer.get_elapsed_ms()
     }
 
-    pub fn rebuild_swapchain(&mut self, width: u32, height: u32) {
+    pub fn rebuild_swapchain(&mut self) {
+        let window_size = self.window.as_ref().unwrap().inner_size();
         unsafe {
         self.vk_core.device.device_wait_idle().unwrap();
-        self.swapchain.as_mut().unwrap().rebuild(&self.vk_core, width, height);
+        if !self.info.has_input_image {
+            self.info.width = window_size.width;
+            self.info.height = window_size.height;
+        }
+        self.swapchain.as_mut().unwrap().rebuild(&self.vk_core, window_size.width, window_size.height);
+        self.swapchain_rebuilt_required = false;
         }
     }
 
@@ -473,7 +510,8 @@ impl Render {
             frame_index: 0,
             vk_core: vk_core,
             swapchain: swapchain,
-            _window: window
+            window: window,
+            swapchain_rebuilt_required: false
         }
 
         }

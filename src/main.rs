@@ -123,15 +123,11 @@ fn main() {
         // changing or executing on its resources
         render.wait_for_frame_fence();
 
-        // If our configuration has changed, live reload it
-        if render.reload_changed_config().is_some() {
-            first_run.iter_mut().for_each(|b| *b = true);
+        if render.trigger_reloads() {
             // Clear current line of timers
             eprint!("{TERM_CLEAR}");
+            first_run.iter_mut().for_each(|b| *b = true);
         }
-
-        // If any of our shaders have changed, live reload them
-        render.reload_changed_pipelines();
 
         render.update_ubos(time_since_start.elapsed().as_secs_f32());
 
@@ -179,13 +175,13 @@ fn main() {
             *control_flow = ControlFlow::Poll;
             match event {
                 Event::WindowEvent {
-                    event: WindowEvent::Resized(size),
+                    event: WindowEvent::Resized(_size),
                     ..
                 } => {
                     // This event gets triggered on initial window creation
                     // and we don't want to recreate the swapchain at that point
                     if !first_resize {
-                        render.rebuild_swapchain(size.width, size.height);
+                        render.swapchain_rebuilt_required = true;
                     }
 
                     first_resize = false;
