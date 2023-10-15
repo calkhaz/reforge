@@ -434,6 +434,9 @@ impl Render {
         }
 
         // If any of our shaders have changed, live reload them
+        if full_reload_performed {
+            self.last_modified_shader_times.clear();
+        }
         self.reload_changed_pipelines();
 
         full_reload_performed
