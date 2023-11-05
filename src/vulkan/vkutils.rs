@@ -136,7 +136,7 @@ impl GpuTimer{
 /* Take the parsed configuration and read the shader of each corresponding pipeline
  * We then match up the bindings parsed from the spirv of the shader and the
  * configuration to create the PipelineInfo(s) */
-pub fn synthesize_config(device: Rc<ash::Device>, config: &Config) -> Option<HashMap<String, PipelineInfo>> {
+pub fn synthesize_config(device: Rc<ash::Device>, config: &Config, shader_path: &String) -> Option<HashMap<String, PipelineInfo>> {
     let mut infos: HashMap<String, PipelineInfo> = HashMap::new();
 
     for (pipeline_name, config_bindings) in &config.graph_pipelines {
@@ -151,7 +151,7 @@ pub fn synthesize_config(device: Rc<ash::Device>, config: &Config) -> Option<Has
             }
         };
 
-        let shader_path = format!("shaders/{pipeline_type}.comp");
+        let shader_path = format!("{shader_path}/{pipeline_type}.comp");
 
         let shader = Shader::new(&device, &shader_path)?;
 

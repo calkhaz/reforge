@@ -31,6 +31,7 @@ pub struct RenderInfo {
     pub height: u32,
     pub num_frames: usize,
     pub config_path: Option<String>,
+    pub shader_path: String,
     pub format: vk::Format,
     pub swapchain: bool,
     pub has_input_image: bool
@@ -75,7 +76,7 @@ impl Render {
     }
 
     unsafe fn create_graph(vk_core: &VkCore, info: &RenderInfo, pipeline_config: &Config) -> Option<PipelineGraph> {
-        let pipeline_infos = vkutils::synthesize_config(Rc::clone(&vk_core.device), &pipeline_config)?;
+        let pipeline_infos = vkutils::synthesize_config(Rc::clone(&vk_core.device), &pipeline_config, &info.shader_path)?;
 
         let graph_info = PipelineGraphInfo {
             pipeline_infos: pipeline_infos,

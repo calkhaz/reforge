@@ -60,6 +60,9 @@ pub struct Args {
     #[arg(long, value_name="config", help = "Path to the pipeline configuration file")]
     config: Option<String>,
 
+    #[arg(long, default_value="shaders", value_name="shader-path", help = "Path to the shader directory")]
+    shader_path: String,
+
     #[arg(long, default_value= "2", help = "Number of frame-in-flight to be used when displaying to the swapchain")]
     num_frames: Option<usize>,
 }
@@ -93,6 +96,7 @@ fn main() {
         height: height,
         num_frames: num_frames,
         config_path: args.config,
+        shader_path: args.shader_path,
         format: args.shader_format.unwrap().to_vk_format(),
         swapchain: use_swapchain,
         has_input_image: args.input_file.is_some()
