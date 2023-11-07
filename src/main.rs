@@ -102,7 +102,7 @@ fn main() {
         has_input_image: args.input_file.is_some()
     };
 
-    let mut event_loop = EventLoop::new();
+    let event_loop = if use_swapchain { Some(EventLoop::new()) } else { None };
     let mut render = Render::new(render_info, &event_loop);
 
     let mut first_run = vec![true; num_frames];
@@ -175,7 +175,7 @@ fn main() {
     let mut first_resize = true;
 
     if use_swapchain {
-        event_loop.run_return(|event, _, control_flow| {
+        event_loop.unwrap().run_return(|event, _, control_flow| {
             *control_flow = ControlFlow::Poll;
             match event {
                 Event::WindowEvent {

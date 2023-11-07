@@ -459,8 +459,8 @@ impl Render {
         }
     }
 
-    pub fn new(info: RenderInfo, event_loop: &EventLoop<()>) -> Render {
-        let window = if info.swapchain { Some(Self::create_window(&event_loop, info.width, info.height)) } else { None };
+    pub fn new(info: RenderInfo, event_loop: &Option<EventLoop<()>>) -> Render {
+        let window = if info.swapchain { Some(Self::create_window(&event_loop.as_ref().unwrap(), info.width, info.height)) } else { None };
 
         let pipeline_config = match info.config_path.as_ref() {
             Some(path) => { 
