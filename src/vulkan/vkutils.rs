@@ -7,6 +7,7 @@ use gpu_allocator::vulkan as gpu_alloc_vk;
 use ash::vk;
 use spirv_reflect::types::ReflectDescriptorBinding;
 use spirv_reflect::types::ReflectDescriptorType;
+use spirv_reflect::types::ReflectShaderStageFlags;
 use crate::config::config::ConfigDescriptor;
 use crate::vulkan::core::VkCore;
 use crate::vulkan::shader::ShaderBindings;
@@ -295,6 +296,14 @@ pub fn reflect_desc_to_vk(desc_type: ReflectDescriptorType) -> Option<vk::Descri
         ReflectDescriptorType::Sampler              => Some(vk::DescriptorType::SAMPLER),
         ReflectDescriptorType::UniformBuffer        => Some(vk::DescriptorType::UNIFORM_BUFFER),
         ReflectDescriptorType::StorageBuffer        => Some(vk::DescriptorType::STORAGE_BUFFER),
+        _ => None
+    }
+}
+
+pub fn reflect_stage_to_vk(desc_type: ReflectShaderStageFlags) -> Option<vk::ShaderStageFlags> {
+    match desc_type {
+        ReflectShaderStageFlags::COMPUTE  => Some(vk::ShaderStageFlags::COMPUTE),
+        ReflectShaderStageFlags::FRAGMENT => Some(vk::ShaderStageFlags::FRAGMENT),
         _ => None
     }
 }

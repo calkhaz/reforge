@@ -2,6 +2,7 @@ extern crate spirv_reflect;
 use ash::vk;
 use shaderc::CompilationArtifact;
 use spirv_reflect::types::{ReflectDescriptorType, ReflectDescriptorBinding};
+use crate::vulkan::vkutils;
 
 use std::collections::HashMap;
 
@@ -17,7 +18,8 @@ pub struct ShaderBindings {
 pub struct Shader {
     pub module: vk::ShaderModule,
     pub bindings: ShaderBindings,
-    pub path: String
+    pub path: String,
+    pub stage: vk::ShaderStageFlags
 }
 
 impl Shader {
@@ -26,10 +28,13 @@ impl Shader {
         let spirv_artifact = Self::create_spirv(&path)?;
         let spirv_binary : &[u32] = spirv_artifact.as_binary();
 
+        let (stage, bindings) = Self::reflect_descriptors(spirv_binary)?;
+
         Some(Shader {
             module  : Self::create_module(device, spirv_binary)?,
-            bindings: Self::reflect_descriptors(spirv_binary)?,
-            path: path.to_string()
+            bindings: bindings,
+            path: path.to_string(),
+            stage: stage
         })
     }
 
@@ -85,7 +90,7 @@ impl Shader {
         }
     }
 
-    fn reflect_descriptors(binary: &[u32]) ->  Option<ShaderBindings> {
+    fn reflect_descriptors(binary: &[u32]) ->  Option<(vk::ShaderStageFlags, ShaderBindings)> {
         let module = match spirv_reflect::ShaderModule::load_u32_data(binary) {
             Ok(module) => Some(module),
             Err(e) => { warnln!("{:?}", e); None }
@@ -136,10 +141,10 @@ impl Shader {
             }
         }
 
-        Some(ShaderBindings {
+        Some((vkutils::reflect_stage_to_vk(module.get_shader_stage()).unwrap(), ShaderBindings {
             images: images,
             buffers: buffers,
             ssbos: ssbos
-        })
+        }))
     }
 }
