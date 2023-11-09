@@ -79,7 +79,7 @@ pub struct PipelineGraph {
 struct PipelineGraphFrameInfo<'a> {
     pub pipelines: &'a HashMap<String, Rc<RefCell<Pipeline>>>,
     pub descriptor_pool: vk::DescriptorPool,
-    pub images: &'a HashMap<String, Image>,
+    pub global_images: &'a HashMap<String, Image>,
     pub width: u32,
     pub height: u32,
     pub format: vk::Format,
@@ -187,7 +187,7 @@ impl PipelineGraphFrame {
                 for (image_name, binding) in image_infos {
                     // We only want one FILE_INPUT input image across frames as it will never change
                     if image_name == FILE_INPUT {
-                        let image = &frame_info.images.get(FILE_INPUT).unwrap();
+                        let image = &frame_info.global_images.get(FILE_INPUT).unwrap();
                         descriptor_writes.push(Self::image_write(&image, &mut desc_image_infos, binding, descriptor_set, frame_info.sampler));
                     } else {
                         match images.get(image_name) {
@@ -487,7 +487,7 @@ impl PipelineGraph {
             let graph_frame_info = PipelineGraphFrameInfo {
                 pipelines: &pipelines,
                 descriptor_pool: descriptor_pool,
-                images: &global_images,
+                global_images: &global_images,
                 width: gi.width,
                 height: gi.height,
                 format: gi.format,
