@@ -398,11 +398,10 @@ impl PipelineGraph {
         sizes
     }
 
-    pub unsafe fn build_global_pipeline_data(device: Rc<ash::Device>,
-                                             name: String,
-                                             info: PipelineInfo,
-                                             pool_sizes: &mut HashMap<vk::DescriptorType, u32>,
-                                             num_frames: usize) -> Rc<RefCell<Pipeline>> {
+    pub unsafe fn build_pipeline_layout(device: Rc<ash::Device>,
+                                        info: &PipelineInfo,
+                                        pool_sizes: &mut HashMap<vk::DescriptorType, u32>,
+                                        num_frames: usize) -> PipelineLayout {
         // create descriptor layouts, add descriptor pool sizes, and add pipelines to hashmap
         let layout_bindings = vkutils::create_descriptor_layout_bindings(&info.shader.bindings, num_frames, pool_sizes);
 
@@ -415,6 +414,18 @@ impl PipelineGraph {
             create_pipeline_layout(&vk::PipelineLayoutCreateInfo::builder()
                 .set_layouts(&descriptor_layout), None).unwrap();
 
+        PipelineLayout {
+            vk: pipeline_layout,
+            descriptor_layout: descriptor_layout[0]
+        }
+    }
+
+    pub unsafe fn build_global_pipeline_data(device: Rc<ash::Device>,
+                                             name: String,
+                                             info: PipelineInfo,
+                                             pipeline_layout: PipelineLayout) -> Rc<RefCell<Pipeline>> {
+
+
         let shader_entry_name = CStr::from_bytes_with_nul_unchecked(b"main\0");
         let shader_stage_create_infos = vk::PipelineShaderStageCreateInfo {
             module: info.shader.module,
@@ -424,15 +435,10 @@ impl PipelineGraph {
         };
 
         let pipeline_info = vk::ComputePipelineCreateInfo::builder()
-            .layout(pipeline_layout)
+            .layout(pipeline_layout.vk)
             .stage(shader_stage_create_infos);
 
         let compute_pipeline = device.create_compute_pipelines(vk::PipelineCache::null(), &[pipeline_info.build()], None).unwrap()[0];
-
-        let pipeline_layout = PipelineLayout {
-            vk: pipeline_layout,
-            descriptor_layout: descriptor_layout[0]
-        };
 
         Rc::new(RefCell::new(Pipeline {
             device: Rc::clone(&device),
@@ -459,7 +465,8 @@ impl PipelineGraph {
                 }
             }
 
-            let pipeline = Self::build_global_pipeline_data(Rc::clone(&core.device), name.clone(), info, &mut pool_sizes, gi.num_frames);
+            let pipeline_layout = Self::build_pipeline_layout(Rc::clone(&core.device), &info, &mut pool_sizes, gi.num_frames);
+            let pipeline = Self::build_global_pipeline_data(Rc::clone(&core.device), name.clone(), info, pipeline_layout);
             pipelines.insert(name.to_string(), pipeline);
         }
 
