@@ -352,7 +352,11 @@ impl PipelineGraph {
         let device = &self.device;
         let mut pipeline = self.pipelines.get_mut(name).unwrap().borrow_mut();
 
-        if let Some(shader) = Shader::new(&device, &pipeline.info.shader.path) {
+        if pipeline.info.shader.path.is_none() {
+            return;
+        }
+
+        if let Some(shader) = Shader::from_path(&device, &pipeline.info.shader.path.as_ref().unwrap()) {
             let shader_entry_name = CStr::from_bytes_with_nul_unchecked(b"main\0");
 
             let shader_stage_create_infos = vk::PipelineShaderStageCreateInfo {

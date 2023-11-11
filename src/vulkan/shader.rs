@@ -2,6 +2,7 @@ extern crate spirv_reflect;
 use ash::vk;
 use shaderc::CompilationArtifact;
 use spirv_reflect::types::{ReflectDescriptorType, ReflectDescriptorBinding};
+use crate::utils;
 use crate::vulkan::vkutils;
 
 use std::collections::HashMap;
@@ -18,14 +19,24 @@ pub struct ShaderBindings {
 pub struct Shader {
     pub module: vk::ShaderModule,
     pub bindings: ShaderBindings,
-    pub path: String,
+    pub name: String,
+    pub path: Option<String>,
     pub stage: vk::ShaderStageFlags
 }
 
 impl Shader {
-    pub fn new(device: &ash::Device, path: &str) -> Option<Shader> {
-        // Compile glsl to spirv
-        let spirv_artifact = Self::create_spirv(&path)?;
+    pub fn from_path(device: &ash::Device, path: &String) -> Option<Shader> {
+        let name = std::path::Path::new(&path).file_stem().unwrap().to_str().unwrap();
+        let file_contents = utils::load_file_contents(&path)?;
+
+        let mut shader = Self::from_contents(device, name.to_string(), file_contents)?;
+
+        shader.path = Some(path.clone());
+        Some(shader)
+    }
+
+    pub fn from_contents(device: &ash::Device, name: String, glsl_source: String) -> Option<Shader> {
+        let spirv_artifact = Self::create_spirv(&name, glsl_source)?;
         let spirv_binary : &[u32] = spirv_artifact.as_binary();
 
         let (stage, bindings) = Self::reflect_descriptors(spirv_binary)?;
@@ -33,7 +44,8 @@ impl Shader {
         Some(Shader {
             module  : Self::create_module(device, spirv_binary)?,
             bindings: bindings,
-            path: path.to_string(),
+            name: name,
+            path: None,
             stage: stage
         })
     }
@@ -50,20 +62,13 @@ impl Shader {
         }
     }
 
-    fn create_spirv(path: &str) -> Option<CompilationArtifact> {
-        let glsl_source = crate::utils::load_file_contents(path)?;
-
-        if glsl_source.is_empty() {
-            warnln!("File was empty: {path}");
-            return None
-        }
-
+    fn create_spirv(name: &String, glsl_source: String) -> Option<CompilationArtifact> {
         let compiler = shaderc::Compiler::new().unwrap();
         let options = shaderc::CompileOptions::new().unwrap();
 
         match compiler.compile_into_spirv(&glsl_source.to_owned(),
                                           shaderc::ShaderKind::Compute,
-                                          path,
+                                          &name,
                                           "main",
                                           Some(&options)) {
             Ok(binary) => {

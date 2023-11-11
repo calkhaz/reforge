@@ -9,6 +9,7 @@ use spirv_reflect::types::ReflectDescriptorBinding;
 use spirv_reflect::types::ReflectDescriptorType;
 use spirv_reflect::types::ReflectShaderStageFlags;
 use crate::config::config::ConfigDescriptor;
+use crate::utils;
 use crate::vulkan::core::VkCore;
 use crate::vulkan::shader::ShaderBindings;
 use crate::vulkan::shader::Shader;
@@ -141,10 +142,10 @@ pub fn synthesize_config(device: Rc<ash::Device>, config: &Config, shader_path: 
     let mut infos: HashMap<String, PipelineInfo> = HashMap::new();
 
     for (pipeline_name, config_bindings) in &config.graph_pipelines {
-        let shader = Shader::new(&device, &config_bindings.file_path)?;
+        let shader = Shader::from_path(&device, &config_bindings.file_path)?;
 
         let mut info = PipelineInfo {
-            shader: shader,
+            shader,
             input_images: Vec::new(), output_images: Vec::new(),
             input_ssbos : Vec::new(), output_ssbos : Vec::new()
         };

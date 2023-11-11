@@ -18,10 +18,16 @@ macro_rules! warnln {
 }
 
 pub fn load_file_contents(config_path: &str) -> Option<String> {
-    match std::fs::read_to_string(config_path) {
-        Ok(contents) => Some(contents),
-        Err(e) => { warnln!("Error reading file '{}' : {}", config_path, e); None }
+    let contents = match std::fs::read_to_string(config_path) {
+        Ok(contents) => contents,
+        Err(e) => { warnln!("Error reading file '{}' : {}", config_path, e); return None }
+    };
+
+    if contents.is_empty() {
+        warnln!("File was empty: {config_path}");
+        return None
     }
+    Some(contents)
 }
 
 pub fn get_modified_time(path: &String) -> u64 {
@@ -39,7 +45,9 @@ pub fn get_modified_times(pipelines: &HashMap<String, Rc<RefCell<Pipeline>>>) ->
     let mut timestamps: HashMap<String, u64> = HashMap::new();
 
     for (name, pipeline) in pipelines {
-        timestamps.insert(name.to_string(), get_modified_time(&pipeline.borrow().info.shader.path));
+        if let Some(path) = pipeline.borrow().info.shader.path.as_ref() {
+            timestamps.insert(name.to_string(), get_modified_time(&path));
+        }
     }
 
     timestamps

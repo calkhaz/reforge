@@ -180,7 +180,8 @@ impl Render {
                 // Ex: File was moved or not available, print an error just once if we previously saw it
                 0 => {
                     if 0 != *last_timestamp {
-                        warnln!("Unable to access shader file: {}", self.graph.pipelines.get(name.as_str()).unwrap().borrow().info.shader.path);
+                        let pipeline = self.graph.pipelines.get(name.as_str()).unwrap().borrow();
+                        warnln!("Unable to access shader file: {}", pipeline.info.shader.path.as_ref().unwrap());
                     }
                 }
                 modified_timestamp => {
