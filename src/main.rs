@@ -42,6 +42,9 @@ impl ShaderFormat {
 
 #[derive(clap::Parser)]
 pub struct Args {
+    #[arg(value_name="shader", help = "A single shader to execute instead of a config")]
+    shader_file_path: Option<String>,
+
     #[arg(short='i', long="input-file", help = "File to read from")]
     input_file: Option<String>,
 
@@ -74,6 +77,11 @@ fn main() {
     // Only one frame to be in flight if we aren't using the swapchain
     let num_frames = if use_swapchain { args.num_frames.unwrap() } else { 1 } ;
 
+    if args.config.is_some() && args.shader_file_path.is_some() {
+        warnln!("Cannot specify both a config and shader file");
+        std::process::exit(1);
+    }
+
     imagefileio::init();
 
     let file_decoder = match args.input_file.as_ref() {
@@ -99,7 +107,8 @@ fn main() {
         shader_path: args.shader_path,
         format: args.shader_format.unwrap().to_vk_format(),
         swapchain: use_swapchain,
-        has_input_image: args.input_file.is_some()
+        has_input_image: args.input_file.is_some(),
+        shader_file_path: args.shader_file_path
     };
 
     let event_loop = if use_swapchain { Some(EventLoop::new()) } else { None };

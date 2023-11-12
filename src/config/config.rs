@@ -24,6 +24,7 @@ pub struct GraphPipeline {
     // images and ssbos
     pub inputs : Vec<ConfigDescriptor>,
     pub outputs: Vec<ConfigDescriptor>,
+    pub file_path: String
 }
 
 pub struct PipelineInstance {
@@ -53,8 +54,47 @@ fn get_line_number_and_contents(buffer: &str, mut offset: usize) -> (usize, &str
     (line_number, line_contents, offset)
 }
 
-pub fn parse(contents: String, expects_input: bool) -> Option<Config> {
+// Add shader file paths to the configuration based
+fn add_file_paths(mut config: Config, shader_path: &String) -> Config {
+    for (pipeline_name, pipeline) in &mut config.graph_pipelines {
+        // First we look for pipeline instance that has been specified and use its type
+        // If that does not exist, we assume the specified name is also the type
+        let pipeline_type = {
+            let instance = config.pipeline_instances.get(pipeline_name);
+            match instance {
+                Some(inst) => inst.pipeline_type.clone(),
+                None       => pipeline_name.clone()
+            }
+        };
 
+        pipeline.file_path = format!("{shader_path}/{pipeline_type}.comp");
+    }
+
+    config
+}
+
+pub fn single_shader_parse(path: String, expects_input: bool) -> Config {
+    // Remove path and extension to get the name
+    let name = std::path::Path::new(&path).file_stem().unwrap().to_str().unwrap();
+
+    let mut config = match expects_input {
+        true  => parse(format!("input -> {name} -> output").to_string(), expects_input),
+        false => parse(format!(         "{name} -> output").to_string(), expects_input)
+    }.unwrap();
+
+    // Set the file path on the parsed config
+    config.graph_pipelines.get_mut(name).unwrap().file_path = path.clone();
+
+    config
+}
+
+pub fn parse_file(contents: String, expects_input: bool, shader_path: &String) -> Option<Config> {
+    let mut config = parse(contents, expects_input)?;
+    config = add_file_paths(config, shader_path);
+    Some(config)
+}
+
+fn parse(contents: String, expects_input: bool) -> Option<Config> {
     if contents.trim().is_empty() {
         warnln!("Empty configuration given to parse");
         return None

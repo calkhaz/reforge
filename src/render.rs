@@ -2,7 +2,8 @@ use ash::vk;
 use gpu_allocator as gpu_alloc;
 
 use crate::config::config::Config;
-use crate::config::config::parse as config_parse;
+use crate::config::config::parse_file as config_file_parse;
+use crate::config::config::single_shader_parse as config_single_shader_parse;
 use crate::utils;
 use crate::vulkan::command;
 use crate::vulkan::core::VkCore;
@@ -34,7 +35,8 @@ pub struct RenderInfo {
     pub shader_path: String,
     pub format: vk::Format,
     pub swapchain: bool,
-    pub has_input_image: bool
+    pub has_input_image: bool,
+    pub shader_file_path: Option<String>
 }
 
 pub struct Render {
@@ -89,11 +91,29 @@ impl Render {
         PipelineGraph::new(&vk_core, graph_info)
     }
 
-    fn recreate_graph(&mut self) -> Option<()> {
-        let config_path = self.info.config_path.as_ref().unwrap();
-        let config_contents = utils::load_file_contents(&config_path)?;
+    fn create_config(info: &RenderInfo) -> Option<Config>{
+        match info.config_path.as_ref() {
+            // Read from provided configuration file
+            Some(path) => { 
+                let contents = utils::load_file_contents(&path);
+                if contents.is_none() { warnln!("Empty configuration file"); return None }
+                config_file_parse(contents.unwrap(), info.has_input_image, &info.shader_path)
+            }
+            // No configuration file path provided
+            None => {
+                match info.shader_file_path.as_ref() {
+                    // Create a configuration for just a single provided shader file
+                    Some(path) => { Some(config_single_shader_parse(path.clone(), info.has_input_image)) }
 
-        let pipeline_config = config_parse(config_contents, self.info.has_input_image)?;
+                    // Use the default passthrough configuration
+                    None => { config_file_parse("input -> passthrough -> output".to_string(), true, &info.shader_path) }
+                }
+            }
+        }
+    }
+
+    fn recreate_graph(&mut self) -> Option<()> {
+        let pipeline_config = Self::create_config(&self.info).unwrap();
 
         unsafe {
         self.vk_core.device.device_wait_idle().unwrap();
@@ -462,14 +482,7 @@ impl Render {
     pub fn new(info: RenderInfo, event_loop: &Option<EventLoop<()>>) -> Render {
         let window = if info.swapchain { Some(Self::create_window(&event_loop.as_ref().unwrap(), info.width, info.height)) } else { None };
 
-        let pipeline_config = match info.config_path.as_ref() {
-            Some(path) => { 
-                let contents = utils::load_file_contents(&path);
-                if contents.is_none() { std::process::exit(1); }
-                config_parse(contents.unwrap(), info.has_input_image)
-            }
-            None => config_parse("input -> passthrough -> output".to_string(), true)
-        }.unwrap();
+        let pipeline_config = Self::create_config(&info).unwrap();
 
         unsafe {
         let vk_core = VkCore::new(&window);

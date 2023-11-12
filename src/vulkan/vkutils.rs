@@ -140,20 +140,7 @@ pub fn synthesize_config(device: Rc<ash::Device>, config: &Config, shader_path: 
     let mut infos: HashMap<String, PipelineInfo> = HashMap::new();
 
     for (pipeline_name, config_bindings) in &config.graph_pipelines {
-
-        // First we look for pipeline instance that has been specified and use its type
-        // If that does not exist, we assume the specified name is also the type
-        let pipeline_type = {
-            let instance = config.pipeline_instances.get(pipeline_name);
-            match instance {
-                Some(inst) => inst.pipeline_type.clone(),
-                None       => pipeline_name.clone()
-            }
-        };
-
-        let shader_path = format!("{shader_path}/{pipeline_type}.comp");
-
-        let shader = Shader::new(&device, &shader_path)?;
+        let shader = Shader::new(&device, &config_bindings.file_path)?;
 
         let mut info = PipelineInfo {
             shader: shader,
