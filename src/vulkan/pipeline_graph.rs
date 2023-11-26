@@ -44,14 +44,20 @@ pub struct Pipeline {
     pub name: String,
     pub info: PipelineInfo,
     pub layout: PipelineLayout,
-    pub vk_pipeline: ash::vk::Pipeline
+    pub vk_pipeline: ash::vk::Pipeline,
+
+    // In the case of a graphics pipeline
+    vertex_shader: Option<Shader>,
+    pub render_pass: Option<vk::RenderPass>
 }
 
 pub struct PipelineGraphFrame {
     pub images: HashMap<String, Image>,
     pub buffers: HashMap<String, Buffer>,
     pub ubos: HashMap<String, HashMap<String, BufferBlock>>,
-    pub descriptor_sets: HashMap<String, vk::DescriptorSet>
+    pub descriptor_sets: HashMap<String, vk::DescriptorSet>,
+    pub attachment_image: Option<Image>,
+    pub framebuffer: Option<vk::Framebuffer>
 }
 
 pub struct PipelineGraphInfo {
@@ -73,7 +79,8 @@ pub struct PipelineGraph {
     pub pipelines: HashMap<String, Rc<RefCell<Pipeline>>>,
     images: HashMap<String, Image>, // Top-level images that shouldn't be per-frame
     _sampler: Sampler, // Stored here so it doesn't get dropped
-    descriptor_pool: vk::DescriptorPool
+    descriptor_pool: vk::DescriptorPool,
+    pipeline_type: vk::ShaderStageFlags
 }
 
 struct PipelineGraphFrameInfo<'a> {
@@ -129,6 +136,20 @@ impl PipelineGraphFrame {
         }
     }
 
+    unsafe fn build_framebuffer(core: &VkCore, image: &Image, render_pass: vk::RenderPass, width: u32, height: u32) -> vk::Framebuffer {
+        let info = vk::FramebufferCreateInfo {
+            render_pass,
+            attachment_count: 1,
+            p_attachments: &image.view.unwrap(),
+            width,
+            height,
+            layers: 1,
+            ..Default::default()
+        };
+
+        core.device.create_framebuffer(&info, None).unwrap_or_else(|err| panic!("Error: {}", err))
+    }
+
     unsafe fn new(core: &VkCore, frame_info: &PipelineGraphFrameInfo) -> PipelineGraphFrame {
         let device = &core.device;
         let format = frame_info.format;
@@ -141,6 +162,16 @@ impl PipelineGraphFrame {
         let mut ssbo_sizes: HashMap<String, u32> = HashMap::new();
         // Pipeline -> <buffer-name -> block/buffer>
         let mut ubos: HashMap<String, HashMap<String, BufferBlock>> = HashMap::new();
+
+        let mut attachment_image: Option<Image> = None;
+        let mut framebuffer: Option<vk::Framebuffer> = None;
+
+            for (_, pipeline) in frame_info.pipelines {
+                if let Some(render_pass) = pipeline.borrow().render_pass {
+                    attachment_image = Some(vkutils::create_image(core, "color-attachment".to_string(), format, frame_info.width, frame_info.height));
+                    framebuffer = Some(Self::build_framebuffer(core, &attachment_image.as_ref().unwrap(), render_pass, frame_info.width, frame_info.height));
+                }
+            }
 
         for (_, pipeline) in frame_info.pipelines {
             let info = &pipeline.borrow().info;
@@ -274,7 +305,7 @@ impl PipelineGraphFrame {
         }
 
         PipelineGraphFrame {
-            images, buffers, ubos, descriptor_sets
+            images, buffers, ubos, descriptor_sets, attachment_image, framebuffer
         }
     }
 }
@@ -424,10 +455,10 @@ impl PipelineGraph {
         }
     }
 
-    pub unsafe fn build_global_pipeline_data(device: Rc<ash::Device>,
-                                             name: String,
-                                             info: PipelineInfo,
-                                             pipeline_layout: PipelineLayout) -> Rc<RefCell<Pipeline>> {
+    pub unsafe fn build_compute_pipeline(device: Rc<ash::Device>,
+                                         name: String,
+                                         info: PipelineInfo,
+                                         pipeline_layout: PipelineLayout) -> Rc<RefCell<Pipeline>> {
 
 
         let shader_entry_name = CStr::from_bytes_with_nul_unchecked(b"main\0");
@@ -449,8 +480,108 @@ impl PipelineGraph {
             name: name,
             info: info,
             layout: pipeline_layout,
-            vk_pipeline: compute_pipeline
+            vk_pipeline: compute_pipeline,
+            render_pass: None,
+            vertex_shader: None
         }))
+    }
+
+    pub unsafe fn build_graphics_pipeline(device: Rc<ash::Device>,
+                                          name: String,
+                                          info: PipelineInfo,
+                                          pipeline_layout: PipelineLayout,
+                                          render_pass: vk::RenderPass) -> Rc<RefCell<Pipeline>> {
+
+        // full-screen triangle
+        let vertex_shader_code = r#"
+            #version 450
+
+            vec2 positions[3] = vec2[](
+                vec2(-1.0, -3.0), // top left
+                vec2(-1.0,  1.0), // bottom left
+                vec2( 3.0 , 1.0)  // bottom right
+            );
+
+            void main() {
+                gl_Position = vec4(positions[gl_VertexIndex], 0.0, 1.0);
+            }
+        "#;
+
+        let vertex_shader = Shader::from_contents(&device, "full-screen-triangle".to_string(), vk::ShaderStageFlags::VERTEX, vertex_shader_code.to_string()).unwrap();
+
+        let shader_entry_name = CStr::from_bytes_with_nul_unchecked(b"main\0");
+
+        let shader_stages = vec![
+            vk::PipelineShaderStageCreateInfo {
+                stage: vk::ShaderStageFlags::VERTEX,
+                module: vertex_shader.module,
+                p_name: shader_entry_name.as_ptr(),
+                ..Default::default()
+            },
+            vk::PipelineShaderStageCreateInfo {
+                stage: vk::ShaderStageFlags::FRAGMENT,
+                module: info.shader.module,
+                p_name: shader_entry_name.as_ptr(),
+                ..Default::default()
+            }
+        ];
+
+        let vk_info = vk::GraphicsPipelineCreateInfo {
+            render_pass,
+            layout: pipeline_layout.vk,
+            stage_count: 2,
+            p_stages: shader_stages.as_ptr(),
+            subpass: 0,
+            ..Default::default()
+        };
+
+        let mut pipelines = device.create_graphics_pipelines(vk::PipelineCache::null(), &[vk_info], None)
+            .unwrap_or_else(|err| panic!("Failed to create graphics pipeline: {:?}", err));
+
+        Rc::new(RefCell::new(Pipeline {
+            device: Rc::clone(&device),
+            name: name,
+            info: info,
+            layout: pipeline_layout,
+            vk_pipeline: pipelines.pop().unwrap(),
+            render_pass: Some(render_pass),
+            vertex_shader: Some(vertex_shader)
+        }))
+    }
+
+    pub unsafe fn build_render_pass(device: &ash::Device, format: vk::Format) -> vk::RenderPass {
+        let color_attachment = vk::AttachmentReference {
+            attachment: 0,
+            layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL
+        };
+
+        let attachment_desc = vk::AttachmentDescription {
+            format: format,
+            samples: vk::SampleCountFlags::TYPE_1,
+            load_op: vk::AttachmentLoadOp::DONT_CARE,
+            store_op: vk::AttachmentStoreOp::STORE,
+            //initial_layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+            initial_layout: vk::ImageLayout::UNDEFINED,
+            final_layout: vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+            ..Default::default()
+        };
+
+        let subpass_desc = vk::SubpassDescription {
+            pipeline_bind_point: vk::PipelineBindPoint::GRAPHICS,
+            color_attachment_count: 1,
+            p_color_attachments: &color_attachment,
+            ..Default::default()
+        };
+
+        let info = vk::RenderPassCreateInfo {
+            attachment_count: 1,
+            p_attachments: &attachment_desc,
+            subpass_count: 1,
+            p_subpasses: &subpass_desc,
+            ..Default::default()
+        };
+
+        device.create_render_pass(&info, None).unwrap_or_else(|err| panic!("Error: {}", err))
     }
 
     pub unsafe fn new(core: &VkCore, gi: PipelineGraphInfo) -> Option<PipelineGraph> {
@@ -470,8 +601,17 @@ impl PipelineGraph {
             }
 
             let pipeline_layout = Self::build_pipeline_layout(Rc::clone(&core.device), &info, &mut pool_sizes, gi.num_frames);
-            let pipeline = Self::build_global_pipeline_data(Rc::clone(&core.device), name.clone(), info, pipeline_layout);
-            pipelines.insert(name.to_string(), pipeline);
+
+            if info.shader.stage == vk::ShaderStageFlags::FRAGMENT {
+                assert!(pipelines.len() < 1, "Can only have one pipeline when using fragment shaders");
+                let render_pass = Some(Self::build_render_pass(&core.device, gi.format));
+                let pipeline = Self::build_graphics_pipeline(Rc::clone(&core.device), name.clone(), info, pipeline_layout, render_pass.unwrap());
+                pipelines.insert(name.to_string(), pipeline);
+            }
+            else { // COMPUTE
+                let pipeline = Self::build_compute_pipeline(Rc::clone(&core.device), name.clone(), info, pipeline_layout);
+                pipelines.insert(name.to_string(), pipeline);
+            }
         }
 
         // Create descriptor pool
@@ -510,6 +650,9 @@ impl PipelineGraph {
 
         let flattened_execution = Self::flatten_graph(&pipelines)?;
 
+        // Grab first pipeline in hashmap and use its type for the graph type
+        let pipeline_type = pipelines.iter().next().unwrap().1.borrow().info.shader.stage;
+
         Some(PipelineGraph {
             device: Rc::clone(&core.device),
             frames: frames,
@@ -519,7 +662,8 @@ impl PipelineGraph {
             images: global_images,
             _sampler: sampler,
             descriptor_pool: descriptor_pool,
-            flattened: flattened_execution
+            flattened: flattened_execution,
+            pipeline_type
         })
     }
 }

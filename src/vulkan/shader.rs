@@ -29,14 +29,23 @@ impl Shader {
         let name = std::path::Path::new(&path).file_stem().unwrap().to_str().unwrap();
         let file_contents = utils::load_file_contents(&path)?;
 
-        let mut shader = Self::from_contents(device, name.to_string(), file_contents)?;
+        let shader_type = if path.ends_with(".frag") { vk::ShaderStageFlags::FRAGMENT } else { vk::ShaderStageFlags::COMPUTE };
+
+        let mut shader = Self::from_contents(device, name.to_string(), shader_type, file_contents)?;
 
         shader.path = Some(path.clone());
         Some(shader)
     }
 
-    pub fn from_contents(device: &ash::Device, name: String, glsl_source: String) -> Option<Shader> {
-        let spirv_artifact = Self::create_spirv(&name, glsl_source)?;
+    pub fn from_contents(device: &ash::Device, name: String, shader_type: vk::ShaderStageFlags, glsl_source: String) -> Option<Shader> {
+
+        let shaderc_type = match shader_type {
+            vk::ShaderStageFlags::VERTEX => shaderc::ShaderKind::Vertex,
+            vk::ShaderStageFlags::FRAGMENT => shaderc::ShaderKind::Fragment,
+            _ => shaderc::ShaderKind::Compute
+        };
+
+        let spirv_artifact = Self::create_spirv(&name, shaderc_type, glsl_source)?;
         let spirv_binary : &[u32] = spirv_artifact.as_binary();
 
         let (stage, bindings) = Self::reflect_descriptors(spirv_binary)?;
@@ -62,12 +71,12 @@ impl Shader {
         }
     }
 
-    fn create_spirv(name: &String, glsl_source: String) -> Option<CompilationArtifact> {
+    fn create_spirv(name: &String, shader_type: shaderc::ShaderKind, glsl_source: String) -> Option<CompilationArtifact> {
         let compiler = shaderc::Compiler::new().unwrap();
         let options = shaderc::CompileOptions::new().unwrap();
 
         match compiler.compile_into_spirv(&glsl_source.to_owned(),
-                                          shaderc::ShaderKind::Compute,
+                                          shader_type,
                                           &name,
                                           "main",
                                           Some(&options)) {

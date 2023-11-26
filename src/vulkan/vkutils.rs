@@ -9,7 +9,6 @@ use spirv_reflect::types::ReflectDescriptorBinding;
 use spirv_reflect::types::ReflectDescriptorType;
 use spirv_reflect::types::ReflectShaderStageFlags;
 use crate::config::config::ConfigDescriptor;
-use crate::utils;
 use crate::vulkan::core::VkCore;
 use crate::vulkan::shader::ShaderBindings;
 use crate::vulkan::shader::Shader;
@@ -168,7 +167,16 @@ pub fn synthesize_config(device: Rc<ash::Device>, config: &Config, shader_path: 
                         Some(binding) => {
                             buffer_bindings.push((config_binding.resource_name.clone(), binding.clone()));
                         }
-                        None => { warnln!("Shader {shader_path} has no binding named: {}", config_binding.descriptor_name); return None }
+                        None => {
+                            // We use the same "-> output" syntax for fragment shaders, but they
+                            // output to a framebuffer rather than always needing an output_image.
+                            // This isn't the prettiest solution, but it does work for now
+                            if info.shader.stage == vk::ShaderStageFlags::FRAGMENT && config_binding.descriptor_name == "output_image" {
+                                continue;
+                            }
+                            warnln!("Shader {shader_path} has no binding named: {}", config_binding.descriptor_name);
+                            return None
+                        }
                     }
                 };
             }
@@ -303,8 +311,9 @@ pub fn reflect_desc_to_vk(desc_type: ReflectDescriptorType) -> Option<vk::Descri
 
 pub fn reflect_stage_to_vk(desc_type: ReflectShaderStageFlags) -> Option<vk::ShaderStageFlags> {
     match desc_type {
-        ReflectShaderStageFlags::COMPUTE  => Some(vk::ShaderStageFlags::COMPUTE),
+        ReflectShaderStageFlags::VERTEX   => Some(vk::ShaderStageFlags::VERTEX),
         ReflectShaderStageFlags::FRAGMENT => Some(vk::ShaderStageFlags::FRAGMENT),
+        ReflectShaderStageFlags::COMPUTE  => Some(vk::ShaderStageFlags::COMPUTE),
         _ => None
     }
 }
