@@ -52,6 +52,7 @@ pub struct Pipeline {
 }
 
 pub struct PipelineGraphFrame {
+    device: Rc<ash::Device>,
     pub images: HashMap<String, Image>,
     pub buffers: HashMap<String, Buffer>,
     pub ubos: HashMap<String, HashMap<String, BufferBlock>>,
@@ -80,7 +81,7 @@ pub struct PipelineGraph {
     images: HashMap<String, Image>, // Top-level images that shouldn't be per-frame
     _sampler: Sampler, // Stored here so it doesn't get dropped
     descriptor_pool: vk::DescriptorPool,
-    pipeline_type: vk::ShaderStageFlags
+    pub bind_point: vk::PipelineBindPoint
 }
 
 struct PipelineGraphFrameInfo<'a> {
@@ -101,6 +102,13 @@ pub struct BufferBlock {
 }
 
 impl PipelineGraphFrame {
+    pub fn get_output_image(&self) -> vk::Image {
+        match &self.attachment_image {
+            Some(image) => image.vk,
+            None => self.images.get(SWAPCHAIN_OUTPUT).unwrap().vk
+        }
+    }
+
     unsafe fn image_write(image: &Image, infos: &mut Vec<vk::DescriptorImageInfo>, binding: &ReflectDescriptorBinding, set: vk::DescriptorSet, sampler: &Sampler) -> vk::WriteDescriptorSet {
         infos.push(vk::DescriptorImageInfo {
             image_layout: vk::ImageLayout::GENERAL,
@@ -305,12 +313,15 @@ impl PipelineGraphFrame {
         }
 
         PipelineGraphFrame {
-            images, buffers, ubos, descriptor_sets, attachment_image, framebuffer
+            device: Rc::clone(&device), images, buffers, ubos, descriptor_sets, attachment_image, framebuffer
         }
     }
 }
 
 impl PipelineGraph {
+    pub fn is_compute (&self) -> bool { self.bind_point == vk::PipelineBindPoint::COMPUTE }
+    pub fn is_graphics(&self) -> bool { self.bind_point == vk::PipelineBindPoint::GRAPHICS }
+
     pub fn flatten_graph(pipelines: &HashMap<String, Rc<RefCell<Pipeline>>>) -> Option<Vec<GraphAction>> {
         let mut flattened_graph: Vec<GraphAction> = Vec::new();
         let mut unexecuted_nodes_set: HashSet<String> = pipelines.keys().cloned().collect();
@@ -487,6 +498,8 @@ impl PipelineGraph {
     }
 
     pub unsafe fn build_graphics_pipeline(device: Rc<ash::Device>,
+                                          width: u32,
+                                          height: u32,
                                           name: String,
                                           info: PipelineInfo,
                                           pipeline_layout: PipelineLayout,
@@ -526,12 +539,72 @@ impl PipelineGraph {
             }
         ];
 
+        let rasterization_state = vk::PipelineRasterizationStateCreateInfo {
+            depth_clamp_enable: vk::FALSE,
+            rasterizer_discard_enable: vk::FALSE,
+            polygon_mode: vk::PolygonMode::FILL,
+            cull_mode: vk::CullModeFlags::NONE,
+            front_face: vk::FrontFace::COUNTER_CLOCKWISE,
+            depth_bias_enable: vk::FALSE,
+            line_width: 1.0,
+            ..Default::default()
+        };
+
+        let input_assembly = vk::PipelineInputAssemblyStateCreateInfo {
+            topology: vk::PrimitiveTopology::TRIANGLE_LIST,
+            ..Default::default()
+        };
+
+        let vertex_input_state = vk::PipelineVertexInputStateCreateInfo {
+            ..Default::default()
+        };
+
+        let scissors = vk::Rect2D {
+            offset: vk::Offset2D { x: 0, y: 0 },
+            extent: vk::Extent2D { width, height}
+        };
+
+        let viewport = vk::Viewport {
+            x: 0.0,
+            y: 0.0,
+            width: width as f32,
+            height: height as f32,
+            max_depth: 1.0,
+            ..Default::default()
+        };
+
+        let viewport_state = vk::PipelineViewportStateCreateInfo {
+            viewport_count: 1,
+            scissor_count: 1,
+            p_viewports: &viewport,
+            p_scissors: &scissors,
+            ..Default::default()
+        };
+
+        let blend_attachment = vk::PipelineColorBlendAttachmentState {
+            blend_enable: vk::FALSE,
+            color_write_mask: vk::ColorComponentFlags::RGBA,
+            ..Default::default()
+        };
+
+        let blend_state = vk::PipelineColorBlendStateCreateInfo {
+            logic_op_enable: vk::FALSE,
+            attachment_count: 1,
+            p_attachments: &blend_attachment,
+            ..Default::default()
+        };
+
         let vk_info = vk::GraphicsPipelineCreateInfo {
             render_pass,
             layout: pipeline_layout.vk,
             stage_count: 2,
             p_stages: shader_stages.as_ptr(),
             subpass: 0,
+            p_input_assembly_state: &input_assembly,
+            p_rasterization_state: &rasterization_state,
+            p_viewport_state: &viewport_state,
+            p_color_blend_state: &blend_state,
+            p_vertex_input_state: &vertex_input_state,
             ..Default::default()
         };
 
@@ -589,6 +662,7 @@ impl PipelineGraph {
         let mut pool_sizes: HashMap<vk::DescriptorType, u32> = HashMap::new();
         let mut pipelines: HashMap<String, Rc<RefCell<Pipeline>>> = HashMap::new();
         let mut global_images: HashMap<String, Image> = HashMap::new();
+        let mut bind_point = vk::PipelineBindPoint::COMPUTE;
 
         for (name, info) in gi.pipeline_infos {
             // Build any required global images
@@ -603,12 +677,14 @@ impl PipelineGraph {
             let pipeline_layout = Self::build_pipeline_layout(Rc::clone(&core.device), &info, &mut pool_sizes, gi.num_frames);
 
             if info.shader.stage == vk::ShaderStageFlags::FRAGMENT {
+                bind_point = vk::PipelineBindPoint::GRAPHICS;
                 assert!(pipelines.len() < 1, "Can only have one pipeline when using fragment shaders");
                 let render_pass = Some(Self::build_render_pass(&core.device, gi.format));
-                let pipeline = Self::build_graphics_pipeline(Rc::clone(&core.device), name.clone(), info, pipeline_layout, render_pass.unwrap());
+                let pipeline = Self::build_graphics_pipeline(Rc::clone(&core.device), gi.width, gi.height, name.clone(), info, pipeline_layout, render_pass.unwrap());
                 pipelines.insert(name.to_string(), pipeline);
             }
             else { // COMPUTE
+                bind_point = vk::PipelineBindPoint::COMPUTE;
                 let pipeline = Self::build_compute_pipeline(Rc::clone(&core.device), name.clone(), info, pipeline_layout);
                 pipelines.insert(name.to_string(), pipeline);
             }
@@ -650,9 +726,6 @@ impl PipelineGraph {
 
         let flattened_execution = Self::flatten_graph(&pipelines)?;
 
-        // Grab first pipeline in hashmap and use its type for the graph type
-        let pipeline_type = pipelines.iter().next().unwrap().1.borrow().info.shader.stage;
-
         Some(PipelineGraph {
             device: Rc::clone(&core.device),
             frames: frames,
@@ -663,20 +736,27 @@ impl PipelineGraph {
             _sampler: sampler,
             descriptor_pool: descriptor_pool,
             flattened: flattened_execution,
-            pipeline_type
+            bind_point
         })
     }
 }
 
-fn destroy_pipeline(pipeline: &mut Pipeline, destroy_layouts: bool) {
+fn destroy_pipeline(pipeline: &mut Pipeline, destroy_non_resizables: bool) {
     let device = &pipeline.device;
 
     unsafe {
     device.device_wait_idle().unwrap();
     device.destroy_pipeline(pipeline.vk_pipeline, None);
-    if destroy_layouts  {
+    if destroy_non_resizables {
+        if let Some(render_pass) = pipeline.render_pass {
+            device.destroy_render_pass(render_pass, None)
+        }
         device.destroy_pipeline_layout(pipeline.layout.vk, None);
         device.destroy_descriptor_set_layout(pipeline.layout.descriptor_layout, None);
+
+        if let Some(vertex_shader) = &pipeline.vertex_shader {
+            device.destroy_shader_module(vertex_shader.module, None);
+        }
     }
     device.destroy_shader_module(pipeline.info.shader.module, None);
     }
@@ -685,6 +765,16 @@ fn destroy_pipeline(pipeline: &mut Pipeline, destroy_layouts: bool) {
 impl Drop for Pipeline {
     fn drop(&mut self) {
         destroy_pipeline(self, true);
+    }
+}
+
+impl Drop for PipelineGraphFrame {
+    fn drop(&mut self) {
+        if let Some(framebuffer) = self.framebuffer {
+            unsafe {
+            self.device.destroy_framebuffer(framebuffer, None);
+            }
+        }
     }
 }
 

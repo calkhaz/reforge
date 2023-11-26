@@ -237,6 +237,7 @@ pub unsafe fn create_image(core: &VkCore, name: String, format: vk::Format, widt
     // vulkan complained about it and didn't allow it
     if format != vk::Format::R8G8B8A8_SRGB {
         usage |= vk::ImageUsageFlags::STORAGE;
+        usage |= vk::ImageUsageFlags::COLOR_ATTACHMENT;
     }
 
     let input_image_info = vk::ImageCreateInfo::builder()

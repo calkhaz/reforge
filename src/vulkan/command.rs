@@ -193,9 +193,10 @@ pub fn execute_pipeline_graph(device: &ash::Device, frame: &mut Frame, graph_fra
                     &[*graph_frame.descriptor_sets.get(&pipeline.borrow().name).unwrap()],
                     &[],
                 );
+
                 device.cmd_bind_pipeline(
                     frame.cmd_buffer,
-                    vk::PipelineBindPoint::COMPUTE,
+                    graph.bind_point,
                     pipeline.borrow().vk_pipeline
                 );
 
@@ -205,7 +206,24 @@ pub fn execute_pipeline_graph(device: &ash::Device, frame: &mut Frame, graph_fra
                                            frame.timer.query_pool,
                                            frame.timer.start(&pipeline.borrow().name));
 
-                device.cmd_dispatch(frame.cmd_buffer, dispatch_x, dispatch_y, 1);
+                if graph.is_compute() {
+                    device.cmd_dispatch(frame.cmd_buffer, dispatch_x, dispatch_y, 1);
+                }
+                else {
+                    // Draw our full screen triangle
+                    let rp_info = vk::RenderPassBeginInfo {
+                        render_pass: pipeline.borrow().render_pass.unwrap(),
+                        framebuffer: graph_frame.framebuffer.unwrap(),
+                        render_area: vk::Rect2D { offset: vk::Offset2D{x: 0, y: 0},
+                                                  extent: vk::Extent2D { width: graph.width, height: graph.height } },
+
+                        ..Default::default()
+                    };
+
+                    device.cmd_begin_render_pass(frame.cmd_buffer, &rp_info, vk::SubpassContents::INLINE);
+                    device.cmd_draw(frame.cmd_buffer, 3, 1, 0, 0);
+                    device.cmd_end_render_pass(frame.cmd_buffer);
+                }
 
                 // Stop timer
                 device.cmd_write_timestamp(frame.cmd_buffer,

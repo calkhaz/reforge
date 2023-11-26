@@ -316,11 +316,15 @@ impl Render {
                                     0, // first-query-idx
                                     frame.timer.query_pool_size);
 
-        command::transition_image_layout(&device, frame.cmd_buffer, graph_frame.images.get(SWAPCHAIN_OUTPUT).unwrap().vk, vk::ImageLayout::UNDEFINED, vk::ImageLayout::GENERAL);
+        if self.graph.is_compute() {
+            command::transition_image_layout(&device, frame.cmd_buffer, graph_frame.get_output_image(), vk::ImageLayout::UNDEFINED, vk::ImageLayout::GENERAL);
+        }
 
         command::execute_pipeline_graph(&device, frame, graph_frame, &self.graph);
 
-        command::transition_image_layout(&device, frame.cmd_buffer, graph_frame.images.get(SWAPCHAIN_OUTPUT).unwrap().vk, vk::ImageLayout::GENERAL, vk::ImageLayout::TRANSFER_SRC_OPTIMAL);
+        if self.graph.is_compute() {
+            command::transition_image_layout(&device, frame.cmd_buffer, graph_frame.get_output_image(), vk::ImageLayout::GENERAL, vk::ImageLayout::TRANSFER_SRC_OPTIMAL);
+        }
 
         if self.swapchain.is_some() {
             command::transition_image_layout(&device, frame.cmd_buffer, swapchain_image.unwrap(), vk::ImageLayout::UNDEFINED, vk::ImageLayout::TRANSFER_DST_OPTIMAL);
@@ -334,7 +338,7 @@ impl Render {
                 src_height: if self.info.has_input_image { self.info.height } else { self.swapchain.as_ref().unwrap().height },
                 dst_width: self.swapchain.as_ref().unwrap().width,
                 dst_height: self.swapchain.as_ref().unwrap().height,
-                src_image: graph_frame.images.get(SWAPCHAIN_OUTPUT).unwrap().vk,
+                src_image: graph_frame.get_output_image(),
                 dst_image: swapchain_image.unwrap(),
                 src_layout: vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
                 dst_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
@@ -359,7 +363,7 @@ impl Render {
             src_height: self.info.height,
             dst_width:  self.info.width,
             dst_height: self.info.height,
-            src_image: graph_frame.images.get(SWAPCHAIN_OUTPUT).unwrap().vk,
+            src_image: graph_frame.get_output_image(),
             dst_image: self.staging_srgb_image.vk,
             src_layout: vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
             dst_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
