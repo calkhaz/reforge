@@ -400,50 +400,32 @@ impl PipelineGraph {
         }
 
         if let Some(shader) = Shader::from_path(&device, &pipeline.info.shader.path.as_ref().unwrap()) {
-            if is_compute {
-                let shader_entry_name = CStr::from_bytes_with_nul_unchecked(b"main\0");
-
-                let shader_stage_create_infos = vk::PipelineShaderStageCreateInfo {
-                    module: shader.module,
-                    p_name: shader_entry_name.as_ptr(),
-                    stage: vk::ShaderStageFlags::COMPUTE,
-                    ..Default::default()
-                };
-                let pipeline_info = vk::ComputePipelineCreateInfo::builder()
-                    .layout(pipeline.layout.vk)
-                    .stage(shader_stage_create_infos);
-
-                // In some cases, the spirv code compiles but we fail to create the pipeline due to
-                // other issues, which can still be related to the shader code being wrong or
-                // incompatible with current configurations
-                match device.create_compute_pipelines(vk::PipelineCache::null(), &[pipeline_info.build()], None) {
-                    Ok(vk_pipeline) =>  {
-                        destroy_pipeline(&mut *pipeline, false);
-                        pipeline.vk_pipeline = vk_pipeline[0];
-                        pipeline.info.shader.module = shader.module;
-                    },
-                    Err(error) => {
-                        eprintln!("{:?}", error);
-                    }
-                }
+            let vk_pipeline = if is_compute {
+                Self::build_vk_compute_pipeline(&device,
+                                                shader.module,
+                                                pipeline.layout.vk)
             }
             else {
-                let vk_pipeline = Self::build_vk_graphics_pipeline(&device,
-                                                                   self.width,
-                                                                   self.height,
-                                                                   pipeline.vertex_shader.as_ref().unwrap().module,
-                                                                   shader.module,
-                                                                   pipeline.layout.vk,
-                                                                   pipeline.render_pass.unwrap());
-                match vk_pipeline {
-                    Ok(vk_pipeline) => {
-                        destroy_pipeline(&mut *pipeline, false);
-                        pipeline.vk_pipeline = vk_pipeline;
-                        pipeline.info.shader.module = shader.module;
-                    }
-                    Err(error) => {
-                        eprintln!("{:?}", error);
-                    }
+                Self::build_vk_graphics_pipeline(&device,
+                                                 self.width,
+                                                 self.height,
+                                                 pipeline.vertex_shader.as_ref().unwrap().module,
+                                                 shader.module,
+                                                 pipeline.layout.vk,
+                                                 pipeline.render_pass.unwrap())
+            };
+
+            // In some cases, the spirv code compiles but we fail to create the pipeline due to
+            // other issues, which can still be related to the shader code being wrong or
+            // incompatible with current configurations
+            match vk_pipeline {
+                Ok(vk_pipeline) =>  {
+                    destroy_pipeline(&mut *pipeline, false);
+                    pipeline.vk_pipeline = vk_pipeline;
+                    pipeline.info.shader.module = shader.module;
+                },
+                Err(error) => {
+                    eprintln!("{:?}", error);
                 }
             }
         }
@@ -488,35 +470,34 @@ impl PipelineGraph {
         }
     }
 
-    pub unsafe fn build_compute_pipeline(device: Rc<ash::Device>,
-                                         name: String,
-                                         info: PipelineInfo,
-                                         pipeline_layout: PipelineLayout) -> Rc<RefCell<Pipeline>> {
+    pub unsafe fn build_vk_compute_pipeline(device: &ash::Device,
+                                            shader: vk::ShaderModule,
+                                            pipeline_layout: vk::PipelineLayout) -> Result<vk::Pipeline, String> {
 
 
         let shader_entry_name = CStr::from_bytes_with_nul_unchecked(b"main\0");
         let shader_stage_create_infos = vk::PipelineShaderStageCreateInfo {
-            module: info.shader.module,
+            module: shader,
             p_name: shader_entry_name.as_ptr(),
             stage: vk::ShaderStageFlags::COMPUTE,
             ..Default::default()
         };
 
-        let pipeline_info = vk::ComputePipelineCreateInfo::builder()
-            .layout(pipeline_layout.vk)
-            .stage(shader_stage_create_infos);
-
-        let compute_pipeline = device.create_compute_pipelines(vk::PipelineCache::null(), &[pipeline_info.build()], None).unwrap()[0];
-
-        Rc::new(RefCell::new(Pipeline {
-            device: Rc::clone(&device),
-            name: name,
-            info: info,
+        let vk_info = vk::ComputePipelineCreateInfo {
             layout: pipeline_layout,
-            vk_pipeline: compute_pipeline,
-            render_pass: None,
-            vertex_shader: None
-        }))
+            stage: shader_stage_create_infos,
+            ..Default::default()
+        };
+
+        match device.create_compute_pipelines(vk::PipelineCache::null(), &[vk_info], None) {
+            Ok(pipelines) => {
+                Ok(pipelines[0])
+            },
+            Err(err) => {
+                Err(format!("Failed to create graphics pipeline: {:?}", err))
+            }
+        }
+
     }
 
     unsafe fn build_vertex_shader(device: &ash::Device) -> Shader {
@@ -707,7 +688,8 @@ impl PipelineGraph {
                                                                    vertex_shader.as_ref().unwrap().module,
                                                                    info.shader.module,
                                                                    pipeline_layout.vk,
-                                                                   render_pass.unwrap()).unwrap();
+                                                                   render_pass.unwrap()).
+                                                                   unwrap_or_else(|err| panic!("Error: {}", err));
 
                 let pipeline = Rc::new(RefCell::new(Pipeline {
                     device: Rc::clone(&core.device),
@@ -723,7 +705,21 @@ impl PipelineGraph {
             }
             else { // COMPUTE
                 bind_point = vk::PipelineBindPoint::COMPUTE;
-                let pipeline = Self::build_compute_pipeline(Rc::clone(&core.device), name.clone(), info, pipeline_layout);
+                let vk_pipeline = Self::build_vk_compute_pipeline(&core.device,
+                                                                  info.shader.module,
+                                                                  pipeline_layout.vk).
+                                                                  unwrap_or_else(|err| panic!("Error: {}", err));
+
+                let pipeline = Rc::new(RefCell::new(Pipeline {
+                    device: Rc::clone(&core.device),
+                    name: name.clone(),
+                    info,
+                    layout: pipeline_layout,
+                    vk_pipeline,
+                    render_pass: None,
+                    vertex_shader: None
+                }));
+
                 pipelines.insert(name.to_string(), pipeline);
             }
         }

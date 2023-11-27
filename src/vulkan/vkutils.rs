@@ -229,6 +229,7 @@ pub unsafe fn create_buffer(core: &VkCore,
     Buffer{device: Rc::clone(&core.device), allocator: Rc::clone(&allocator), vk: buffer, allocation: allocation, mapped_data: mapped_data}
 }
 
+// TODO: Don't be lazy about usage here
 pub unsafe fn create_image(core: &VkCore, name: String, format: vk::Format, width: u32, height: u32) -> Image {
 
     let mut usage = vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::TRANSFER_SRC | vk::ImageUsageFlags::SAMPLED;
