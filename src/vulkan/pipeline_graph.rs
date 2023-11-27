@@ -320,7 +320,6 @@ impl PipelineGraphFrame {
 
 impl PipelineGraph {
     pub fn is_compute (&self) -> bool { self.bind_point == vk::PipelineBindPoint::COMPUTE }
-    pub fn is_graphics(&self) -> bool { self.bind_point == vk::PipelineBindPoint::GRAPHICS }
 
     pub fn flatten_graph(pipelines: &HashMap<String, Rc<RefCell<Pipeline>>>) -> Option<Vec<GraphAction>> {
         let mut flattened_graph: Vec<GraphAction> = Vec::new();
