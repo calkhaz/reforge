@@ -5,14 +5,14 @@ use std::collections::HashMap;
 pub struct Pipeline {
     pub name: String,
     pub pipeline_type: String,
-    pub parameters: HashMap<String, Box<ParamValue>>
+    pub parameters: HashMap<String, ParamValue>
 }
 
 #[derive(Debug)]
 pub enum ParamValue {
     Number(i32),
-    //Float(f32),
-    //Bool(bool),
+    Float(f32),
+    Bool(bool),
     //Error,
 }
 

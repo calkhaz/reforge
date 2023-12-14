@@ -28,7 +28,8 @@ pub struct GraphPipeline {
 }
 
 pub struct PipelineInstance {
-    pub pipeline_type: String
+    pub pipeline_type: String,
+    pub parameters: HashMap<String, ast::ParamValue>
 }
 
 pub struct Config {
@@ -189,7 +190,8 @@ fn parse(contents: String, expects_input: bool) -> Option<Config> {
                 }
             },
             ast::Expr::Pipeline(pipeline) => {
-                config.pipeline_instances.insert(pipeline.name, PipelineInstance {pipeline_type: pipeline.pipeline_type});
+                config.pipeline_instances.insert(pipeline.name, PipelineInstance {pipeline_type: pipeline.pipeline_type,
+                                                                                  parameters: pipeline.parameters});
             }
             _ => {}
         };
