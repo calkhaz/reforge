@@ -1,3 +1,4 @@
+
 use std::ffi::{CStr, CString, c_void};
 use std::os::raw::c_int;
 use std::os::raw::c_char;
@@ -49,6 +50,16 @@ impl AvOk<c_int> for c_int {
 
 impl<T> AvOk<*mut T> for *mut T {
     fn is_av_ok(&self, msg: &str) -> Result<*mut T, String> {
+        if (*self).is_null() {
+            return Err(format!("[FFmpeg]: {msg}"))
+        }
+
+        Ok(*self)
+    }
+}
+
+impl<T> AvOk<*const T> for *const T {
+    fn is_av_ok(&self, msg: &str) -> Result<*const T, String> {
         if (*self).is_null() {
             return Err(format!("[FFmpeg]: {msg}"))
         }
@@ -135,15 +146,14 @@ impl ImageFileDecoder {
         (*packet).data = std::ptr::null_mut();
         (*packet).size = 0;
 
-        // Read the packet
+        // Read the next encoded frame from the input file into packet
         ffmpeg::av_read_frame(self.format_ctx, packet).is_av_ok("Failed to read packet")?;
 
-        let mut got_frame: i32 = 0;
-        ffmpeg::avcodec_decode_video2(self.codec_ctx, frame, &mut got_frame, packet).is_av_ok("Error decoding into frame")?;
+        // Send the encoded packet to the decoder
+        ffmpeg::avcodec_send_packet(self.codec_ctx, packet).is_av_ok("Error sending packet to frame")?;
 
-        if got_frame == 0 {
-            return Err("Could not decompress into frame".to_string());
-        }
+        // Get the unencoded data as an frame we can work with
+        ffmpeg::avcodec_receive_frame(self.codec_ctx, frame).is_av_ok("Failed to receive frame")?;
 
         let w = (*frame).width;
         let h = (*frame).height;
@@ -153,6 +163,7 @@ impl ImageFileDecoder {
              w, h, (*self.codec_ctx).pix_fmt,
              scale_width as i32, scale_height as i32, ffmpeg::AVPixelFormat::AV_PIX_FMT_RGBA,
              ffmpeg::SWS_LANCZOS, ptr::null_mut(), ptr::null_mut(), ptr::null_mut());
+
 
          if sws_context.is_null() {
              panic!("Failed to create scaling context");
@@ -179,7 +190,7 @@ impl ImageFileDecoder {
 }
 
 impl ImageFileEncoder {
-    unsafe fn create_codec_context(&self, codec: *mut ffmpeg::AVCodec,) -> Result<*mut ffmpeg::AVCodecContext, String> {
+    unsafe fn create_codec_context(&self, codec: *const ffmpeg::AVCodec,) -> Result<*mut ffmpeg::AVCodecContext, String> {
         // Create a codec context
         let codec_context = ffmpeg::avcodec_alloc_context3(codec)
             .is_av_ok("Failed to allocate codec context")?;
@@ -194,7 +205,7 @@ impl ImageFileEncoder {
         Ok(codec_context)
     }
 
-    unsafe fn create_format_context(&self, codec: *mut ffmpeg::AVCodec) -> Result<*mut ffmpeg::AVFormatContext, String> {
+    unsafe fn create_format_context(&self, codec: *const ffmpeg::AVCodec) -> Result<*mut ffmpeg::AVFormatContext, String> {
         let format_context = ffmpeg::avformat_alloc_context().is_av_ok("Failed to allocate format context")?;
     
         (*format_context).oformat = ffmpeg::av_guess_format(self.input_format_name.as_ptr(), std::ptr::null(), std::ptr::null()).is_av_ok("Could not find format name")?;
@@ -203,7 +214,7 @@ impl ImageFileEncoder {
         Ok(format_context)
     }
 
-    unsafe fn create_stream(&self, format_context: *mut ffmpeg::AVFormatContext, codec: *mut ffmpeg::AVCodec)
+    unsafe fn create_stream(&self, format_context: *mut ffmpeg::AVFormatContext, codec: *const ffmpeg::AVCodec)
         -> Result<*mut ffmpeg::AVStream, String> {
 
         let stream = ffmpeg::avformat_new_stream(format_context, codec).is_av_ok("Failed to open stream")?;
