@@ -169,15 +169,15 @@ impl Render {
         let write_to_buffer = |value_str: &String, ptr: *mut u8, block_type: spirv_reflect::types::ReflectTypeFlags | {
             match block_type {
                 spirv_reflect::types::ReflectTypeFlags::FLOAT => {
-                    let value = value_str.parse::<f32>().unwrap_or_else(|e| { eprintln!("Failed to convert: {}", e); 0.0 });
+                    let value = value_str.parse::<f32>().unwrap_or_else(|e| { warnln!("Failed to convert: {}", e); 0.0 });
                     unsafe { std::ptr::copy_nonoverlapping(&value, ptr as *mut f32, 1); }
                 },
                 spirv_reflect::types::ReflectTypeFlags::INT => {
-                    let value = value_str.parse::<i32>().unwrap_or_else(|e| { eprintln!("Failed to convert: {}", e); 0 });
+                    let value = value_str.parse::<i32>().unwrap_or_else(|e| { warnln!("Failed to convert: {}", e); 0 });
                     unsafe { std::ptr::copy_nonoverlapping(&value, ptr as *mut i32, 1); }
                 },
                 spirv_reflect::types::ReflectTypeFlags::BOOL => {
-                    let value = value_str.parse::<bool>().unwrap_or_else(|e| { eprintln!("Failed to convert: {}", e); false });
+                    let value = value_str.parse::<bool>().unwrap_or_else(|e| { warnln!("Failed to convert: {}", e); false });
                     unsafe { std::ptr::copy_nonoverlapping(&value, ptr as *mut bool, 1); }
                 },
                 _ => {}

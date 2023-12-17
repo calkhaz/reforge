@@ -424,7 +424,7 @@ impl PipelineGraph {
                     pipeline.info.shader.module = shader.module;
                 },
                 Err(error) => {
-                    eprintln!("{:?}", error);
+                    warnln!("{:?}", error);
                 }
             }
         }
