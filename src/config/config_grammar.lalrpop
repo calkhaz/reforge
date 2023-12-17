@@ -1,6 +1,5 @@
 use std::str::FromStr;
 use std::collections::HashMap;
-use crate::config::ast::ParamValue;
 use crate::config::ast::Expr;
 use crate::config::ast::Pipeline;
 
@@ -47,12 +46,12 @@ PipelineField: Pipeline = {
     <name:Str> ":" <pipeline_type:Str> <parameters:PipelineParams> => Pipeline{name, pipeline_type, parameters}
 };
 
-PipelineParams: HashMap<String, ParamValue> = {
+PipelineParams: HashMap<String, String> = {
      "{" <map:ParamFieldList> "}" => map,
      "{}" => HashMap::new()
 };
 
-ParamFieldList: HashMap<String, ParamValue> = {
+ParamFieldList: HashMap<String, String> = {
     <head:ParamField> <tail:("," ParamField)*> => {
         let mut result = HashMap::new();
         result.insert(head.0, head.1);
@@ -64,7 +63,7 @@ ParamFieldList: HashMap<String, ParamValue> = {
     }
 };
 
-ParamField: (String, ParamValue) = {
+ParamField: (String, String) = {
     <key:Str> ":" <value:ParamValueOp> => (key, value),
 };
 
@@ -73,10 +72,10 @@ BoolLiteral: bool = {
     "false" => false,
 };
 
-ParamValueOp: ParamValue = {
-    r"[0-9]+"           => ParamValue::Number(i32 ::from_str(<>).unwrap()),
-    r"-?[0-9]+\.[0-9]+" => ParamValue::Float (f32 ::from_str(<>).unwrap()),
-    BoolLiteral         => ParamValue::Bool(<>),
+ParamValueOp: String = {
+    <val:r"[0-9]+">           => val.to_string(),
+    <val:r"-?[0-9]+\.[0-9]+"> => val.to_string(),
+    <val:BoolLiteral>         => val.to_string(),
 };
 
 // C-like identifier + '-'

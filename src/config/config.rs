@@ -29,7 +29,7 @@ pub struct GraphPipeline {
 
 pub struct PipelineInstance {
     pub pipeline_type: String,
-    pub parameters: HashMap<String, ast::ParamValue>
+    pub parameters: HashMap<String, String> // param-key -> param-value (float/bool/int in string form)
 }
 
 pub struct Config {

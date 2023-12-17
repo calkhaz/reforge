@@ -1,2 +1,2 @@
 pub mod config;
-mod ast;
+pub mod ast;

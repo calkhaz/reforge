@@ -88,7 +88,13 @@ impl Render {
             num_frames: info.num_frames
         };
 
-        PipelineGraph::new(&vk_core, graph_info)
+        let mut graph = PipelineGraph::new(&vk_core, graph_info)?;
+
+        for (pipeline_name, instance) in &pipeline_config.pipeline_instances {
+            Self::initialize_ubos(&mut graph, pipeline_name, &instance.parameters);
+        }
+
+        Some(graph)
     }
 
     fn create_config(info: &RenderInfo) -> Option<Config>{
@@ -113,7 +119,7 @@ impl Render {
     }
 
     fn recreate_graph(&mut self) -> Option<()> {
-        let pipeline_config = Self::create_config(&self.info).unwrap();
+        let pipeline_config = Self::create_config(&self.info)?;
 
         unsafe {
         self.vk_core.device.device_wait_idle().unwrap();
@@ -156,6 +162,51 @@ impl Render {
         };
 
         false
+    }
+
+    pub fn initialize_ubos(graph: &mut PipelineGraph, pipeline_name: &String, parameters: &HashMap<String, String>) {
+
+        let write_to_buffer = |value_str: &String, ptr: *mut u8, block_type: spirv_reflect::types::ReflectTypeFlags | {
+            match block_type {
+                spirv_reflect::types::ReflectTypeFlags::FLOAT => {
+                    let value = value_str.parse::<f32>().unwrap_or_else(|e| { eprintln!("Failed to convert: {}", e); 0.0 });
+                    unsafe { std::ptr::copy_nonoverlapping(&value, ptr as *mut f32, 1); }
+                },
+                spirv_reflect::types::ReflectTypeFlags::INT => {
+                    let value = value_str.parse::<i32>().unwrap_or_else(|e| { eprintln!("Failed to convert: {}", e); 0 });
+                    unsafe { std::ptr::copy_nonoverlapping(&value, ptr as *mut i32, 1); }
+                },
+                spirv_reflect::types::ReflectTypeFlags::BOOL => {
+                    let value = value_str.parse::<bool>().unwrap_or_else(|e| { eprintln!("Failed to convert: {}", e); false });
+                    unsafe { std::ptr::copy_nonoverlapping(&value, ptr as *mut bool, 1); }
+                },
+                _ => {}
+            };
+        };
+
+        for frame in &mut graph.frames {
+            if let Some(ubo) = frame.ubos.get_mut(pipeline_name) {
+                for (buffer_member_name, buffer_block) in ubo {
+                    if buffer_member_name == "_rf_time" {
+                        continue;
+                    }
+
+                    unsafe {
+                    let ptr = buffer_block.buffer.mapped_data.offset(buffer_block.offset as isize);
+
+                    if let Some(param_value) = parameters.get(buffer_member_name) {
+                        write_to_buffer(param_value, ptr, buffer_block.block_type);
+                    }
+                    else {
+                        let value = 0;
+                        std::ptr::copy_nonoverlapping(&value, ptr as *mut u8, buffer_block.size as usize);
+                    }
+                    }
+
+
+                }
+            }
+        }
     }
 
     pub fn update_ubos(&mut self, time: f32) {
@@ -448,15 +499,13 @@ impl Render {
         // If the window has changed, we need to reload the swapchain
         if self.swapchain_rebuilt_required {
             self.rebuild_swapchain();
-            self.recreate_graph();
-            full_reload_performed = true;
+            full_reload_performed = self.recreate_graph().is_some();
             self.swapchain_rebuilt_required = false;
         }
 
         // If our configuration has changed, live reload it
         if self.config_changed() {
-            self.recreate_graph();
-            full_reload_performed = true;
+            full_reload_performed = self.recreate_graph().is_some();
         }
 
         // If any of our shaders have changed, live reload them
