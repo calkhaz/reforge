@@ -367,7 +367,7 @@ impl PipelineGraph {
                 let input_nodes = get_input_node_names(&pipeline.as_ref().borrow());
 
                 // If all input dependencies have been executed, this node is ready to execute
-                let ready_to_execute = !input_nodes.iter().any(|n| unexecuted_nodes_set.contains(n));
+                let ready_to_execute = !input_nodes.iter().any(|n| unexecuted_nodes.contains(n));
 
                 if ready_to_execute {
                     unexecuted_nodes_set.remove(node);
