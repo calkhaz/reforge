@@ -144,7 +144,7 @@ pub fn synthesize_config(device: Rc<ash::Device>, config: &Config, shader_path: 
         let shader = Shader::from_path(&device, &config_bindings.file_path)?;
 
         let mut info = PipelineInfo {
-            shader,
+            shader: Rc::new(RefCell::new(shader)),
             input_images: Vec::new(), output_images: Vec::new(),
             input_ssbos : Vec::new(), output_ssbos : Vec::new()
         };
@@ -156,12 +156,12 @@ pub fn synthesize_config(device: Rc<ash::Device>, config: &Config, shader_path: 
             let mut buffer_bindings: Vec<(String, ReflectDescriptorBinding)> = Vec::new();
 
             for config_binding in config_bindings {
-                match info.shader.bindings.images.get(&config_binding.descriptor_name) {
+                match info.shader.borrow().bindings.images.get(&config_binding.descriptor_name) {
                     // Try to find a matching image descriptor
                     Some(binding) => {
                         image_bindings.push((config_binding.resource_name.clone(), binding.clone()));
                     },
-                    None => match info.shader.bindings.ssbos.get(&config_binding.descriptor_name) {
+                    None => match info.shader.borrow().bindings.ssbos.get(&config_binding.descriptor_name) {
 
                         // Try to find a matching buffer descriptor if no image descriptor was found
                         Some(binding) => {
@@ -171,7 +171,7 @@ pub fn synthesize_config(device: Rc<ash::Device>, config: &Config, shader_path: 
                             // We use the same "-> output" syntax for fragment shaders, but they
                             // output to a framebuffer rather than always needing an output_image.
                             // This isn't the prettiest solution, but it does work for now
-                            if info.shader.stage == vk::ShaderStageFlags::FRAGMENT && config_binding.descriptor_name == "output_image" {
+                            if info.shader.borrow().stage == vk::ShaderStageFlags::FRAGMENT && config_binding.descriptor_name == "output_image" {
                                 continue;
                             }
                             warnln!("Shader {shader_path} has no binding named: {}", config_binding.descriptor_name);

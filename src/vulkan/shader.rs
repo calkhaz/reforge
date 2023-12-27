@@ -16,6 +16,7 @@ pub struct ShaderBindings {
     pub ssbos: HashMap<String, ReflectDescriptorBinding>
 }
 
+#[derive(Debug)]
 pub struct Shader {
     pub module: vk::ShaderModule,
     pub bindings: ShaderBindings,

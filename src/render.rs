@@ -232,7 +232,7 @@ impl Render {
                 0 => {
                     if 0 != *last_timestamp {
                         let pipeline = self.graph.pipelines.get(name.as_str()).unwrap().borrow();
-                        warnln!("Unable to access shader file: {}", pipeline.info.shader.path.as_ref().unwrap());
+                        warnln!("Unable to access shader file: {}", pipeline.info.shader.borrow().path.as_ref().unwrap());
                     }
                 }
                 modified_timestamp => {

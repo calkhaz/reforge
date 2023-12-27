@@ -45,7 +45,7 @@ pub fn get_modified_times(pipelines: &HashMap<String, Rc<RefCell<Pipeline>>>) ->
     let mut timestamps: HashMap<String, u64> = HashMap::new();
 
     for (name, pipeline) in pipelines {
-        if let Some(path) = pipeline.borrow().info.shader.path.as_ref() {
+        if let Some(path) = pipeline.borrow().info.shader.borrow().path.as_ref() {
             timestamps.insert(name.to_string(), get_modified_time(&path));
         }
     }
