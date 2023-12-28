@@ -82,7 +82,7 @@ pub struct PipelineGraph {
 }
 
 struct PipelineGraphFrameInfo<'a> {
-    pub pipelines: &'a HashMap<String, Rc<RefCell<Pipeline>>>,
+    pub ordered_pipelines: &'a Vec<Vec<Rc<RefCell<Pipeline>>>>,
     pub descriptor_pool: vk::DescriptorPool,
     pub global_images: &'a HashMap<String, Image>,
     pub width: u32,
@@ -172,148 +172,155 @@ impl PipelineGraphFrame {
         let mut attachment_image: Option<Image> = None;
         let mut framebuffer: Option<vk::Framebuffer> = None;
 
-        for (_, pipeline) in frame_info.pipelines {
-            if let Some(render_pass) = pipeline.borrow().render_pass {
-                attachment_image = Some(vkutils::create_image(core, "color-attachment".to_string(), format, frame_info.width, frame_info.height));
-                framebuffer = Some(Self::build_framebuffer(core, &attachment_image.as_ref().unwrap(), render_pass, frame_info.width, frame_info.height));
+        for layer in frame_info.ordered_pipelines {
+            for pipeline in layer {
+                if let Some(render_pass) = pipeline.borrow().render_pass {
+                    attachment_image = Some(vkutils::create_image(core, "color-attachment".to_string(), format, frame_info.width, frame_info.height));
+                    framebuffer = Some(Self::build_framebuffer(core, &attachment_image.as_ref().unwrap(), render_pass, frame_info.width, frame_info.height));
+                }
             }
         }
 
-        for (_, pipeline) in frame_info.pipelines {
-            let info = &pipeline.borrow().info;
-            let mut add_ssbo_sizes = |buffer_name_pairs: &Vec<(String, ReflectDescriptorBinding)>| {
-                for (buffer_name, binding) in buffer_name_pairs {
-                    let size: u32 = binding.block.members.iter().map(|s| s.padded_size).sum();
+        for layer in frame_info.ordered_pipelines {
+            for pipeline in layer {
+                let info = &pipeline.borrow().info;
+                let mut add_ssbo_sizes = |buffer_name_pairs: &Vec<(String, ReflectDescriptorBinding)>| {
+                    for (buffer_name, binding) in buffer_name_pairs {
+                        let size: u32 = binding.block.members.iter().map(|s| s.padded_size).sum();
 
-                    // Insert the size or max of current size and new size found
-                    ssbo_sizes.entry(buffer_name.clone()).and_modify(|curr_val| {
-                        *curr_val = std::cmp::max(size, *curr_val);
-                    }).or_insert(size);
-                }
-            };
-
-            add_ssbo_sizes(&info.input_ssbos);
-            add_ssbo_sizes(&info.output_ssbos);
-        }
-
-        for (name, pipeline) in frame_info.pipelines {
-            let info = &pipeline.borrow().info;
-            let layout_info = &[pipeline.borrow().layout.descriptor_layout];
-
-            let desc_alloc_info = vk::DescriptorSetAllocateInfo::builder()
-                .descriptor_pool(frame_info.descriptor_pool)
-                .set_layouts(layout_info);
-
-            let descriptor_set = device
-                .allocate_descriptor_sets(&desc_alloc_info)
-                .unwrap()[0];
-
-            let mut desc_image_infos: Vec<vk::DescriptorImageInfo> =
-                Vec::with_capacity(info.input_images.len() + info.output_images.len());
-
-            let mut desc_buffer_infos: Vec<vk::DescriptorBufferInfo> =
-                Vec::with_capacity(info.shader.borrow().bindings.buffers.len());
-
-            let mut descriptor_writes: Vec<vk::WriteDescriptorSet> =
-                Vec::with_capacity(info.input_images.len()  + info.output_images .len() +
-                                   info.shader.borrow().bindings.buffers.len());
-
-            {
-            // Create descriptor writes and create images as needed
-            let mut load_image_descriptors = |image_infos: &Vec<(String, ReflectDescriptorBinding)>| {
-                for (image_name, binding) in image_infos {
-                    // We only want one FILE_INPUT input image across frames as it will never change
-                    if image_name == FILE_INPUT {
-                        let image = &frame_info.global_images.get(FILE_INPUT).unwrap();
-                        descriptor_writes.push(Self::image_write(&image, &mut desc_image_infos, binding, descriptor_set, frame_info.sampler));
-                    } else {
-                        // Reuse images when posisble
-                        let name = match frame_info.image_reuse_remapping.get(image_name) {
-                            Some(n) => { n },
-                            None => image_name
-                        };
-                        
-                        match images.get(name) {
-                            Some(image) => {
-                                descriptor_writes.push(Self::image_write(&image, &mut desc_image_infos, binding, descriptor_set, frame_info.sampler));
-                            }
-                            None => {
-                                let image = vkutils::create_image(core, name.to_string(), format, frame_info.width, frame_info.height);
-                                descriptor_writes.push(Self::image_write(&image, &mut desc_image_infos, binding, descriptor_set, frame_info.sampler));
-                                images.insert(name.to_string(), image);
-                            }
-                        }
+                        // Insert the size or max of current size and new size found
+                        ssbo_sizes.entry(buffer_name.clone()).and_modify(|curr_val| {
+                            *curr_val = std::cmp::max(size, *curr_val);
+                        }).or_insert(size);
                     }
-                }
-            };
-
-            load_image_descriptors(&info.input_images);
-            load_image_descriptors(&info.output_images);
-            }
-
-            {
-            // Create descriptor writes and create ssbo buffers as needed
-            let mut load_buffer_descriptors = |buffer_infos: &Vec<(String, ReflectDescriptorBinding)>| {
-                for (buffer_name, binding) in buffer_infos {
-                    let binding_idx = binding.binding;
-
-                    match buffers.get(buffer_name) {
-                        Some(buffer) => {
-                            descriptor_writes.push(Self::buffer_write(&buffer, vk::DescriptorType::STORAGE_BUFFER, &mut desc_buffer_infos, binding_idx, descriptor_set));
-                        }
-                        None => {
-                            let usage = vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST;
-                            let size = *ssbo_sizes.get(buffer_name).unwrap();
-                            let buffer = vkutils::create_buffer(core, buffer_name.to_string(), size as u64, usage, gpu_allocator::MemoryLocation::CpuToGpu);
-                            descriptor_writes.push(Self::buffer_write(&buffer, vk::DescriptorType::STORAGE_BUFFER, &mut desc_buffer_infos, binding_idx, descriptor_set));
-                            buffers.insert(buffer_name.to_string(), buffer);
-                        }
-                    }
-                }
-            };
-
-            load_buffer_descriptors(&info.input_ssbos);
-            load_buffer_descriptors(&info.output_ssbos);
-
-            }
-
-            // ubos for this pipeline
-            let mut pipeline_ubos: HashMap<String, BufferBlock> = HashMap::new();
-
-            fn recurse_block(reflect_block: &ReflectBlockVariable, base_name: &String, buffer: &Rc<Buffer>, ubos: &mut HashMap<String, BufferBlock>) { // -> BufferBlock {
-                let block = BufferBlock {
-                    size: reflect_block.size,
-                    offset: reflect_block.offset,
-                    block_type: reflect_block.type_description.as_ref().unwrap().type_flags,
-                    buffer: Rc::clone(buffer),
                 };
 
-                let name = if base_name.is_empty() { reflect_block.name.clone() }
-                else                               { format!("{}.{}", base_name, reflect_block.name.clone()) };
+                add_ssbo_sizes(&info.input_ssbos);
+                add_ssbo_sizes(&info.output_ssbos);
+            }
+        }
 
-                if !reflect_block.name.is_empty() {
-                    ubos.insert(name.clone(), block);
+        for layer in frame_info.ordered_pipelines {
+            for pipeline in layer {
+                let name = &pipeline.borrow().name;
+                let info = &pipeline.borrow().info;
+                let layout_info = &[pipeline.borrow().layout.descriptor_layout];
+
+                let desc_alloc_info = vk::DescriptorSetAllocateInfo::builder()
+                    .descriptor_pool(frame_info.descriptor_pool)
+                    .set_layouts(layout_info);
+
+                let descriptor_set = device
+                    .allocate_descriptor_sets(&desc_alloc_info)
+                    .unwrap()[0];
+
+                let mut desc_image_infos: Vec<vk::DescriptorImageInfo> =
+                    Vec::with_capacity(info.input_images.len() + info.output_images.len());
+
+                let mut desc_buffer_infos: Vec<vk::DescriptorBufferInfo> =
+                    Vec::with_capacity(info.shader.borrow().bindings.buffers.len());
+
+                let mut descriptor_writes: Vec<vk::WriteDescriptorSet> =
+                    Vec::with_capacity(info.input_images.len()  + info.output_images .len() +
+                                       info.shader.borrow().bindings.buffers.len());
+
+                {
+                // Create descriptor writes and create images as needed
+                let mut load_image_descriptors = |image_infos: &Vec<(String, ReflectDescriptorBinding)>| {
+                    for (image_name, binding) in image_infos {
+                        // We only want one FILE_INPUT input image across frames as it will never change
+                        if image_name == FILE_INPUT {
+                            let image = &frame_info.global_images.get(FILE_INPUT).unwrap();
+                            descriptor_writes.push(Self::image_write(&image, &mut desc_image_infos, binding, descriptor_set, frame_info.sampler));
+                        } else {
+                            // Reuse images when possible
+                            let name = match frame_info.image_reuse_remapping.get(image_name) {
+                                Some(n) => { n },
+                                None => image_name
+                            };
+
+                            match images.get(name) {
+                                Some(image) => {
+                                    descriptor_writes.push(Self::image_write(&image, &mut desc_image_infos, binding, descriptor_set, frame_info.sampler));
+                                }
+                                None => {
+                                    let image = vkutils::create_image(core, name.to_string(), format, frame_info.width, frame_info.height);
+                                    descriptor_writes.push(Self::image_write(&image, &mut desc_image_infos, binding, descriptor_set, frame_info.sampler));
+                                    images.insert(name.to_string(), image);
+                                }
+                            }
+                        }
+                    }
+                };
+
+                load_image_descriptors(&info.input_images);
+                load_image_descriptors(&info.output_images);
                 }
 
-                reflect_block.members.iter().for_each(|member| recurse_block(&member, &name, &buffer, ubos));
-            }
+                {
+                // Create descriptor writes and create ssbo buffers as needed
+                let mut load_buffer_descriptors = |buffer_infos: &Vec<(String, ReflectDescriptorBinding)>| {
+                    for (buffer_name, binding) in buffer_infos {
+                        let binding_idx = binding.binding;
 
-            for buffer_reflect in &info.shader.borrow().bindings.buffers {
-                if buffer_reflect.descriptor_type == ReflectDescriptorType::UniformBuffer {
-                    let buffer_name = format!("{}:{}", pipeline.borrow().name, buffer_reflect.type_description.as_ref().unwrap().type_name.clone());
-                    let usage = vk::BufferUsageFlags::UNIFORM_BUFFER | vk::BufferUsageFlags::TRANSFER_DST;
+                        match buffers.get(buffer_name) {
+                            Some(buffer) => {
+                                descriptor_writes.push(Self::buffer_write(&buffer, vk::DescriptorType::STORAGE_BUFFER, &mut desc_buffer_infos, binding_idx, descriptor_set));
+                            }
+                            None => {
+                                let usage = vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST;
+                                let size = *ssbo_sizes.get(buffer_name).unwrap();
+                                let buffer = vkutils::create_buffer(core, buffer_name.to_string(), size as u64, usage, gpu_allocator::MemoryLocation::CpuToGpu);
+                                descriptor_writes.push(Self::buffer_write(&buffer, vk::DescriptorType::STORAGE_BUFFER, &mut desc_buffer_infos, binding_idx, descriptor_set));
+                                buffers.insert(buffer_name.to_string(), buffer);
+                            }
+                        }
+                    }
+                };
 
-                    let buffer = Rc::new(vkutils::create_buffer(core, buffer_name, buffer_reflect.block.size as u64, usage, gpu_allocator::MemoryLocation::CpuToGpu));
-                    descriptor_writes.push(Self::buffer_write(&buffer, vk::DescriptorType::UNIFORM_BUFFER, &mut desc_buffer_infos, buffer_reflect.binding, descriptor_set));
+                load_buffer_descriptors(&info.input_ssbos);
+                load_buffer_descriptors(&info.output_ssbos);
 
-                    recurse_block(&buffer_reflect.block, &"".to_string(), &buffer, &mut pipeline_ubos);
                 }
+
+                // ubos for this pipeline
+                let mut pipeline_ubos: HashMap<String, BufferBlock> = HashMap::new();
+
+                fn recurse_block(reflect_block: &ReflectBlockVariable, base_name: &String, buffer: &Rc<Buffer>, ubos: &mut HashMap<String, BufferBlock>) { // -> BufferBlock
+                    let block = BufferBlock {
+                        size: reflect_block.size,
+                        offset: reflect_block.offset,
+                        block_type: reflect_block.type_description.as_ref().unwrap().type_flags,
+                        buffer: Rc::clone(buffer),
+                    };
+
+                    let name = if base_name.is_empty() { reflect_block.name.clone() }
+                    else                               { format!("{}.{}", base_name, reflect_block.name.clone()) };
+
+                    if !reflect_block.name.is_empty() {
+                        ubos.insert(name.clone(), block);
+                    }
+
+                    reflect_block.members.iter().for_each(|member| recurse_block(&member, &name, &buffer, ubos));
+                }
+
+                for buffer_reflect in &info.shader.borrow().bindings.buffers {
+                    if buffer_reflect.descriptor_type == ReflectDescriptorType::UniformBuffer {
+                        let buffer_name = format!("{}:{}", pipeline.borrow().name, buffer_reflect.type_description.as_ref().unwrap().type_name.clone());
+                        let usage = vk::BufferUsageFlags::UNIFORM_BUFFER | vk::BufferUsageFlags::TRANSFER_DST;
+
+                        let buffer = Rc::new(vkutils::create_buffer(core, buffer_name, buffer_reflect.block.size as u64, usage, gpu_allocator::MemoryLocation::CpuToGpu));
+                        descriptor_writes.push(Self::buffer_write(&buffer, vk::DescriptorType::UNIFORM_BUFFER, &mut desc_buffer_infos, buffer_reflect.binding, descriptor_set));
+
+                        recurse_block(&buffer_reflect.block, &"".to_string(), &buffer, &mut pipeline_ubos);
+                    }
+                }
+
+                ubos.insert(name.clone(), pipeline_ubos);
+
+                device.update_descriptor_sets(&descriptor_writes, &[]);
+                descriptor_sets.insert(name.to_string(), descriptor_set);
             }
-
-            ubos.insert(name.clone(), pipeline_ubos);
-
-            device.update_descriptor_sets(&descriptor_writes, &[]);
-            descriptor_sets.insert(name.to_string(), descriptor_set);
         }
 
         PipelineGraphFrame {
@@ -835,7 +842,7 @@ impl PipelineGraph {
 
         for _ in 0..gi.num_frames {
             let graph_frame_info = PipelineGraphFrameInfo {
-                pipelines: &pipelines,
+                ordered_pipelines: &ordered_pipelines,
                 descriptor_pool: descriptor_pool,
                 global_images: &global_images,
                 width: gi.width,
