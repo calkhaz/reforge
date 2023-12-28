@@ -175,12 +175,12 @@ impl PipelineGraphFrame {
         let mut attachment_image: Option<Image> = None;
         let mut framebuffer: Option<vk::Framebuffer> = None;
 
-            for (_, pipeline) in frame_info.pipelines {
-                if let Some(render_pass) = pipeline.borrow().render_pass {
-                    attachment_image = Some(vkutils::create_image(core, "color-attachment".to_string(), format, frame_info.width, frame_info.height));
-                    framebuffer = Some(Self::build_framebuffer(core, &attachment_image.as_ref().unwrap(), render_pass, frame_info.width, frame_info.height));
-                }
+        for (_, pipeline) in frame_info.pipelines {
+            if let Some(render_pass) = pipeline.borrow().render_pass {
+                attachment_image = Some(vkutils::create_image(core, "color-attachment".to_string(), format, frame_info.width, frame_info.height));
+                framebuffer = Some(Self::build_framebuffer(core, &attachment_image.as_ref().unwrap(), render_pass, frame_info.width, frame_info.height));
             }
+        }
 
         for (_, pipeline) in frame_info.pipelines {
             let info = &pipeline.borrow().info;
@@ -828,7 +828,8 @@ impl PipelineGraph {
                 // We only want one FILE_INPUT input image across frames as it will never change
                 if image_name == FILE_INPUT {
                     global_images.entry(image_name.clone()).or_insert(
-                        vkutils::create_image(core, name.to_string(), gi.format, gi.width, gi.height));
+                        vkutils::create_image(core, name.to_string(), gi.format, gi.width, gi.height)
+                    );
                 }
             }
 
