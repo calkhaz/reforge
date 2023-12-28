@@ -3,7 +3,7 @@ use ash::vk;
 
 use crate::vulkan::vkutils::Image;
 use crate::vulkan::frame::Frame;
-use crate::vulkan::pipeline_graph::GraphAction;
+use crate::vulkan::pipeline_graph::Pipeline;
 use crate::vulkan::pipeline_graph::PipelineGraph;
 use crate::vulkan::pipeline_graph::PipelineGraphFrame;
 
@@ -167,70 +167,75 @@ pub fn execute_pipeline_graph(device: &ash::Device, frame: &mut Frame, graph_fra
     let dispatch_x = (graph.width as f32/16.0).ceil() as u32;
     let dispatch_y = (graph.height as f32/16.0).ceil() as u32;
 
-    for action in &graph.flattened {
-        match action {
-            GraphAction::Barrier => {
-                let mem_barrier = vk::MemoryBarrier {
-                    src_access_mask: vk::AccessFlags::SHADER_READ,
-                    dst_access_mask: vk::AccessFlags::SHADER_WRITE,
-                    ..Default::default()
-                };
+    let mut record_pipeline = |pipeline: &Pipeline| {
+        unsafe {
+        device.cmd_bind_descriptor_sets(
+            frame.cmd_buffer,
+            vk::PipelineBindPoint::COMPUTE,
+            pipeline.layout.vk,
+            0,
+            &[*graph_frame.descriptor_sets.get(&pipeline.name).unwrap()],
+            &[],
+        );
 
-                unsafe {
-                device.cmd_pipeline_barrier(frame.cmd_buffer,
-                                            vk::PipelineStageFlags::COMPUTE_SHADER,
-                                            vk::PipelineStageFlags::COMPUTE_SHADER,
-                                            vk::DependencyFlags::empty(), &[mem_barrier], &[], &[]);
-                }
-            },
-            GraphAction::Pipeline(pipeline) => {
-                unsafe {
-                device.cmd_bind_descriptor_sets(
-                    frame.cmd_buffer,
-                    vk::PipelineBindPoint::COMPUTE,
-                    pipeline.borrow().layout.vk,
-                    0,
-                    &[*graph_frame.descriptor_sets.get(&pipeline.borrow().name).unwrap()],
-                    &[],
-                );
+        device.cmd_bind_pipeline(
+            frame.cmd_buffer,
+            graph.bind_point,
+            pipeline.vk_pipeline
+        );
 
-                device.cmd_bind_pipeline(
-                    frame.cmd_buffer,
-                    graph.bind_point,
-                    pipeline.borrow().vk_pipeline
-                );
+        // Start timer
+        device.cmd_write_timestamp(frame.cmd_buffer,
+                                   vk::PipelineStageFlags::TOP_OF_PIPE,
+                                   frame.timer.query_pool,
+                                   frame.timer.start(&pipeline.name));
 
-                // Start timer
-                device.cmd_write_timestamp(frame.cmd_buffer,
-                                           vk::PipelineStageFlags::TOP_OF_PIPE,
-                                           frame.timer.query_pool,
-                                           frame.timer.start(&pipeline.borrow().name));
+        if graph.is_compute() {
+            device.cmd_dispatch(frame.cmd_buffer, dispatch_x, dispatch_y, 1);
+        }
+        else {
+            // Draw our full screen triangle
+            let rp_info = vk::RenderPassBeginInfo {
+                render_pass: pipeline.render_pass.unwrap(),
+                framebuffer: graph_frame.framebuffer.unwrap(),
+                render_area: vk::Rect2D { offset: vk::Offset2D{x: 0, y: 0},
+                                          extent: vk::Extent2D { width: graph.width, height: graph.height } },
 
-                if graph.is_compute() {
-                    device.cmd_dispatch(frame.cmd_buffer, dispatch_x, dispatch_y, 1);
-                }
-                else {
-                    // Draw our full screen triangle
-                    let rp_info = vk::RenderPassBeginInfo {
-                        render_pass: pipeline.borrow().render_pass.unwrap(),
-                        framebuffer: graph_frame.framebuffer.unwrap(),
-                        render_area: vk::Rect2D { offset: vk::Offset2D{x: 0, y: 0},
-                                                  extent: vk::Extent2D { width: graph.width, height: graph.height } },
+                ..Default::default()
+            };
 
-                        ..Default::default()
-                    };
+            device.cmd_begin_render_pass(frame.cmd_buffer, &rp_info, vk::SubpassContents::INLINE);
+            device.cmd_draw(frame.cmd_buffer, 3, 1, 0, 0);
+            device.cmd_end_render_pass(frame.cmd_buffer);
+        }
 
-                    device.cmd_begin_render_pass(frame.cmd_buffer, &rp_info, vk::SubpassContents::INLINE);
-                    device.cmd_draw(frame.cmd_buffer, 3, 1, 0, 0);
-                    device.cmd_end_render_pass(frame.cmd_buffer);
-                }
+        // Stop timer
+        device.cmd_write_timestamp(frame.cmd_buffer,
+                                   vk::PipelineStageFlags::BOTTOM_OF_PIPE,
+                                   frame.timer.query_pool,
+                                   frame.timer.stop(&pipeline.name));
+        }
+    };
 
-                // Stop timer
-                device.cmd_write_timestamp(frame.cmd_buffer,
-                                           vk::PipelineStageFlags::BOTTOM_OF_PIPE,
-                                           frame.timer.query_pool,
-                                           frame.timer.stop(&pipeline.borrow().name));
-                    }
+    for (layer_index, layer) in graph.ordered_pipelines.iter().enumerate() {
+        for pipeline in layer {
+            let p = pipeline.borrow();
+            record_pipeline(&p);
+        }
+
+        // Add a barrier on every layer except the last
+        if layer_index != graph.ordered_pipelines.len()-1 {
+            let mem_barrier = vk::MemoryBarrier {
+                src_access_mask: vk::AccessFlags::SHADER_READ,
+                dst_access_mask: vk::AccessFlags::SHADER_WRITE,
+                ..Default::default()
+            };
+
+            unsafe {
+            device.cmd_pipeline_barrier(frame.cmd_buffer,
+                                        vk::PipelineStageFlags::COMPUTE_SHADER,
+                                        vk::PipelineStageFlags::COMPUTE_SHADER,
+                                        vk::DependencyFlags::empty(), &[mem_barrier], &[], &[]);
             }
         }
     }

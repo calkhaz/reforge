@@ -144,6 +144,7 @@ pub fn synthesize_config(device: Rc<ash::Device>, config: &Config, shader_path: 
         let shader = Shader::from_path(&device, &config_bindings.file_path)?;
 
         let mut info = PipelineInfo {
+            name: pipeline_name.clone(),
             shader: Rc::new(RefCell::new(shader)),
             input_images: Vec::new(), output_images: Vec::new(),
             input_ssbos : Vec::new(), output_ssbos : Vec::new()

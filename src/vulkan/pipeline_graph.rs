@@ -21,11 +21,6 @@ use crate::warnln;
 pub const FILE_INPUT: &str = "rf:file-input";
 pub const SWAPCHAIN_OUTPUT: &str = "rf:swapchain";
 
-pub enum GraphAction {
-    Pipeline(Rc<RefCell<Pipeline>>),
-    Barrier
-}
-
 pub struct PipelineLayout {
     pub vk: vk::PipelineLayout,
     pub descriptor_layout: vk::DescriptorSetLayout
@@ -33,6 +28,7 @@ pub struct PipelineLayout {
 
 #[derive(Debug, Clone)]
 pub struct PipelineInfo {
+    pub name: String,
     pub shader: Rc<RefCell<Shader>>,
     pub input_images: Vec<(String, ReflectDescriptorBinding)>,
     pub output_images: Vec<(String, ReflectDescriptorBinding)>,
@@ -73,7 +69,7 @@ pub struct PipelineGraphInfo {
 pub struct PipelineGraph {
     /* The sorted execution of the graph
      * Command buffers can process this order */
-    pub flattened: Vec<GraphAction>,
+    pub ordered_pipelines: Vec<Vec<Rc<RefCell<Pipeline>>>>,
     device: Rc<ash::Device>,
     pub frames: Vec<PipelineGraphFrame>,
     pub width: u32,
@@ -328,74 +324,6 @@ impl PipelineGraphFrame {
 
 impl PipelineGraph {
     pub fn is_compute (&self) -> bool { self.bind_point == vk::PipelineBindPoint::COMPUTE }
-
-    pub fn flatten_graph(pipelines: &HashMap<String, Rc<RefCell<Pipeline>>>) -> Option<Vec<GraphAction>> {
-        let mut flattened_graph: Vec<GraphAction> = Vec::new();
-        let mut unexecuted_nodes_set: HashSet<String> = pipelines.keys().cloned().collect();
-
-        // Function to search other other for what pipelines output into the given pipeline
-        let get_input_node_names = |pipeline: &Pipeline| -> Vec<String> {
-            let mut nodes: Vec<String> = Vec::new();
-
-            let input_images: Vec<String> = pipeline.info.input_images.iter().map(|name| name.0.clone()).collect();
-
-            for (candidate_name, candidate_pipeline) in pipelines {
-                // Check if any of the outputs are used as inputs for the given pipeline
-                let output_has_searched_input = candidate_pipeline.borrow().info.output_images.iter().any(|name| input_images.contains(&name.0));
-
-                if output_has_searched_input {
-                    nodes.push(candidate_name.clone());
-                }
-            }
-
-            nodes
-        };
-
-        /* To flatten the graph, we want to visit all the nodes and check if any of them
-         * are able to be executed
-         *
-         * The ready status is determined by checking a node's inputs
-         * to see if they have already been executed
-         *
-         * If we are able to add them as the next action to execute 
-         * and then put a barrier after the new group of executed nodes
-         *
-         * Ex: 
-         * input  -> gaussian    -> combination:input_image0
-         * output -> edge_detect -> combination:input_image1
-         * combination -> output
-         *
-         * Result:
-         * gaussian + edge_detect -> barrier -> combination */
-        while !unexecuted_nodes_set.is_empty() {
-            let unexecuted_nodes: Vec<String> = unexecuted_nodes_set.iter().cloned().collect();
-
-            for node in &unexecuted_nodes {
-                let pipeline = pipelines.get(node).unwrap();
-                let input_nodes = get_input_node_names(&pipeline.as_ref().borrow());
-
-                // If all input dependencies have been executed, this node is ready to execute
-                let ready_to_execute = !input_nodes.iter().any(|n| unexecuted_nodes.contains(n));
-
-                if ready_to_execute {
-                    unexecuted_nodes_set.remove(node);
-                    flattened_graph.push(GraphAction::Pipeline(Rc::clone(pipeline)));
-                }
-            }
-
-            if unexecuted_nodes.len() == unexecuted_nodes_set.len() {
-                warnln!("Graph incorrectly constructed. Failed to add nodes into execution: {:?}", unexecuted_nodes);
-                return None
-            }
-
-            // We want barriers between groups of nodes but no barriers at the very end
-            if !unexecuted_nodes_set.is_empty() {
-                flattened_graph.push(GraphAction::Barrier);
-            }
-        }
-
-        Some(flattened_graph)
-    }
 
     pub unsafe fn rebuild_pipeline(&mut self, name: &str) {
         let device = &self.device;
@@ -667,7 +595,7 @@ impl PipelineGraph {
         device.create_render_pass(&info, None).unwrap_or_else(|err| panic!("Error: {}", err))
     }
 
-    fn reusable_image_remapping(flattened_graph: &Vec<Vec<PipelineInfo>>) -> HashMap<String, String> {
+    fn reusable_image_remapping(ordered_pipelines: &Vec<Vec<PipelineInfo>>) -> HashMap<String, String> {
         let mut free_images : Vec<String> = Vec::new();
         let mut images: HashSet<String> = HashSet::new();
         let mut image_reuse: HashMap<String, String> = HashMap::new();
@@ -679,7 +607,7 @@ impl PipelineGraph {
         };
 
         let image_still_in_use = |name: &String, start_layer: usize, image_reuse: &HashMap<String, String>| -> bool {
-            for execution_layers in flattened_graph.iter().skip(start_layer) {
+            for execution_layers in ordered_pipelines.iter().skip(start_layer) {
                 for node in execution_layers {
 
                     // Found the actual allocation still in use
@@ -703,15 +631,13 @@ impl PipelineGraph {
             false
         };
 
-        for (layer_idx, execution_layers) in flattened_graph.iter().enumerate() {
-            println!("---  Layer {} ---", layer_idx);
+        for (layer_idx, execution_layers) in ordered_pipelines.iter().enumerate() {
             for name in &images {
                 // The image is already known to be free
                 if free_images.contains(name) { continue; }
 
                 // Free the image if it is no longer used
                 if !image_still_in_use(name, layer_idx, &image_reuse) {
-                    println!("Adding free image: {}", name);
                     free_images.push(name.clone());
                 }
             }
@@ -727,30 +653,17 @@ impl PipelineGraph {
                     // remap and reuse
                     else {
                         let remap_name = free_images.pop().unwrap();
-                        println!("remapping: {} -> {}", image_name, remap_name);
                         image_reuse.insert(image_name.clone(), remap_name);
                     }
                 }
             });
         }
 
-        println!("--------- image reuse ---------");
-        println!("{:?}", image_reuse);
-        println!("-------------------------------");
-
-        println!("--------- free images ---------");
-        println!("{:?}", free_images);
-        println!("-------------------------------");
-
-        println!("--------- images ---------");
-        println!("{:?}", images);
-        println!("-------------------------------");
-
         image_reuse
     }
 
     fn order_by_execution(infos: &HashMap<String, PipelineInfo>) -> Option<Vec<Vec<PipelineInfo>>> {
-        let mut flattened_graph: Vec<Vec<PipelineInfo>> = Vec::new();
+        let mut ordered_pipelines: Vec<Vec<PipelineInfo>> = Vec::new();
         let mut unexecuted_nodes_set: HashSet<String> = infos.keys().cloned().collect();
 
         // Function to search other other for what pipelines output into the given pipeline
@@ -812,81 +725,92 @@ impl PipelineGraph {
                 return None
             }
 
-            flattened_graph.push(node_infos);
+            ordered_pipelines.push(node_infos);
         }
 
 
-        Some(flattened_graph)
+        Some(ordered_pipelines)
     }
 
     pub unsafe fn new(core: &VkCore, gi: PipelineGraphInfo) -> Option<PipelineGraph> {
-        let flattened_graph = Self::order_by_execution(&gi.pipeline_infos)?;
-        let image_reuse_remapping = Self::reusable_image_remapping(&flattened_graph);
+        let ordered_infos = Self::order_by_execution(&gi.pipeline_infos)?;
+        let image_reuse_remapping = Self::reusable_image_remapping(&ordered_infos);
 
         // Track descriptor pool sizes by descriptor type
         let mut pool_sizes: HashMap<vk::DescriptorType, u32> = HashMap::new();
         let mut pipelines: HashMap<String, Rc<RefCell<Pipeline>>> = HashMap::new();
+        let mut ordered_pipelines: Vec<Vec<Rc<RefCell<Pipeline>>>> = Vec::new();
         let mut global_images: HashMap<String, Image> = HashMap::new();
         let mut bind_point = vk::PipelineBindPoint::COMPUTE;
 
-        for (name, info) in gi.pipeline_infos {
-            // Build any required global images
-            for (image_name, _) in &info.input_images {
-                // We only want one FILE_INPUT input image across frames as it will never change
-                if image_name == FILE_INPUT {
-                    global_images.entry(image_name.clone()).or_insert(
-                        vkutils::create_image(core, name.to_string(), gi.format, gi.width, gi.height)
-                    );
+        for layer in ordered_infos {
+            let mut pipeline_layer: Vec<Rc<RefCell<Pipeline>>> = Vec::new();
+
+            for info in layer {
+                let name = info.name.clone();
+
+                // Build any required global images
+                for (image_name, _) in &info.input_images {
+                    // We only want one FILE_INPUT input image across frames as it will never change
+                    if image_name == FILE_INPUT {
+                        global_images.entry(image_name.clone()).or_insert(
+                            vkutils::create_image(core, name.to_string(), gi.format, gi.width, gi.height)
+                        );
+                    }
+                }
+
+                let pipeline_layout = Self::build_pipeline_layout(Rc::clone(&core.device), &info, &mut pool_sizes, gi.num_frames);
+
+                if info.shader.borrow().stage == vk::ShaderStageFlags::FRAGMENT {
+                    bind_point = vk::PipelineBindPoint::GRAPHICS;
+                    assert!(pipelines.len() < 1, "Can only have one pipeline when using fragment shaders");
+                    let render_pass = Some(Self::build_render_pass(&core.device, gi.format));
+                    let vertex_shader = Some(Self::build_vertex_shader(&core.device));
+                    let vk_pipeline = Self::build_vk_graphics_pipeline(&core.device,
+                                                                       gi.width,
+                                                                       gi.height,
+                                                                       vertex_shader.as_ref().unwrap().module,
+                                                                       info.shader.borrow().module,
+                                                                       pipeline_layout.vk,
+                                                                       render_pass.unwrap()).
+                                                                       unwrap_or_else(|err| panic!("Error: {}", err));
+
+                    let pipeline = Rc::new(RefCell::new(Pipeline {
+                        device: Rc::clone(&core.device),
+                        name: name.clone(),
+                        info,
+                        layout: pipeline_layout,
+                        vk_pipeline,
+                        render_pass,
+                        vertex_shader
+                    }));
+
+                    pipelines.insert(name.to_string(), pipeline.clone());
+                    pipeline_layer.push(pipeline);
+                }
+                else { // COMPUTE
+                    bind_point = vk::PipelineBindPoint::COMPUTE;
+                    let vk_pipeline = Self::build_vk_compute_pipeline(&core.device,
+                                                                      info.shader.borrow().module,
+                                                                      pipeline_layout.vk).
+                                                                      unwrap_or_else(|err| panic!("Error: {}", err));
+
+                    let pipeline = Rc::new(RefCell::new(Pipeline {
+                        device: Rc::clone(&core.device),
+                        name: name.clone(),
+                        info,
+                        layout: pipeline_layout,
+                        vk_pipeline,
+                        render_pass: None,
+                        vertex_shader: None
+                    }));
+
+                    pipelines.insert(name.to_string(), pipeline.clone());
+                    pipeline_layer.push(pipeline);
                 }
             }
 
-            let pipeline_layout = Self::build_pipeline_layout(Rc::clone(&core.device), &info, &mut pool_sizes, gi.num_frames);
-
-            if info.shader.borrow().stage == vk::ShaderStageFlags::FRAGMENT {
-                bind_point = vk::PipelineBindPoint::GRAPHICS;
-                assert!(pipelines.len() < 1, "Can only have one pipeline when using fragment shaders");
-                let render_pass = Some(Self::build_render_pass(&core.device, gi.format));
-                let vertex_shader = Some(Self::build_vertex_shader(&core.device));
-                let vk_pipeline = Self::build_vk_graphics_pipeline(&core.device,
-                                                                   gi.width,
-                                                                   gi.height,
-                                                                   vertex_shader.as_ref().unwrap().module,
-                                                                   info.shader.borrow().module,
-                                                                   pipeline_layout.vk,
-                                                                   render_pass.unwrap()).
-                                                                   unwrap_or_else(|err| panic!("Error: {}", err));
-
-                let pipeline = Rc::new(RefCell::new(Pipeline {
-                    device: Rc::clone(&core.device),
-                    name: name.clone(),
-                    info,
-                    layout: pipeline_layout,
-                    vk_pipeline,
-                    render_pass,
-                    vertex_shader
-                }));
-
-                pipelines.insert(name.to_string(), pipeline);
-            }
-            else { // COMPUTE
-                bind_point = vk::PipelineBindPoint::COMPUTE;
-                let vk_pipeline = Self::build_vk_compute_pipeline(&core.device,
-                                                                  info.shader.borrow().module,
-                                                                  pipeline_layout.vk).
-                                                                  unwrap_or_else(|err| panic!("Error: {}", err));
-
-                let pipeline = Rc::new(RefCell::new(Pipeline {
-                    device: Rc::clone(&core.device),
-                    name: name.clone(),
-                    info,
-                    layout: pipeline_layout,
-                    vk_pipeline,
-                    render_pass: None,
-                    vertex_shader: None
-                }));
-
-                pipelines.insert(name.to_string(), pipeline);
-            }
+            ordered_pipelines.push(pipeline_layer);
         }
 
         // Create descriptor pool
@@ -924,8 +848,6 @@ impl PipelineGraph {
             frames.push(PipelineGraphFrame::new(core, &graph_frame_info));
         }
 
-        let flattened_execution = Self::flatten_graph(&pipelines)?;
-
         Some(PipelineGraph {
             device: Rc::clone(&core.device),
             frames: frames,
@@ -935,7 +857,7 @@ impl PipelineGraph {
             images: global_images,
             _sampler: sampler,
             descriptor_pool: descriptor_pool,
-            flattened: flattened_execution,
+            ordered_pipelines,
             bind_point
         })
     }
@@ -985,7 +907,7 @@ impl Drop for PipelineGraph {
 
         self.device.device_wait_idle().unwrap();
         self.frames.clear();
-        self.flattened.clear();
+        self.ordered_pipelines.clear();
         self.pipelines.clear();
 
         device.destroy_descriptor_pool(self.descriptor_pool, None);

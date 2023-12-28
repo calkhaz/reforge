@@ -1,4 +1,3 @@
-use std::str::FromStr;
 use std::collections::HashMap;
 use crate::config::ast::Expr;
 use crate::config::ast::Pipeline;
