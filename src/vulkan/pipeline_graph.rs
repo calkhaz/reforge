@@ -92,7 +92,8 @@ struct PipelineGraphFrameInfo<'a> {
     pub width: u32,
     pub height: u32,
     pub format: vk::Format,
-    pub sampler: &'a Sampler
+    pub sampler: &'a Sampler,
+    image_reuse_remapping: &'a HashMap<String, String>
 }
 
 pub struct BufferBlock {
@@ -230,14 +231,20 @@ impl PipelineGraphFrame {
                         let image = &frame_info.global_images.get(FILE_INPUT).unwrap();
                         descriptor_writes.push(Self::image_write(&image, &mut desc_image_infos, binding, descriptor_set, frame_info.sampler));
                     } else {
-                        match images.get(image_name) {
+                        // Reuse images when posisble
+                        let name = match frame_info.image_reuse_remapping.get(image_name) {
+                            Some(n) => { n },
+                            None => image_name
+                        };
+                        
+                        match images.get(name) {
                             Some(image) => {
                                 descriptor_writes.push(Self::image_write(&image, &mut desc_image_infos, binding, descriptor_set, frame_info.sampler));
                             }
                             None => {
-                                let image = vkutils::create_image(core, image_name.to_string(), format, frame_info.width, frame_info.height);
+                                let image = vkutils::create_image(core, name.to_string(), format, frame_info.width, frame_info.height);
                                 descriptor_writes.push(Self::image_write(&image, &mut desc_image_infos, binding, descriptor_set, frame_info.sampler));
-                                images.insert(image_name.to_string(), image);
+                                images.insert(name.to_string(), image);
                             }
                         }
                     }
@@ -910,7 +917,8 @@ impl PipelineGraph {
                 width: gi.width,
                 height: gi.height,
                 format: gi.format,
-                sampler: &sampler
+                sampler: &sampler,
+                image_reuse_remapping: &image_reuse_remapping
             };
 
             frames.push(PipelineGraphFrame::new(core, &graph_frame_info));
