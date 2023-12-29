@@ -230,7 +230,7 @@ impl PipelineGraphFrame {
                     Vec::with_capacity(info.input_images.len()  + info.output_images .len() +
                                        info.shader.borrow().bindings.buffers.len());
 
-                // Create output descriptor writes and create images as needed
+                // Create output descriptor writes and create images
                 for (image_name, binding) in &info.output_images {
                     // Reuse images when possible
                     let name = Self::image_remap_name(image_name, frame_info.image_reuse_remapping);
@@ -242,7 +242,7 @@ impl PipelineGraphFrame {
                     descriptor_writes.push(Self::image_write(&image, &mut desc_image_infos, binding, descriptor_set, frame_info.sampler));
                 }
 
-                // Create input descriptor writes
+                // Create input image descriptor writes
                 for (image_name, binding) in &info.input_images {
                     // We only want one FILE_INPUT input image across frames as it will never change
                     let image = if image_name == FILE_INPUT {
@@ -258,30 +258,24 @@ impl PipelineGraphFrame {
                     descriptor_writes.push(Self::image_write(&image, &mut desc_image_infos, binding, descriptor_set, frame_info.sampler));
                 }
 
-                {
-                // Create descriptor writes and create ssbo buffers as needed
-                let mut load_buffer_descriptors = |buffer_infos: &Vec<(String, ReflectDescriptorBinding)>| {
-                    for (buffer_name, binding) in buffer_infos {
-                        let binding_idx = binding.binding;
+                // Create output descriptor writes and create ssbo buffers
+                for (buffer_name, binding) in &info.output_ssbos {
+                    let binding_idx = binding.binding;
 
-                        match buffers.get(buffer_name) {
-                            Some(buffer) => {
-                                descriptor_writes.push(Self::buffer_write(&buffer, vk::DescriptorType::STORAGE_BUFFER, &mut desc_buffer_infos, binding_idx, descriptor_set));
-                            }
-                            None => {
-                                let usage = vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST;
-                                let size = *ssbo_sizes.get(buffer_name).unwrap();
-                                let buffer = vkutils::create_buffer(core, buffer_name.to_string(), size as u64, usage, gpu_allocator::MemoryLocation::CpuToGpu);
-                                descriptor_writes.push(Self::buffer_write(&buffer, vk::DescriptorType::STORAGE_BUFFER, &mut desc_buffer_infos, binding_idx, descriptor_set));
-                                buffers.insert(buffer_name.to_string(), buffer);
-                            }
-                        }
-                    }
-                };
+                    let buffer = buffers.entry(buffer_name.clone()).or_insert({
+                        let usage = vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST;
+                        let size = *ssbo_sizes.get(buffer_name).unwrap();
+                        vkutils::create_buffer(core, buffer_name.to_string(), size as u64, usage, gpu_allocator::MemoryLocation::CpuToGpu)
+                    });
 
-                load_buffer_descriptors(&info.input_ssbos);
-                load_buffer_descriptors(&info.output_ssbos);
+                    descriptor_writes.push(Self::buffer_write(&buffer, vk::DescriptorType::STORAGE_BUFFER, &mut desc_buffer_infos, binding_idx, descriptor_set));
+                }
 
+                // Create input buffer descriptor writes
+                for (buffer_name, binding) in &info.input_ssbos {
+                    let binding_idx = binding.binding;
+                    let buffer = buffers.get(buffer_name).unwrap_or_else(|| panic!("No buffer found for input {}", buffer_name));
+                    descriptor_writes.push(Self::buffer_write(&buffer, vk::DescriptorType::STORAGE_BUFFER, &mut desc_buffer_infos, binding_idx, descriptor_set));
                 }
 
                 // ubos for this pipeline
