@@ -206,6 +206,7 @@ impl PipelineGraphFrame {
             }
         }
 
+        let mut buffer_remap: HashMap<String, String> = HashMap::new();
         for layer in frame_info.ordered_pipelines {
             for pipeline in layer {
                 let name = &pipeline.borrow().name;
@@ -258,25 +259,58 @@ impl PipelineGraphFrame {
                     descriptor_writes.push(Self::image_write(&image, &mut desc_image_infos, binding, descriptor_set, frame_info.sampler));
                 }
 
+                for (output_name, output_binding) in &info.output_ssbos {
+                    for (input_name, input_binding) in &info.input_ssbos {
+                        if input_binding.binding == output_binding.binding {
+                            println!("remapping {} to {}", output_name, input_name);
+                            buffer_remap.insert(output_name.clone(), input_name.clone());
+                        }
+                        println!("\tinput - {}: {}", input_name, input_binding.binding);
+                    }
+                }
+
+
+                let buffer_remap_inv: HashMap<String, String> = buffer_remap
+                    .iter()
+                    .fold(HashMap::new(), |mut acc, (k, v)| {
+                        acc.insert(v.clone(), k.clone());
+                        acc
+                    });
+
                 // Create output descriptor writes and create ssbo buffers
                 for (buffer_name, binding) in &info.output_ssbos {
                     let binding_idx = binding.binding;
+                    let name = Self::image_remap_name(buffer_name, &buffer_remap);
 
-                    let buffer = buffers.entry(buffer_name.clone()).or_insert({
+                    println!("output binding: {} {}", buffer_name, binding_idx);
+
+                    for (input_name, input_binding) in &info.input_ssbos {
+                        println!("\tinput - {}: {}", input_name, input_binding.binding);
+                    }
+
+                    let buffer = buffers.entry(name.clone()).or_insert({
                         let usage = vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST;
-                        let size = *ssbo_sizes.get(buffer_name).unwrap();
-                        vkutils::create_buffer(core, buffer_name.to_string(), size as u64, usage, gpu_allocator::MemoryLocation::CpuToGpu)
+                        let size = *ssbo_sizes.get(name).unwrap();
+                        vkutils::create_buffer(core, name.to_string(), size as u64, usage, gpu_allocator::MemoryLocation::CpuToGpu)
                     });
 
+                    println!("output writes");
                     descriptor_writes.push(Self::buffer_write(&buffer, vk::DescriptorType::STORAGE_BUFFER, &mut desc_buffer_infos, binding_idx, descriptor_set));
                 }
 
                 // Create input buffer descriptor writes
                 for (buffer_name, binding) in &info.input_ssbos {
+                    if buffer_remap_inv.contains_key(buffer_name) {
+                        continue;
+                    }
+                    let name = Self::image_remap_name(buffer_name, &buffer_remap);
                     let binding_idx = binding.binding;
-                    let buffer = buffers.get(buffer_name).unwrap_or_else(|| panic!("No buffer found for input {}", buffer_name));
+                    let buffer = buffers.get(name).unwrap_or_else(|| panic!("No buffer found for input {}", buffer_name));
+                    println!("input writes");
                     descriptor_writes.push(Self::buffer_write(&buffer, vk::DescriptorType::STORAGE_BUFFER, &mut desc_buffer_infos, binding_idx, descriptor_set));
                 }
+
+                println!("writes len: {}", descriptor_writes.len());
 
                 // ubos for this pipeline
                 let mut pipeline_ubos: HashMap<String, BufferBlock> = HashMap::new();
