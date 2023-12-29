@@ -156,6 +156,12 @@ impl PipelineGraphFrame {
         core.device.create_framebuffer(&info, None).unwrap_or_else(|err| panic!("Error: {}", err))
     }
 
+    fn image_remap_name<'a>(name: &'a String, mapping: &'a HashMap<String, String>) -> &'a String {
+        match mapping.get(name) {
+            Some(n) => n, None => name
+        }
+    }
+
     unsafe fn new(core: &VkCore, frame_info: &PipelineGraphFrameInfo) -> PipelineGraphFrame {
         let device = &core.device;
         let format = frame_info.format;
@@ -224,37 +230,32 @@ impl PipelineGraphFrame {
                     Vec::with_capacity(info.input_images.len()  + info.output_images .len() +
                                        info.shader.borrow().bindings.buffers.len());
 
-                {
-                // Create descriptor writes and create images as needed
-                let mut load_image_descriptors = |image_infos: &Vec<(String, ReflectDescriptorBinding)>| {
-                    for (image_name, binding) in image_infos {
-                        // We only want one FILE_INPUT input image across frames as it will never change
-                        if image_name == FILE_INPUT {
-                            let image = &frame_info.global_images.get(FILE_INPUT).unwrap();
-                            descriptor_writes.push(Self::image_write(&image, &mut desc_image_infos, binding, descriptor_set, frame_info.sampler));
-                        } else {
-                            // Reuse images when possible
-                            let name = match frame_info.image_reuse_remapping.get(image_name) {
-                                Some(n) => { n },
-                                None => image_name
-                            };
+                // Create output descriptor writes and create images as needed
+                for (image_name, binding) in &info.output_images {
+                    // Reuse images when possible
+                    let name = Self::image_remap_name(image_name, frame_info.image_reuse_remapping);
 
-                            match images.get(name) {
-                                Some(image) => {
-                                    descriptor_writes.push(Self::image_write(&image, &mut desc_image_infos, binding, descriptor_set, frame_info.sampler));
-                                }
-                                None => {
-                                    let image = vkutils::create_image(core, name.to_string(), format, frame_info.width, frame_info.height);
-                                    descriptor_writes.push(Self::image_write(&image, &mut desc_image_infos, binding, descriptor_set, frame_info.sampler));
-                                    images.insert(name.to_string(), image);
-                                }
-                            }
-                        }
+                    let image = images.entry(name.clone()).or_insert(
+                        vkutils::create_image(core, name.clone(), format, frame_info.width, frame_info.height)
+                    );
+
+                    descriptor_writes.push(Self::image_write(&image, &mut desc_image_infos, binding, descriptor_set, frame_info.sampler));
+                }
+
+                // Create input descriptor writes
+                for (image_name, binding) in &info.input_images {
+                    // We only want one FILE_INPUT input image across frames as it will never change
+                    let image = if image_name == FILE_INPUT {
+                        &frame_info.global_images.get(FILE_INPUT).unwrap()
                     }
-                };
+                    else {
+                        // Reuse images when possible
+                        let name = Self::image_remap_name(image_name, frame_info.image_reuse_remapping);
 
-                load_image_descriptors(&info.input_images);
-                load_image_descriptors(&info.output_images);
+                        // Besides file inputs, input images are a subset of output images, so find them and bind the descriptor
+                        images.get(name).unwrap_or_else(|| panic!("No image found for input {}", name))
+                    };
+                    descriptor_writes.push(Self::image_write(&image, &mut desc_image_infos, binding, descriptor_set, frame_info.sampler));
                 }
 
                 {
