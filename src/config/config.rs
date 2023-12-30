@@ -2,7 +2,7 @@ extern crate lalrpop_util;
 
 use std::collections::HashMap;
 
-use crate::config::config::config_gramar::ExprListParser;
+use crate::config::config::config_grammar::ExprListParser;
 use crate::config::ast;
 
 use crate::vulkan::pipeline_graph::{FINAL_OUTPUT, FILE_INPUT};
@@ -11,7 +11,7 @@ use crate::utils::{TERM_RED, TERM_YELLOW};
 use crate::warnln;
 
  // Synthesized by LALRPOP
-lalrpop_mod!(pub config_gramar, "/config/config_grammar.rs");
+lalrpop_mod!(pub config_grammar, "/config/config_grammar.rs");
 
 #[derive(Debug)]
 pub struct ConfigDescriptor {
@@ -197,7 +197,7 @@ fn parse(contents: String, expects_input: bool) -> Option<Config> {
         };
     }
 
-    if config.graph_pipelines.len() == 0 { warnln!("Cofiguration had an empty graph");  return None }
+    if config.graph_pipelines.len() == 0 { warnln!("Configuration had an empty graph");  return None }
     if found_input && !expects_input { warnln!("Found 'input' in pipeline configuration but no input image was specified");  return None }
     if !found_output { warnln!("'output' is never used in the pipeline configuration"); return None }
 
