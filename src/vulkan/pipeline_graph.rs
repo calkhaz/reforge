@@ -55,7 +55,8 @@ pub struct PipelineGraphFrame {
     pub ubos: HashMap<String, HashMap<String, BufferBlock>>,
     pub descriptor_sets: HashMap<String, vk::DescriptorSet>,
     pub attachment_image: Option<Image>,
-    pub framebuffer: Option<vk::Framebuffer>
+    pub framebuffer: Option<vk::Framebuffer>,
+    image_reuse_remapping: HashMap<String, String>
 }
 
 pub struct PipelineGraphInfo {
@@ -75,7 +76,6 @@ pub struct PipelineGraph {
     pub width: u32,
     pub height: u32,
     pub pipelines: HashMap<String, Rc<RefCell<Pipeline>>>,
-    images: HashMap<String, Image>, // Top-level images that shouldn't be per-frame
     _sampler: Sampler, // Stored here so it doesn't get dropped
     descriptor_pool: vk::DescriptorPool,
     pub bind_point: vk::PipelineBindPoint
@@ -84,7 +84,6 @@ pub struct PipelineGraph {
 struct PipelineGraphFrameInfo<'a> {
     pub ordered_pipelines: &'a Vec<Vec<Rc<RefCell<Pipeline>>>>,
     pub descriptor_pool: vk::DescriptorPool,
-    pub global_images: &'a HashMap<String, Image>,
     pub width: u32,
     pub height: u32,
     pub format: vk::Format,
@@ -99,11 +98,25 @@ pub struct BufferBlock {
     pub buffer: Rc<Buffer>
 }
 
+fn image_remap_name<'a>(name: &'a String, mapping: &'a HashMap<String, String>) -> &'a String {
+    match mapping.get(name) {
+        Some(n) => image_remap_name(n, mapping), None => name
+    }
+}
+
 impl PipelineGraphFrame {
+    pub fn get_input_image(&self) -> &Image {
+        self.images.get(FILE_INPUT).unwrap()
+    }
+
     pub fn get_output_image(&self) -> vk::Image {
         match &self.attachment_image {
             Some(image) => image.vk,
-            None => self.images.get(SWAPCHAIN_OUTPUT).unwrap().vk
+            None => {
+                let swapchain_output = String::from(SWAPCHAIN_OUTPUT);
+                let name = image_remap_name(&swapchain_output, &self.image_reuse_remapping);
+                self.images.get(name).unwrap().vk
+            }
         }
     }
 
@@ -154,12 +167,6 @@ impl PipelineGraphFrame {
         };
 
         core.device.create_framebuffer(&info, None).unwrap_or_else(|err| panic!("Error: {}", err))
-    }
-
-    fn image_remap_name<'a>(name: &'a String, mapping: &'a HashMap<String, String>) -> &'a String {
-        match mapping.get(name) {
-            Some(n) => n, None => name
-        }
     }
 
     unsafe fn new(core: &VkCore, frame_info: &PipelineGraphFrameInfo) -> PipelineGraphFrame {
@@ -231,10 +238,21 @@ impl PipelineGraphFrame {
                     Vec::with_capacity(info.input_images.len()  + info.output_images .len() +
                                        info.shader.borrow().bindings.buffers.len());
 
+                // The only input not guaranteed to appear in any outputs is a file input
+                // Go ahead and create it if it is found
+                for (image_name, _) in &info.input_images {
+                    // We only want one FILE_INPUT input image across frames as it will never change
+                    if image_name == FILE_INPUT {
+                        images.entry(image_name.clone()).or_insert(
+                            vkutils::create_image(core, name.clone(), format, frame_info.width, frame_info.height)
+                        );
+                    }
+                }
+
                 // Create output descriptor writes and create images
                 for (image_name, binding) in &info.output_images {
                     // Reuse images when possible
-                    let name = Self::image_remap_name(image_name, frame_info.image_reuse_remapping);
+                    let name = image_remap_name(image_name, frame_info.image_reuse_remapping);
 
                     let image = images.entry(name.clone()).or_insert(
                         vkutils::create_image(core, name.clone(), format, frame_info.width, frame_info.height)
@@ -245,27 +263,27 @@ impl PipelineGraphFrame {
 
                 // Create input image descriptor writes
                 for (image_name, binding) in &info.input_images {
-                    // We only want one FILE_INPUT input image across frames as it will never change
-                    let image = if image_name == FILE_INPUT {
-                        &frame_info.global_images.get(FILE_INPUT).unwrap()
+                    let mut found_point_op = false;
+                    
+                    for (_, output_binding) in &info.output_images {
+                        if output_binding.binding == binding.binding { found_point_op = true; }
                     }
-                    else {
-                        // Reuse images when possible
-                        let name = Self::image_remap_name(image_name, frame_info.image_reuse_remapping);
 
-                        // Besides file inputs, input images are a subset of output images, so find them and bind the descriptor
-                        images.get(name).unwrap_or_else(|| panic!("No image found for input {}", name))
-                    };
+                    if found_point_op { continue; }
+
+                    // Reuse images when possible
+                    let name = image_remap_name(image_name, frame_info.image_reuse_remapping);
+
+                    // Besides file inputs, input images are a subset of output images, so find them and bind the descriptor
+                    let image = images.get(name).unwrap_or_else(|| panic!("No image found for input {}", name));
                     descriptor_writes.push(Self::image_write(&image, &mut desc_image_infos, binding, descriptor_set, frame_info.sampler));
                 }
 
                 for (output_name, output_binding) in &info.output_ssbos {
                     for (input_name, input_binding) in &info.input_ssbos {
                         if input_binding.binding == output_binding.binding {
-                            println!("remapping {} to {}", output_name, input_name);
                             buffer_remap.insert(output_name.clone(), input_name.clone());
                         }
-                        println!("\tinput - {}: {}", input_name, input_binding.binding);
                     }
                 }
 
@@ -280,13 +298,7 @@ impl PipelineGraphFrame {
                 // Create output descriptor writes and create ssbo buffers
                 for (buffer_name, binding) in &info.output_ssbos {
                     let binding_idx = binding.binding;
-                    let name = Self::image_remap_name(buffer_name, &buffer_remap);
-
-                    println!("output binding: {} {}", buffer_name, binding_idx);
-
-                    for (input_name, input_binding) in &info.input_ssbos {
-                        println!("\tinput - {}: {}", input_name, input_binding.binding);
-                    }
+                    let name = image_remap_name(buffer_name, &buffer_remap);
 
                     let buffer = buffers.entry(name.clone()).or_insert({
                         let usage = vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST;
@@ -294,23 +306,28 @@ impl PipelineGraphFrame {
                         vkutils::create_buffer(core, name.to_string(), size as u64, usage, gpu_allocator::MemoryLocation::CpuToGpu)
                     });
 
-                    println!("output writes");
                     descriptor_writes.push(Self::buffer_write(&buffer, vk::DescriptorType::STORAGE_BUFFER, &mut desc_buffer_infos, binding_idx, descriptor_set));
                 }
 
                 // Create input buffer descriptor writes
                 for (buffer_name, binding) in &info.input_ssbos {
-                    if buffer_remap_inv.contains_key(buffer_name) {
-                        continue;
+                    //if buffer_remap_inv.contains_key(buffer_name) {
+                    //    continue;
+                    //}
+
+                    let mut found_point_op = false;
+                    
+                    for (_, output_binding) in &info.output_ssbos {
+                        if output_binding.binding == binding.binding { found_point_op = true; }
                     }
-                    let name = Self::image_remap_name(buffer_name, &buffer_remap);
+
+                    if found_point_op { continue; }
+
+                    let name = image_remap_name(buffer_name, &buffer_remap);
                     let binding_idx = binding.binding;
                     let buffer = buffers.get(name).unwrap_or_else(|| panic!("No buffer found for input {}", buffer_name));
-                    println!("input writes");
                     descriptor_writes.push(Self::buffer_write(&buffer, vk::DescriptorType::STORAGE_BUFFER, &mut desc_buffer_infos, binding_idx, descriptor_set));
                 }
-
-                println!("writes len: {}", descriptor_writes.len());
 
                 // ubos for this pipeline
                 let mut pipeline_ubos: HashMap<String, BufferBlock> = HashMap::new();
@@ -353,7 +370,14 @@ impl PipelineGraphFrame {
         }
 
         PipelineGraphFrame {
-            device: Rc::clone(&device), images, buffers, ubos, descriptor_sets, attachment_image, framebuffer
+            device: Rc::clone(&device),
+            images,
+            buffers,
+            ubos,
+            descriptor_sets,
+            attachment_image,
+            framebuffer,
+            image_reuse_remapping: frame_info.image_reuse_remapping.clone()
         }
     }
 }
@@ -402,10 +426,6 @@ impl PipelineGraph {
                 }
             }
         }
-    }
-
-    pub fn get_input_image(&self) -> &Image {
-        self.images.get(FILE_INPUT).unwrap()
     }
 
     pub fn map_to_desc_size(map: &HashMap<vk::DescriptorType, u32>) -> Vec<vk::DescriptorPoolSize> {
@@ -679,7 +699,19 @@ impl PipelineGraph {
             }
 
             execution_layers.iter().for_each(|node| {
-                for (image_name, _) in &node.output_images {
+                for (image_name, output_binding) in &node.output_images {
+
+                    // could we have already remapped the input ? i don't think so because it is
+                    // needed for this node
+                    
+                    let mut found_point_op = false;
+                    for (input_name, input_binding) in &node.input_images {
+                        if output_binding.binding == input_binding.binding {
+                            found_point_op = true;
+                            image_reuse.insert(image_name.clone(), input_name.clone());
+                        }
+                    }
+                    if found_point_op { continue }
                     if image_name == SWAPCHAIN_OUTPUT { continue };
 
                     // allocate if there is no free image
@@ -776,7 +808,6 @@ impl PipelineGraph {
         let mut pool_sizes: HashMap<vk::DescriptorType, u32> = HashMap::new();
         let mut pipelines: HashMap<String, Rc<RefCell<Pipeline>>> = HashMap::new();
         let mut ordered_pipelines: Vec<Vec<Rc<RefCell<Pipeline>>>> = Vec::new();
-        let mut global_images: HashMap<String, Image> = HashMap::new();
         let mut bind_point = vk::PipelineBindPoint::COMPUTE;
 
         for layer in ordered_infos {
@@ -784,16 +815,6 @@ impl PipelineGraph {
 
             for info in layer {
                 let name = info.name.clone();
-
-                // Build any required global images
-                for (image_name, _) in &info.input_images {
-                    // We only want one FILE_INPUT input image across frames as it will never change
-                    if image_name == FILE_INPUT {
-                        global_images.entry(image_name.clone()).or_insert(
-                            vkutils::create_image(core, name.to_string(), gi.format, gi.width, gi.height)
-                        );
-                    }
-                }
 
                 let pipeline_layout = Self::build_pipeline_layout(Rc::clone(&core.device), &info, &mut pool_sizes, gi.num_frames);
 
@@ -873,7 +894,6 @@ impl PipelineGraph {
             let graph_frame_info = PipelineGraphFrameInfo {
                 ordered_pipelines: &ordered_pipelines,
                 descriptor_pool: descriptor_pool,
-                global_images: &global_images,
                 width: gi.width,
                 height: gi.height,
                 format: gi.format,
@@ -890,7 +910,6 @@ impl PipelineGraph {
             width: gi.width,
             height: gi.height,
             pipelines: pipelines,
-            images: global_images,
             _sampler: sampler,
             descriptor_pool: descriptor_pool,
             ordered_pipelines,

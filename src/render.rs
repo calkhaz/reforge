@@ -264,6 +264,7 @@ impl Render {
     pub fn record_initial_image_load(&self) {
         let frame = &self.frames[self.frame_index];
         let device = &self.vk_core.device;
+        let graph_frame = &self.graph.frames[self.frame_index];
 
         let buffer_regions = vk::BufferImageCopy {
             buffer_offset: 0,
@@ -280,7 +281,7 @@ impl Render {
             ..Default::default()
         };
 
-        let input_image = &self.graph.get_input_image();
+        let input_image = &graph_frame.get_input_image();
 
         /* The goal here is to copy the input file from a vulkan buffer to an srgb image
          * "staging_srgb_image" and then to a linear rgb "input_image" so we have the correct
