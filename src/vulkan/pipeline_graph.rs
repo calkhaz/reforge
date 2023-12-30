@@ -98,9 +98,9 @@ pub struct BufferBlock {
     pub buffer: Rc<Buffer>
 }
 
-fn image_remap_name<'a>(name: &'a String, mapping: &'a HashMap<String, String>) -> &'a String {
+fn remap_resource_name<'a>(name: &'a String, mapping: &'a HashMap<String, String>) -> &'a String {
     match mapping.get(name) {
-        Some(n) => image_remap_name(n, mapping), None => name
+        Some(n) => remap_resource_name(n, mapping), None => name
     }
 }
 
@@ -114,7 +114,8 @@ impl PipelineGraphFrame {
             Some(image) => image.vk,
             None => {
                 let swapchain_output = String::from(SWAPCHAIN_OUTPUT);
-                let name = image_remap_name(&swapchain_output, &self.image_reuse_remapping);
+                // The output can sometimes be remapped by point-op shaders
+                let name = remap_resource_name(&swapchain_output, &self.image_reuse_remapping);
                 self.images.get(name).unwrap().vk
             }
         }
@@ -214,6 +215,7 @@ impl PipelineGraphFrame {
         }
 
         let mut buffer_remap: HashMap<String, String> = HashMap::new();
+
         for layer in frame_info.ordered_pipelines {
             for pipeline in layer {
                 let name = &pipeline.borrow().name;
@@ -252,7 +254,7 @@ impl PipelineGraphFrame {
                 // Create output descriptor writes and create images
                 for (image_name, binding) in &info.output_images {
                     // Reuse images when possible
-                    let name = image_remap_name(image_name, frame_info.image_reuse_remapping);
+                    let name = remap_resource_name(image_name, frame_info.image_reuse_remapping);
 
                     let image = images.entry(name.clone()).or_insert(
                         vkutils::create_image(core, name.clone(), format, frame_info.width, frame_info.height)
@@ -263,22 +265,18 @@ impl PipelineGraphFrame {
 
                 // Create input image descriptor writes
                 for (image_name, binding) in &info.input_images {
-                    let mut found_point_op = false;
-                    
-                    for (_, output_binding) in &info.output_images {
-                        if output_binding.binding == binding.binding { found_point_op = true; }
-                    }
-
+                    let found_point_op = info.output_images.iter().any(|(_, output_binding)| output_binding.binding == binding.binding);
                     if found_point_op { continue; }
 
                     // Reuse images when possible
-                    let name = image_remap_name(image_name, frame_info.image_reuse_remapping);
+                    let name = remap_resource_name(image_name, frame_info.image_reuse_remapping);
 
                     // Besides file inputs, input images are a subset of output images, so find them and bind the descriptor
                     let image = images.get(name).unwrap_or_else(|| panic!("No image found for input {}", name));
                     descriptor_writes.push(Self::image_write(&image, &mut desc_image_infos, binding, descriptor_set, frame_info.sampler));
                 }
 
+                // Find point-op buffers and remap the output to input
                 for (output_name, output_binding) in &info.output_ssbos {
                     for (input_name, input_binding) in &info.input_ssbos {
                         if input_binding.binding == output_binding.binding {
@@ -287,18 +285,10 @@ impl PipelineGraphFrame {
                     }
                 }
 
-
-                let buffer_remap_inv: HashMap<String, String> = buffer_remap
-                    .iter()
-                    .fold(HashMap::new(), |mut acc, (k, v)| {
-                        acc.insert(v.clone(), k.clone());
-                        acc
-                    });
-
                 // Create output descriptor writes and create ssbo buffers
                 for (buffer_name, binding) in &info.output_ssbos {
                     let binding_idx = binding.binding;
-                    let name = image_remap_name(buffer_name, &buffer_remap);
+                    let name = remap_resource_name(buffer_name, &buffer_remap);
 
                     let buffer = buffers.entry(name.clone()).or_insert({
                         let usage = vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST;
@@ -311,19 +301,10 @@ impl PipelineGraphFrame {
 
                 // Create input buffer descriptor writes
                 for (buffer_name, binding) in &info.input_ssbos {
-                    //if buffer_remap_inv.contains_key(buffer_name) {
-                    //    continue;
-                    //}
-
-                    let mut found_point_op = false;
-                    
-                    for (_, output_binding) in &info.output_ssbos {
-                        if output_binding.binding == binding.binding { found_point_op = true; }
-                    }
-
+                    let found_point_op = info.output_ssbos.iter().any(|(_, output_binding)| output_binding.binding == binding.binding);
                     if found_point_op { continue; }
 
-                    let name = image_remap_name(buffer_name, &buffer_remap);
+                    let name = remap_resource_name(buffer_name, &buffer_remap);
                     let binding_idx = binding.binding;
                     let buffer = buffers.get(name).unwrap_or_else(|| panic!("No buffer found for input {}", buffer_name));
                     descriptor_writes.push(Self::buffer_write(&buffer, vk::DescriptorType::STORAGE_BUFFER, &mut desc_buffer_infos, binding_idx, descriptor_set));
@@ -656,35 +637,27 @@ impl PipelineGraph {
         let mut images: HashSet<String> = HashSet::new();
         let mut image_reuse: HashMap<String, String> = HashMap::new();
 
-        let node_uses_image = |node: &PipelineInfo, image_name: &String| -> bool {
-            if node.input_images .iter().any(|n| n.0 == *image_name) { return true; }
-            if node.output_images.iter().any(|n| n.0 == *image_name) { return true; }
-            false
+        let images_have_remap = | name: &String, images: &Vec<(String, ReflectDescriptorBinding)>, image_reuse: &HashMap<String, String> | {
+            images.iter().any(|(image_name, _)| {
+                let reuse_name = image_reuse.get(image_name);
+                return reuse_name.is_some() && reuse_name.unwrap() == name;
+            })
         };
 
+        let node_uses_image = |node: &PipelineInfo, image_name: &String, image_reuse: &HashMap<String, String>| -> bool {
+            // Found original allocation still in use
+            node.input_images .iter().any(|n| n.0 == *image_name) ||
+            node.output_images.iter().any(|n| n.0 == *image_name) ||
+            // Found a remap of the allocation in use
+            images_have_remap(image_name, &node.input_images,  image_reuse) ||
+            images_have_remap(image_name, &node.output_images, image_reuse)
+        };
+
+        // Check if any nodes in future layers use this image
         let image_still_in_use = |name: &String, start_layer: usize, image_reuse: &HashMap<String, String>| -> bool {
-            for execution_layers in ordered_pipelines.iter().skip(start_layer) {
-                for node in execution_layers {
-
-                    // Found the actual allocation still in use
-                    if node_uses_image(node, name) { return true; }
-
-                    // Found a remap to the actual allocation as an input
-                    for (input_image, _) in &node.input_images {
-                        if let Some(reused_image) = image_reuse.get(input_image) {
-                            if reused_image == name { return true; }
-                        }
-                    }
-                    // Found a remap to the actual allocation as an output
-                    for (output_image, _) in &node.output_images {
-                        if let Some(reused_image) = image_reuse.get(output_image) {
-                            if reused_image == name { return true; }
-                        }
-                    }
-                }
-            }
-
-            false
+            ordered_pipelines.iter().skip(start_layer).any(|nodes| nodes.iter().any(|node| {
+                node_uses_image(node, name, image_reuse)
+            }))
         };
 
         for (layer_idx, execution_layers) in ordered_pipelines.iter().enumerate() {
@@ -700,10 +673,8 @@ impl PipelineGraph {
 
             execution_layers.iter().for_each(|node| {
                 for (image_name, output_binding) in &node.output_images {
-
-                    // could we have already remapped the input ? i don't think so because it is
-                    // needed for this node
                     
+                    // Remap point-op images
                     let mut found_point_op = false;
                     for (input_name, input_binding) in &node.input_images {
                         if output_binding.binding == input_binding.binding {
@@ -711,8 +682,10 @@ impl PipelineGraph {
                             image_reuse.insert(image_name.clone(), input_name.clone());
                         }
                     }
-                    if found_point_op { continue }
-                    if image_name == SWAPCHAIN_OUTPUT { continue };
+
+                    if found_point_op || image_name == SWAPCHAIN_OUTPUT {
+                        continue
+                    }
 
                     // allocate if there is no free image
                     if free_images.is_empty() {
