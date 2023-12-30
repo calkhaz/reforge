@@ -11,7 +11,7 @@ use crate::vulkan::frame::Frame;
 use crate::vulkan::pipeline_graph::FILE_INPUT;
 use crate::vulkan::pipeline_graph::PipelineGraph;
 use crate::vulkan::pipeline_graph::PipelineGraphInfo;
-use crate::vulkan::pipeline_graph::SWAPCHAIN_OUTPUT;
+use crate::vulkan::pipeline_graph::FINAL_OUTPUT;
 use crate::vulkan::swapchain::SwapChain;
 use crate::vulkan::vkutils;
 use crate::vulkan::vkutils::Buffer;
@@ -319,7 +319,7 @@ impl Render {
 
         // Transition all intermediate compute images to general
         for (name, image) in &graph_frame.images {
-            if name != SWAPCHAIN_OUTPUT && name != FILE_INPUT {
+            if name != FINAL_OUTPUT && name != FILE_INPUT {
                 command::transition_image_layout(&device, frame.cmd_buffer, image.vk, vk::ImageLayout::UNDEFINED, vk::ImageLayout::GENERAL);
             }
         }

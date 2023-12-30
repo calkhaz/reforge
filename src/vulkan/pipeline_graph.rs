@@ -19,7 +19,7 @@ use crate::vulkan::shader::Shader;
 use crate::warnln;
 
 pub const FILE_INPUT: &str = "rf:file-input";
-pub const SWAPCHAIN_OUTPUT: &str = "rf:swapchain";
+pub const FINAL_OUTPUT: &str = "rf:final-output";
 
 pub struct PipelineLayout {
     pub vk: vk::PipelineLayout,
@@ -113,7 +113,7 @@ impl PipelineGraphFrame {
         match &self.attachment_image {
             Some(image) => image.vk,
             None => {
-                let swapchain_output = String::from(SWAPCHAIN_OUTPUT);
+                let swapchain_output = String::from(FINAL_OUTPUT);
                 // The output can sometimes be remapped by point-op shaders
                 let name = remap_resource_name(&swapchain_output, &self.image_reuse_remapping);
                 self.images.get(name).unwrap().vk

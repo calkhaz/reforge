@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use crate::config::config::config_gramar::ExprListParser;
 use crate::config::ast;
 
-use crate::vulkan::pipeline_graph::{SWAPCHAIN_OUTPUT, FILE_INPUT};
+use crate::vulkan::pipeline_graph::{FINAL_OUTPUT, FILE_INPUT};
 
 use crate::utils::{TERM_RED, TERM_YELLOW};
 use crate::warnln;
@@ -182,7 +182,7 @@ fn parse(contents: String, expects_input: bool) -> Option<Config> {
 
                         let descriptor_name = pipeline_descriptor_name.clone().unwrap_or("output_image".to_string());
 
-                        let resource_name = if output_pipeline_name == "output" { SWAPCHAIN_OUTPUT.to_string() }
+                        let resource_name = if output_pipeline_name == "output" { FINAL_OUTPUT.to_string() }
                                             else { format!("{pipeline_name}:{descriptor_name}") };
 
                         info.outputs.push(ConfigDescriptor{resource_name, descriptor_name});
