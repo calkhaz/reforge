@@ -683,7 +683,7 @@ impl PipelineGraph {
                         }
                     }
 
-                    if found_point_op || image_name == SWAPCHAIN_OUTPUT {
+                    if found_point_op {
                         continue
                     }
 
