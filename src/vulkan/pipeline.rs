@@ -32,7 +32,7 @@ pub struct Pipeline {
     pub vk_pipeline: ash::vk::Pipeline,
 
     // In the case of a graphics pipeline
-    pub vertex_shader: Option<Shader>,
+    pub vertex_shader: Option<Rc<Shader>>,
     pub render_pass: Option<vk::RenderPass>
 }
 
@@ -41,22 +41,21 @@ pub struct PipelineLayout {
     pub descriptor_layout: vk::DescriptorSetLayout
 }
 
-
 impl Pipeline {
-    pub unsafe fn new_compute(device: &ash::Device,
-                              shader: vk::ShaderModule,
-                              pipeline_layout: vk::PipelineLayout) -> Result<vk::Pipeline, String> {
+    pub unsafe fn build_compute_vk(device: &Rc<ash::Device>,
+                                   shader: &Shader,
+                                   pipeline_layout: &PipelineLayout) -> Result<vk::Pipeline, String> {
 
         let shader_entry_name = CStr::from_bytes_with_nul_unchecked(b"main\0");
         let shader_stage_create_infos = vk::PipelineShaderStageCreateInfo {
-            module: shader,
+            module: shader.module,
             p_name: shader_entry_name.as_ptr(),
             stage: vk::ShaderStageFlags::COMPUTE,
             ..Default::default()
         };
 
         let vk_info = vk::ComputePipelineCreateInfo {
-            layout: pipeline_layout,
+            layout: pipeline_layout.vk,
             stage: shader_stage_create_infos,
             ..Default::default()
         };
@@ -71,26 +70,42 @@ impl Pipeline {
         }
     }
 
-    pub unsafe fn new_gfx(device: &ash::Device,
-                          width: u32,
-                          height: u32,
-                          vertex_shader: vk::ShaderModule,
-                          fragment_shader: vk::ShaderModule,
-                          pipeline_layout: vk::PipelineLayout,
-                          render_pass: vk::RenderPass) -> Result<vk::Pipeline, String> {
+    pub unsafe fn new_compute(device: Rc<ash::Device>,
+                              info: PipelineInfo,
+                              pipeline_layout: PipelineLayout) -> Result<Pipeline, String> {
 
+        let vk_pipeline = Self::build_compute_vk(&device, &info.shader.borrow(), &pipeline_layout)?;
+
+        Ok(Pipeline {
+            device,
+            name: info.name.clone(),
+            info,
+            layout: pipeline_layout,
+            vk_pipeline,
+            render_pass: None,
+            vertex_shader: None
+        })
+    }
+
+    pub unsafe fn build_gfx_vk(device: &Rc<ash::Device>,
+                               width: u32,
+                               height: u32,
+                               vertex_shader: &Rc<Shader>,
+                               fragment_shader: &Shader,
+                               pipeline_layout: &PipelineLayout,
+                               render_pass: vk::RenderPass) -> Result<vk::Pipeline, String> {
         let shader_entry_name = CStr::from_bytes_with_nul_unchecked(b"main\0");
 
         let shader_stages = vec![
             vk::PipelineShaderStageCreateInfo {
                 stage: vk::ShaderStageFlags::VERTEX,
-                module: vertex_shader,
+                module: vertex_shader.module,
                 p_name: shader_entry_name.as_ptr(),
                 ..Default::default()
             },
             vk::PipelineShaderStageCreateInfo {
                 stage: vk::ShaderStageFlags::FRAGMENT,
-                module: fragment_shader,
+                module: fragment_shader.module,
                 p_name: shader_entry_name.as_ptr(),
                 ..Default::default()
             }
@@ -153,7 +168,7 @@ impl Pipeline {
 
         let vk_info = vk::GraphicsPipelineCreateInfo {
             render_pass,
-            layout: pipeline_layout,
+            layout: pipeline_layout.vk,
             stage_count: 2,
             p_stages: shader_stages.as_ptr(),
             subpass: 0,
@@ -173,6 +188,29 @@ impl Pipeline {
                 Err(format!("Failed to create graphics pipeline: {:?}", err))
             }
         }
+    }
+
+    pub unsafe fn new_gfx(device: Rc<ash::Device>,
+                          width: u32,
+                          height: u32,
+                          vertex_shader: Rc<Shader>,
+                          info: PipelineInfo,
+                          pipeline_layout: PipelineLayout,
+                          render_pass: vk::RenderPass) -> Result<Pipeline, String> {
+
+        let vk_pipeline = Self::build_gfx_vk(
+            &device, width, height, &vertex_shader, &info.shader.borrow(), &pipeline_layout, render_pass
+        )?;
+
+        Ok(Pipeline {
+            device,
+            name: info.name.clone(),
+            info,
+            layout: pipeline_layout,
+            vk_pipeline,
+            render_pass: Some(render_pass),
+            vertex_shader: Some(vertex_shader)
+        })
     }
 
     pub unsafe fn new_layout(device: Rc<ash::Device>,
@@ -197,6 +235,31 @@ impl Pipeline {
         }
     }
 
+    pub unsafe fn rebuild(&mut self, width: u32, height:u32, shader: Shader) -> Result<(), String> {
+        let vk_pipeline = if self.vertex_shader.is_some() {
+            Self::build_gfx_vk(
+                &self.device, width, height, &self.vertex_shader.as_ref().unwrap(),
+                &shader, &self.layout, self.render_pass.unwrap()
+            )
+        }
+        else {
+            Self::build_compute_vk(&self.device, &shader, &self.layout)
+        };
+
+        match vk_pipeline {
+            Ok(vk_pipeline) => {
+                self.destroy(false);
+                self.info.shader.replace(shader);
+                self.vk_pipeline = vk_pipeline;
+                Ok(())
+            },
+            Err(err) => {
+                self.device.destroy_shader_module(shader.module, None);
+                Err(err)
+            }
+        }
+    }
+
     pub unsafe fn destroy(&mut self, destroy_non_resizables: bool) {
         let device = &self.device;
     
@@ -204,7 +267,7 @@ impl Pipeline {
         device.destroy_pipeline(self.vk_pipeline, None);
         if destroy_non_resizables {
             if let Some(render_pass) = self.render_pass {
-                device.destroy_render_pass(render_pass, None)
+                 device.destroy_render_pass(render_pass, None)
             }
             device.destroy_pipeline_layout(self.layout.vk, None);
             device.destroy_descriptor_set_layout(self.layout.descriptor_layout, None);

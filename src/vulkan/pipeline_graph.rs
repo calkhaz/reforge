@@ -328,7 +328,6 @@ impl PipelineGraph {
 
     pub unsafe fn rebuild_pipeline(&mut self, name: &str) {
         let device = &self.device;
-        let is_compute = self.is_compute();
         let mut pipeline = self.pipelines.get_mut(name).unwrap().borrow_mut();
 
         if pipeline.info.shader.borrow().path.is_none() {
@@ -338,34 +337,8 @@ impl PipelineGraph {
         let shader = Shader::from_path(&device, &pipeline.info.shader.borrow().path.as_ref().unwrap());
 
         if let Some(shader) = shader { 
-            let vk_pipeline = if is_compute {
-                Pipeline::new_compute(&device,
-                                      shader.module,
-                                      pipeline.layout.vk)
-            }
-            else {
-                Pipeline::new_gfx(&device,
-                                  self.width,
-                                  self.height,
-                                  pipeline.vertex_shader.as_ref().unwrap().module,
-                                  shader.module,
-                                  pipeline.layout.vk,
-                                  pipeline.render_pass.unwrap())
-            };
-
-            // In some cases, the spirv code compiles but we fail to create the pipeline due to
-            // other issues, which can still be related to the shader code being wrong or
-            // incompatible with current configurations
-            match vk_pipeline {
-                Ok(vk_pipeline) =>  {
-                    pipeline.destroy(false);
-                    pipeline.vk_pipeline = vk_pipeline;
-                    pipeline.info.shader.borrow_mut().module = shader.module;
-                },
-                Err(error) => {
-                    warnln!("{:?}", error);
-                }
-            }
+            pipeline.rebuild(self.width, self.height, shader)
+                .unwrap_or_else(|err| { warnln!("{:?}", err); })
         }
     }
 
@@ -541,53 +514,31 @@ impl PipelineGraph {
 
                 let pipeline_layout = Pipeline::new_layout(Rc::clone(&core.device), &info, &mut pool_sizes, gi.num_frames);
 
-                if info.shader.borrow().stage == vk::ShaderStageFlags::FRAGMENT {
+                let pipeline = if info.shader.borrow().stage == vk::ShaderStageFlags::FRAGMENT {
                     bind_point = vk::PipelineBindPoint::GRAPHICS;
                     assert!(pipelines.len() < 1, "Can only have one pipeline when using fragment shaders");
-                    let render_pass = Some(render_pass::build_render_pass(&core.device, gi.format));
-                    let vertex_shader = Some(vkutils::build_vertex_shader(&core.device));
-                    let vk_pipeline = Pipeline::new_gfx(&core.device,
-                                                        gi.width,
-                                                        gi.height,
-                                                        vertex_shader.as_ref().unwrap().module,
-                                                        info.shader.borrow().module,
-                                                        pipeline_layout.vk,
-                                                        render_pass.unwrap()).
-                                                        unwrap_or_else(|err| panic!("Error: {}", err));
+                    let render_pass = render_pass::build_render_pass(&core.device, gi.format);
+                    let vertex_shader = Rc::new(vkutils::build_vertex_shader(&core.device));
+                    Pipeline::new_gfx(Rc::clone(&core.device),
+                                      gi.width,
+                                      gi.height,
+                                      vertex_shader,
+                                      info,
+                                      pipeline_layout,
+                                      render_pass). unwrap_or_else(|err| panic!("Error: {}", err))
 
-                    let pipeline = Rc::new(RefCell::new(Pipeline {
-                        device: Rc::clone(&core.device),
-                        name: name.clone(),
-                        info,
-                        layout: pipeline_layout,
-                        vk_pipeline,
-                        render_pass,
-                        vertex_shader
-                    }));
-
-                    pipelines.insert(name.to_string(), pipeline.clone());
-                    pipeline_layer.push(pipeline);
                 }
                 else { // COMPUTE
                     bind_point = vk::PipelineBindPoint::COMPUTE;
-                    let vk_pipeline = Pipeline::new_compute(&core.device,
-                                                            info.shader.borrow().module,
-                                                            pipeline_layout.vk).
-                                                            unwrap_or_else(|err| panic!("Error: {}", err));
+                    Pipeline::new_compute(Rc::clone(&core.device),
+                                          info,
+                                          pipeline_layout).unwrap_or_else(|err| panic!("Error: {}", err))
 
-                    let pipeline = Rc::new(RefCell::new(Pipeline {
-                        device: Rc::clone(&core.device),
-                        name: name.clone(),
-                        info,
-                        layout: pipeline_layout,
-                        vk_pipeline,
-                        render_pass: None,
-                        vertex_shader: None
-                    }));
+                };
+                let pipeline = Rc::new(RefCell::new(pipeline));
 
-                    pipelines.insert(name.to_string(), pipeline.clone());
-                    pipeline_layer.push(pipeline);
-                }
+                pipelines.insert(name.to_string(), pipeline.clone());
+                pipeline_layer.push(pipeline);
             }
 
             ordered_pipelines.push(pipeline_layer);
