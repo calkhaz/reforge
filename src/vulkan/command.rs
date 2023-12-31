@@ -3,7 +3,7 @@ use ash::vk;
 
 use crate::vulkan::vkutils::Image;
 use crate::vulkan::frame::Frame;
-use crate::vulkan::pipeline_graph::Pipeline;
+use crate::vulkan::pipeline::Pipeline;
 use crate::vulkan::pipeline_graph::PipelineGraph;
 use crate::vulkan::pipeline_graph::PipelineGraphFrame;
 

@@ -12,7 +12,7 @@ use crate::config::config::ConfigDescriptor;
 use crate::vulkan::core::VkCore;
 use crate::vulkan::shader::ShaderBindings;
 use crate::vulkan::shader::Shader;
-use crate::vulkan::pipeline_graph::PipelineInfo;
+use crate::vulkan::pipeline::PipelineInfo;
 use crate::warnln;
 
 use std::rc::Rc;

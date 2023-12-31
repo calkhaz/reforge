@@ -5,7 +5,6 @@ extern crate gpu_allocator;
 use ash::vk;
 use spirv_reflect::types::{ReflectDescriptorBinding, ReflectDescriptorType, ReflectBlockVariable, ReflectTypeFlags};
 use std::collections::HashSet;
-use std::ffi::CStr;
 use std::default::Default;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -16,37 +15,11 @@ use crate::vulkan::core::VkCore;
 use crate::vulkan::vkutils;
 use crate::vulkan::vkutils::{Buffer, Image, Sampler};
 use crate::vulkan::shader::Shader;
+use crate::vulkan::pipeline::{Pipeline, PipelineInfo};
 use crate::warnln;
 
 pub const FILE_INPUT: &str = "rf:file-input";
 pub const FINAL_OUTPUT: &str = "rf:final-output";
-
-pub struct PipelineLayout {
-    pub vk: vk::PipelineLayout,
-    pub descriptor_layout: vk::DescriptorSetLayout
-}
-
-#[derive(Debug, Clone)]
-pub struct PipelineInfo {
-    pub name: String,
-    pub shader: Rc<RefCell<Shader>>,
-    pub input_images: Vec<(String, ReflectDescriptorBinding)>,
-    pub output_images: Vec<(String, ReflectDescriptorBinding)>,
-    pub input_ssbos: Vec<(String, ReflectDescriptorBinding)>,
-    pub output_ssbos: Vec<(String, ReflectDescriptorBinding)>,
-}
-
-pub struct Pipeline {
-    device: Rc<ash::Device>,
-    pub name: String,
-    pub info: PipelineInfo,
-    pub layout: PipelineLayout,
-    pub vk_pipeline: ash::vk::Pipeline,
-
-    // In the case of a graphics pipeline
-    vertex_shader: Option<Shader>,
-    pub render_pass: Option<vk::RenderPass>
-}
 
 pub struct PipelineGraphFrame {
     device: Rc<ash::Device>,
@@ -379,18 +352,18 @@ impl PipelineGraph {
 
         if let Some(shader) = shader { 
             let vk_pipeline = if is_compute {
-                Self::build_vk_compute_pipeline(&device,
-                                                shader.module,
-                                                pipeline.layout.vk)
+                Pipeline::new_compute(&device,
+                                      shader.module,
+                                      pipeline.layout.vk)
             }
             else {
-                Self::build_vk_graphics_pipeline(&device,
-                                                 self.width,
-                                                 self.height,
-                                                 pipeline.vertex_shader.as_ref().unwrap().module,
-                                                 shader.module,
-                                                 pipeline.layout.vk,
-                                                 pipeline.render_pass.unwrap())
+                Pipeline::new_gfx(&device,
+                                  self.width,
+                                  self.height,
+                                  pipeline.vertex_shader.as_ref().unwrap().module,
+                                  shader.module,
+                                  pipeline.layout.vk,
+                                  pipeline.render_pass.unwrap())
             };
 
             // In some cases, the spirv code compiles but we fail to create the pipeline due to
@@ -398,7 +371,7 @@ impl PipelineGraph {
             // incompatible with current configurations
             match vk_pipeline {
                 Ok(vk_pipeline) =>  {
-                    destroy_pipeline(&mut *pipeline, false);
+                    pipeline.destroy(false);
                     pipeline.vk_pipeline = vk_pipeline;
                     pipeline.info.shader.borrow_mut().module = shader.module;
                 },
@@ -422,58 +395,6 @@ impl PipelineGraph {
         sizes
     }
 
-    pub unsafe fn build_pipeline_layout(device: Rc<ash::Device>,
-                                        info: &PipelineInfo,
-                                        pool_sizes: &mut HashMap<vk::DescriptorType, u32>,
-                                        num_frames: usize) -> PipelineLayout {
-        // create descriptor layouts, add descriptor pool sizes, and add pipelines to hashmap
-        let layout_bindings = vkutils::create_descriptor_layout_bindings(&info.shader.borrow().bindings, num_frames, pool_sizes);
-
-        let descriptor_info = vk::DescriptorSetLayoutCreateInfo::builder().bindings(&layout_bindings);
-        let descriptor_layout = [device
-            .create_descriptor_set_layout(&descriptor_info, None)
-            .unwrap()];
-
-        let pipeline_layout = device.
-            create_pipeline_layout(&vk::PipelineLayoutCreateInfo::builder()
-                .set_layouts(&descriptor_layout), None).unwrap();
-
-        PipelineLayout {
-            vk: pipeline_layout,
-            descriptor_layout: descriptor_layout[0]
-        }
-    }
-
-    pub unsafe fn build_vk_compute_pipeline(device: &ash::Device,
-                                            shader: vk::ShaderModule,
-                                            pipeline_layout: vk::PipelineLayout) -> Result<vk::Pipeline, String> {
-
-
-        let shader_entry_name = CStr::from_bytes_with_nul_unchecked(b"main\0");
-        let shader_stage_create_infos = vk::PipelineShaderStageCreateInfo {
-            module: shader,
-            p_name: shader_entry_name.as_ptr(),
-            stage: vk::ShaderStageFlags::COMPUTE,
-            ..Default::default()
-        };
-
-        let vk_info = vk::ComputePipelineCreateInfo {
-            layout: pipeline_layout,
-            stage: shader_stage_create_infos,
-            ..Default::default()
-        };
-
-        match device.create_compute_pipelines(vk::PipelineCache::null(), &[vk_info], None) {
-            Ok(pipelines) => {
-                Ok(pipelines[0])
-            },
-            Err(err) => {
-                Err(format!("Failed to create graphics pipeline: {:?}", err))
-            }
-        }
-
-    }
-
     unsafe fn build_vertex_shader(device: &ash::Device) -> Shader {
         // full-screen triangle
         let vertex_shader_code = r#"
@@ -491,110 +412,6 @@ impl PipelineGraph {
         "#;
 
         Shader::from_contents(&device, "full-screen-triangle".to_string(), vk::ShaderStageFlags::VERTEX, vertex_shader_code.to_string()).unwrap()
-    }
-
-    pub unsafe fn build_vk_graphics_pipeline(device: &ash::Device,
-                                             width: u32,
-                                             height: u32,
-                                             vertex_shader: vk::ShaderModule,
-                                             fragment_shader: vk::ShaderModule,
-                                             pipeline_layout: vk::PipelineLayout,
-                                             render_pass: vk::RenderPass) -> Result<vk::Pipeline, String> {
-
-        let shader_entry_name = CStr::from_bytes_with_nul_unchecked(b"main\0");
-
-        let shader_stages = vec![
-            vk::PipelineShaderStageCreateInfo {
-                stage: vk::ShaderStageFlags::VERTEX,
-                module: vertex_shader,
-                p_name: shader_entry_name.as_ptr(),
-                ..Default::default()
-            },
-            vk::PipelineShaderStageCreateInfo {
-                stage: vk::ShaderStageFlags::FRAGMENT,
-                module: fragment_shader,
-                p_name: shader_entry_name.as_ptr(),
-                ..Default::default()
-            }
-        ];
-
-        let rasterization_state = vk::PipelineRasterizationStateCreateInfo {
-            depth_clamp_enable: vk::FALSE,
-            rasterizer_discard_enable: vk::FALSE,
-            polygon_mode: vk::PolygonMode::FILL,
-            cull_mode: vk::CullModeFlags::NONE,
-            front_face: vk::FrontFace::COUNTER_CLOCKWISE,
-            depth_bias_enable: vk::FALSE,
-            line_width: 1.0,
-            ..Default::default()
-        };
-
-        let input_assembly = vk::PipelineInputAssemblyStateCreateInfo {
-            topology: vk::PrimitiveTopology::TRIANGLE_LIST,
-            ..Default::default()
-        };
-
-        let vertex_input_state = vk::PipelineVertexInputStateCreateInfo {
-            ..Default::default()
-        };
-
-        let scissors = vk::Rect2D {
-            offset: vk::Offset2D { x: 0, y: 0 },
-            extent: vk::Extent2D { width, height}
-        };
-
-        let viewport = vk::Viewport {
-            x: 0.0,
-            y: 0.0,
-            width: width as f32,
-            height: height as f32,
-            max_depth: 1.0,
-            ..Default::default()
-        };
-
-        let viewport_state = vk::PipelineViewportStateCreateInfo {
-            viewport_count: 1,
-            scissor_count: 1,
-            p_viewports: &viewport,
-            p_scissors: &scissors,
-            ..Default::default()
-        };
-
-        let blend_attachment = vk::PipelineColorBlendAttachmentState {
-            blend_enable: vk::FALSE,
-            color_write_mask: vk::ColorComponentFlags::RGBA,
-            ..Default::default()
-        };
-
-        let blend_state = vk::PipelineColorBlendStateCreateInfo {
-            logic_op_enable: vk::FALSE,
-            attachment_count: 1,
-            p_attachments: &blend_attachment,
-            ..Default::default()
-        };
-
-        let vk_info = vk::GraphicsPipelineCreateInfo {
-            render_pass,
-            layout: pipeline_layout,
-            stage_count: 2,
-            p_stages: shader_stages.as_ptr(),
-            subpass: 0,
-            p_input_assembly_state: &input_assembly,
-            p_rasterization_state: &rasterization_state,
-            p_viewport_state: &viewport_state,
-            p_color_blend_state: &blend_state,
-            p_vertex_input_state: &vertex_input_state,
-            ..Default::default()
-        };
-
-        match device.create_graphics_pipelines(vk::PipelineCache::null(), &[vk_info], None) {
-            Ok(pipelines) => {
-                Ok(pipelines[0])
-            },
-            Err(err) => {
-                Err(format!("Failed to create graphics pipeline: {:?}", err))
-            }
-        }
     }
 
     pub unsafe fn build_render_pass(device: &ash::Device, format: vk::Format) -> vk::RenderPass {
@@ -789,21 +606,21 @@ impl PipelineGraph {
             for info in layer {
                 let name = info.name.clone();
 
-                let pipeline_layout = Self::build_pipeline_layout(Rc::clone(&core.device), &info, &mut pool_sizes, gi.num_frames);
+                let pipeline_layout = Pipeline::new_layout(Rc::clone(&core.device), &info, &mut pool_sizes, gi.num_frames);
 
                 if info.shader.borrow().stage == vk::ShaderStageFlags::FRAGMENT {
                     bind_point = vk::PipelineBindPoint::GRAPHICS;
                     assert!(pipelines.len() < 1, "Can only have one pipeline when using fragment shaders");
                     let render_pass = Some(Self::build_render_pass(&core.device, gi.format));
                     let vertex_shader = Some(Self::build_vertex_shader(&core.device));
-                    let vk_pipeline = Self::build_vk_graphics_pipeline(&core.device,
-                                                                       gi.width,
-                                                                       gi.height,
-                                                                       vertex_shader.as_ref().unwrap().module,
-                                                                       info.shader.borrow().module,
-                                                                       pipeline_layout.vk,
-                                                                       render_pass.unwrap()).
-                                                                       unwrap_or_else(|err| panic!("Error: {}", err));
+                    let vk_pipeline = Pipeline::new_gfx(&core.device,
+                                                        gi.width,
+                                                        gi.height,
+                                                        vertex_shader.as_ref().unwrap().module,
+                                                        info.shader.borrow().module,
+                                                        pipeline_layout.vk,
+                                                        render_pass.unwrap()).
+                                                        unwrap_or_else(|err| panic!("Error: {}", err));
 
                     let pipeline = Rc::new(RefCell::new(Pipeline {
                         device: Rc::clone(&core.device),
@@ -820,10 +637,10 @@ impl PipelineGraph {
                 }
                 else { // COMPUTE
                     bind_point = vk::PipelineBindPoint::COMPUTE;
-                    let vk_pipeline = Self::build_vk_compute_pipeline(&core.device,
-                                                                      info.shader.borrow().module,
-                                                                      pipeline_layout.vk).
-                                                                      unwrap_or_else(|err| panic!("Error: {}", err));
+                    let vk_pipeline = Pipeline::new_compute(&core.device,
+                                                            info.shader.borrow().module,
+                                                            pipeline_layout.vk).
+                                                            unwrap_or_else(|err| panic!("Error: {}", err));
 
                     let pipeline = Rc::new(RefCell::new(Pipeline {
                         device: Rc::clone(&core.device),
@@ -891,33 +708,6 @@ impl PipelineGraph {
     }
 }
 
-fn destroy_pipeline(pipeline: &mut Pipeline, destroy_non_resizables: bool) {
-    let device = &pipeline.device;
-
-    unsafe {
-    device.device_wait_idle().unwrap();
-    device.destroy_pipeline(pipeline.vk_pipeline, None);
-    if destroy_non_resizables {
-        if let Some(render_pass) = pipeline.render_pass {
-            device.destroy_render_pass(render_pass, None)
-        }
-        device.destroy_pipeline_layout(pipeline.layout.vk, None);
-        device.destroy_descriptor_set_layout(pipeline.layout.descriptor_layout, None);
-
-        if let Some(vertex_shader) = &pipeline.vertex_shader {
-            device.destroy_shader_module(vertex_shader.module, None);
-        }
-    }
-    device.destroy_shader_module(pipeline.info.shader.borrow().module, None);
-    }
-}
-
-impl Drop for Pipeline {
-    fn drop(&mut self) {
-        destroy_pipeline(self, true);
-    }
-}
-
 impl Drop for PipelineGraphFrame {
     fn drop(&mut self) {
         if let Some(framebuffer) = self.framebuffer {
@@ -942,4 +732,3 @@ impl Drop for PipelineGraph {
         }
     }
 }
-

@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::vulkan::pipeline_graph::Pipeline;
+use crate::vulkan::pipeline::Pipeline;
 
 use std::rc::Rc;
 use std::cell::RefCell;
