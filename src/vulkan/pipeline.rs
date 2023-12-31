@@ -14,7 +14,7 @@ use std::ops::Drop;
 use crate::vulkan::vkutils;
 use crate::vulkan::shader::Shader;
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct PipelineInfo {
     pub name: String,
     pub shader: Rc<RefCell<Shader>>,
@@ -244,20 +244,12 @@ impl Pipeline {
         }
         else {
             Self::build_compute_vk(&self.device, &shader, &self.layout)
-        };
+        }?;
 
-        match vk_pipeline {
-            Ok(vk_pipeline) => {
-                self.destroy(false);
-                self.info.shader.replace(shader);
-                self.vk_pipeline = vk_pipeline;
-                Ok(())
-            },
-            Err(err) => {
-                self.device.destroy_shader_module(shader.module, None);
-                Err(err)
-            }
-        }
+        self.destroy(false);
+        self.info.shader.replace(shader);
+        self.vk_pipeline = vk_pipeline;
+        Ok(())
     }
 
     pub unsafe fn destroy(&mut self, destroy_non_resizables: bool) {
@@ -271,13 +263,7 @@ impl Pipeline {
             }
             device.destroy_pipeline_layout(self.layout.vk, None);
             device.destroy_descriptor_set_layout(self.layout.descriptor_layout, None);
-    
-            if let Some(vertex_shader) = &self.vertex_shader {
-                device.destroy_shader_module(vertex_shader.module, None);
-            }
         }
-
-        device.destroy_shader_module(self.info.shader.borrow().module, None);
     }
 }
 

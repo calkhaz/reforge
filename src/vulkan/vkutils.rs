@@ -369,7 +369,7 @@ pub unsafe fn create_sampler(device: Rc<ash::Device>) -> Sampler {
     Sampler { device, vk }
 }
 
-pub unsafe fn build_vertex_shader(device: &ash::Device) -> Shader {
+pub unsafe fn build_vertex_shader(device: &Rc<ash::Device>) -> Shader {
     // full-screen triangle
     let vertex_shader_code = r#"
         #version 450
@@ -385,7 +385,7 @@ pub unsafe fn build_vertex_shader(device: &ash::Device) -> Shader {
         }
     "#;
 
-    Shader::from_contents(&device, "full-screen-triangle".to_string(), vk::ShaderStageFlags::VERTEX, vertex_shader_code.to_string()).unwrap()
+    Shader::from_contents(device, "full-screen-triangle".to_string(), vk::ShaderStageFlags::VERTEX, vertex_shader_code.to_string()).unwrap()
 }
 
 impl Drop for Buffer {

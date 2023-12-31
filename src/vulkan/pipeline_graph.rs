@@ -334,7 +334,7 @@ impl PipelineGraph {
             return;
         }
 
-        let shader = Shader::from_path(&device, &pipeline.info.shader.borrow().path.as_ref().unwrap());
+        let shader = Shader::from_path(device, &pipeline.info.shader.borrow().path.as_ref().unwrap());
 
         if let Some(shader) = shader { 
             pipeline.rebuild(self.width, self.height, shader)

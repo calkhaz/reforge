@@ -5,19 +5,19 @@ use spirv_reflect::types::{ReflectDescriptorType, ReflectDescriptorBinding};
 use crate::utils;
 use crate::vulkan::vkutils;
 
+use std::rc::Rc;
 use std::collections::HashMap;
 
 use crate::warnln;
 
-#[derive(Debug)]
 pub struct ShaderBindings {
     pub images: HashMap<String, ReflectDescriptorBinding>,
     pub buffers: Vec<ReflectDescriptorBinding>,
     pub ssbos: HashMap<String, ReflectDescriptorBinding>
 }
 
-#[derive(Debug)]
 pub struct Shader {
+    device: Rc<ash::Device>,
     pub module: vk::ShaderModule,
     pub bindings: ShaderBindings,
     pub name: String,
@@ -26,7 +26,7 @@ pub struct Shader {
 }
 
 impl Shader {
-    pub fn from_path(device: &ash::Device, path: &String) -> Option<Shader> {
+    pub fn from_path(device: &Rc<ash::Device>, path: &String) -> Option<Shader> {
         let name = std::path::Path::new(&path).file_stem().unwrap().to_str().unwrap();
         let file_contents = utils::load_file_contents(&path)?;
 
@@ -38,10 +38,10 @@ impl Shader {
         Some(shader)
     }
 
-    pub fn from_contents(device: &ash::Device, name: String, shader_type: vk::ShaderStageFlags, glsl_source: String) -> Option<Shader> {
+    pub fn from_contents(device: &Rc<ash::Device>, name: String, shader_type: vk::ShaderStageFlags, glsl_source: String) -> Option<Shader> {
 
         let shaderc_type = match shader_type {
-            vk::ShaderStageFlags::VERTEX => shaderc::ShaderKind::Vertex,
+            vk::ShaderStageFlags::VERTEX   => shaderc::ShaderKind::Vertex,
             vk::ShaderStageFlags::FRAGMENT => shaderc::ShaderKind::Fragment,
             _ => shaderc::ShaderKind::Compute
         };
@@ -50,13 +50,11 @@ impl Shader {
         let spirv_binary : &[u32] = spirv_artifact.as_binary();
 
         let (stage, bindings) = Self::reflect_descriptors(spirv_binary)?;
+        let module = Self::create_module(&device, spirv_binary)?;
 
         Some(Shader {
-            module  : Self::create_module(device, spirv_binary)?,
-            bindings: bindings,
-            name: name,
-            path: None,
-            stage: stage
+            device: Rc::clone(device), module, bindings,
+            name, path: None, stage
         })
     }
 
@@ -157,9 +155,15 @@ impl Shader {
         }
 
         Some((vkutils::reflect_stage_to_vk(module.get_shader_stage()).unwrap(), ShaderBindings {
-            images: images,
-            buffers: buffers,
-            ssbos: ssbos
+            images, buffers, ssbos
         }))
+    }
+}
+
+impl Drop for Shader {
+    fn drop(&mut self) {
+        unsafe {
+        self.device.destroy_shader_module(self.module, None);
+        }
     }
 }
