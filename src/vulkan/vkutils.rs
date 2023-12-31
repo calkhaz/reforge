@@ -251,7 +251,7 @@ pub unsafe fn create_image(core: &VkCore, name: String, format: vk::Format, widt
         .format(format)
         .mip_levels(1)
         .extent(vk::Extent3D{width: width, height: height, depth: 1})
-        // TOOD: Optimize for what is actually needed
+        // TODO: Optimize for what is actually needed
         .usage(usage)
         .sharing_mode(vk::SharingMode::EXCLUSIVE);
 
@@ -367,6 +367,25 @@ pub unsafe fn create_sampler(device: Rc<ash::Device>) -> Sampler {
     let vk = device.create_sampler(&sampler_info, None).unwrap();
 
     Sampler { device, vk }
+}
+
+pub unsafe fn build_vertex_shader(device: &ash::Device) -> Shader {
+    // full-screen triangle
+    let vertex_shader_code = r#"
+        #version 450
+
+        vec2 positions[3] = vec2[](
+            vec2(-1.0, -3.0), // top left
+            vec2(-1.0,  1.0), // bottom left
+            vec2( 3.0 , 1.0)  // bottom right
+        );
+
+        void main() {
+            gl_Position = vec4(positions[gl_VertexIndex], 0.0, 1.0);
+        }
+    "#;
+
+    Shader::from_contents(&device, "full-screen-triangle".to_string(), vk::ShaderStageFlags::VERTEX, vertex_shader_code.to_string()).unwrap()
 }
 
 impl Drop for Buffer {

@@ -395,25 +395,6 @@ impl PipelineGraph {
         sizes
     }
 
-    unsafe fn build_vertex_shader(device: &ash::Device) -> Shader {
-        // full-screen triangle
-        let vertex_shader_code = r#"
-            #version 450
-
-            vec2 positions[3] = vec2[](
-                vec2(-1.0, -3.0), // top left
-                vec2(-1.0,  1.0), // bottom left
-                vec2( 3.0 , 1.0)  // bottom right
-            );
-
-            void main() {
-                gl_Position = vec4(positions[gl_VertexIndex], 0.0, 1.0);
-            }
-        "#;
-
-        Shader::from_contents(&device, "full-screen-triangle".to_string(), vk::ShaderStageFlags::VERTEX, vertex_shader_code.to_string()).unwrap()
-    }
-
     pub unsafe fn build_render_pass(device: &ash::Device, format: vk::Format) -> vk::RenderPass {
         let color_attachment = vk::AttachmentReference {
             attachment: 0,
@@ -612,7 +593,7 @@ impl PipelineGraph {
                     bind_point = vk::PipelineBindPoint::GRAPHICS;
                     assert!(pipelines.len() < 1, "Can only have one pipeline when using fragment shaders");
                     let render_pass = Some(Self::build_render_pass(&core.device, gi.format));
-                    let vertex_shader = Some(Self::build_vertex_shader(&core.device));
+                    let vertex_shader = Some(vkutils::build_vertex_shader(&core.device));
                     let vk_pipeline = Pipeline::new_gfx(&core.device,
                                                         gi.width,
                                                         gi.height,
