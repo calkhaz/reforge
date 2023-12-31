@@ -16,6 +16,7 @@ use crate::vulkan::vkutils;
 use crate::vulkan::vkutils::{Buffer, Image, Sampler};
 use crate::vulkan::shader::Shader;
 use crate::vulkan::pipeline::{Pipeline, PipelineInfo};
+use crate::vulkan::render_pass;
 use crate::warnln;
 
 pub const FILE_INPUT: &str = "rf:file-input";
@@ -129,20 +130,6 @@ impl PipelineGraphFrame {
         }
     }
 
-    unsafe fn build_framebuffer(core: &VkCore, image: &Image, render_pass: vk::RenderPass, width: u32, height: u32) -> vk::Framebuffer {
-        let info = vk::FramebufferCreateInfo {
-            render_pass,
-            attachment_count: 1,
-            p_attachments: &image.view.unwrap(),
-            width,
-            height,
-            layers: 1,
-            ..Default::default()
-        };
-
-        core.device.create_framebuffer(&info, None).unwrap_or_else(|err| panic!("Error: {}", err))
-    }
-
     unsafe fn new(core: &VkCore, frame_info: &PipelineGraphFrameInfo) -> PipelineGraphFrame {
         let device = &core.device;
         let format = frame_info.format;
@@ -163,7 +150,7 @@ impl PipelineGraphFrame {
             for pipeline in layer {
                 if let Some(render_pass) = pipeline.borrow().render_pass {
                     attachment_image = Some(vkutils::create_image(core, "color-attachment".to_string(), format, frame_info.width, frame_info.height));
-                    framebuffer = Some(Self::build_framebuffer(core, &attachment_image.as_ref().unwrap(), render_pass, frame_info.width, frame_info.height));
+                    framebuffer = Some(render_pass::build_framebuffer(core, &attachment_image.as_ref().unwrap(), render_pass, frame_info.width, frame_info.height));
                 }
             }
         }
@@ -395,41 +382,6 @@ impl PipelineGraph {
         sizes
     }
 
-    pub unsafe fn build_render_pass(device: &ash::Device, format: vk::Format) -> vk::RenderPass {
-        let color_attachment = vk::AttachmentReference {
-            attachment: 0,
-            layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL
-        };
-
-        let attachment_desc = vk::AttachmentDescription {
-            format: format,
-            samples: vk::SampleCountFlags::TYPE_1,
-            load_op: vk::AttachmentLoadOp::DONT_CARE,
-            store_op: vk::AttachmentStoreOp::STORE,
-            //initial_layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
-            initial_layout: vk::ImageLayout::UNDEFINED,
-            final_layout: vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
-            ..Default::default()
-        };
-
-        let subpass_desc = vk::SubpassDescription {
-            pipeline_bind_point: vk::PipelineBindPoint::GRAPHICS,
-            color_attachment_count: 1,
-            p_color_attachments: &color_attachment,
-            ..Default::default()
-        };
-
-        let info = vk::RenderPassCreateInfo {
-            attachment_count: 1,
-            p_attachments: &attachment_desc,
-            subpass_count: 1,
-            p_subpasses: &subpass_desc,
-            ..Default::default()
-        };
-
-        device.create_render_pass(&info, None).unwrap_or_else(|err| panic!("Error: {}", err))
-    }
-
     fn reusable_image_remapping(ordered_pipelines: &Vec<Vec<PipelineInfo>>) -> HashMap<String, String> {
         let mut free_images : Vec<String> = Vec::new();
         let mut images: HashSet<String> = HashSet::new();
@@ -592,7 +544,7 @@ impl PipelineGraph {
                 if info.shader.borrow().stage == vk::ShaderStageFlags::FRAGMENT {
                     bind_point = vk::PipelineBindPoint::GRAPHICS;
                     assert!(pipelines.len() < 1, "Can only have one pipeline when using fragment shaders");
-                    let render_pass = Some(Self::build_render_pass(&core.device, gi.format));
+                    let render_pass = Some(render_pass::build_render_pass(&core.device, gi.format));
                     let vertex_shader = Some(vkutils::build_vertex_shader(&core.device));
                     let vk_pipeline = Pipeline::new_gfx(&core.device,
                                                         gi.width,

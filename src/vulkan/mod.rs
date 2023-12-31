@@ -5,4 +5,5 @@ pub mod command;
 pub mod swapchain;
 pub mod frame;
 pub mod vkutils;
+pub mod render_pass;
 pub mod shader;
