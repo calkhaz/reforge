@@ -5,6 +5,10 @@ edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[lib]
+name = "reforge"
+crate-type = ["cdylib"]
+
 [dependencies]
 ash = "0.37.2"
 ash-window = "0.12.0"
@@ -16,6 +20,7 @@ ffmpeg-sys-next = "6.0.1"
 clap = { version = "4.2.5", features = ["derive"] }
 spirv-reflect = "0.2.3"
 lalrpop-util = { version = "0.20.0", features = ["lexer", "unicode"] }
+pyo3 = { version = "0.20.1", features = ["extension-module"] }
 
 [build-dependencies]
 lalrpop = "0.20.0"
