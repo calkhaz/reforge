@@ -220,7 +220,7 @@ pub unsafe fn create_buffer(core: &VkCore,
 
     core.device.bind_buffer_memory(buffer, allocation.memory(), allocation.offset()).unwrap();
 
-    let mapped_data : *mut u8 = if mem_type == gpu_alloc::MemoryLocation::CpuToGpu {
+    let mapped_data : *mut u8 = if mem_type == gpu_alloc::MemoryLocation::GpuToCpu {
         allocation.mapped_ptr().unwrap().as_ptr() as *mut u8
     }
     else {

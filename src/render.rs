@@ -57,6 +57,14 @@ pub struct Render {
 }
 
 impl Render {
+    pub fn has_swapchain(&self) -> bool {
+        self.swapchain.as_ref().is_some()
+    }
+
+    pub fn num_frames(&self) -> usize {
+        self.frames.len()
+    }
+
     pub fn staging_buffer_ptr(&mut self) -> *mut u8 {
         self.staging_buffer.allocation.mapped_ptr().unwrap().as_ptr() as *mut u8
     }
@@ -248,15 +256,15 @@ impl Render {
         self.last_modified_shader_times = current_modified_shader_times;
     }
 
-    pub unsafe fn acquire_swapchain(&mut self) {
+    pub fn acquire_swapchain(&mut self) {
         let swapchain = self.get_swapchain();
-        let (present_index, _) = swapchain.loader.acquire_next_image(
+        let (present_index, _) = unsafe { swapchain.loader.acquire_next_image(
                 swapchain.vk,
                 std::u64::MAX,
                 self.frames[self.frame_index].present_complete_semaphore, // Semaphore to signal
                 vk::Fence::null(),
             )
-            .unwrap();
+            .unwrap() };
 
         self.present_index = present_index;
     }
@@ -322,6 +330,15 @@ impl Render {
             if name != FINAL_OUTPUT && name != FILE_INPUT {
                 command::transition_image_layout(&device, frame.cmd_buffer, image.vk, vk::ImageLayout::UNDEFINED, vk::ImageLayout::GENERAL);
             }
+        }
+    }
+
+    pub fn frame_fence_signaled(&self) -> bool {
+        let frame = &self.frames[self.frame_index];
+        let device = &self.vk_core.device;
+
+        unsafe {
+        device.get_fence_status(frame.fence).unwrap()
         }
     }
 
@@ -556,7 +573,7 @@ impl Render {
                                                         "input-image-staging-buffer".to_string(),
                                                         buffer_size,
                                                         vk::BufferUsageFlags::TRANSFER_SRC | vk::BufferUsageFlags::TRANSFER_DST,
-                                                        gpu_alloc::MemoryLocation::CpuToGpu);
+                                                        gpu_alloc::MemoryLocation::GpuToCpu);
 
         let staging_srgb_image = vkutils::create_image(&vk_core,
                                                        "input-image-srgb".to_string(),
