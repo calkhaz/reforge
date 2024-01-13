@@ -16,10 +16,11 @@ use ash::vk;
 use render::Render;
 use render::RenderInfo;
 use utils::TERM_CLEAR;
+use render::ParamData;
 
 use winit::{
     event::{ElementState, Event, KeyboardInput, VirtualKeyCode, WindowEvent},
-    event_loop::{ControlFlow, EventLoop},
+    event_loop::{ControlFlow, EventLoop, EventLoopBuilder},
     platform::run_return::EventLoopExtRunReturn
 };
 
@@ -73,6 +74,34 @@ impl Renderer {
 
         self.execute(input_bytes, output_bytes);
     }
+
+    pub fn set_buffer(&mut self, pipeline: String, param: String, data: &pyo3::types::PyAny) -> PyResult<()> {
+
+        let param_map = self.render.pipeline_buffer_data.entry(pipeline).or_default();
+
+        if data.is_instance_of::<pyo3::types::PyList>() {
+            let list = data.extract::<&pyo3::types::PyList>()?;
+            if let Ok(vec) = list.extract::<Vec<i32>>() {
+                param_map.insert(param, ParamData::integer_arr(vec));
+            }
+            else if let Ok(vec) = list.extract::<Vec<f32>>() {
+                param_map.insert(param, ParamData::float_arr(vec));
+            }
+            else {
+                println!("Invalid vector in set_buffer");
+            }
+        }
+        else if let Ok(val) = data.extract::<i32>() {
+            param_map.insert(param, ParamData::integer(val));
+        }
+        else if let Ok(val) = data.extract::<f32>() {
+            param_map.insert(param, ParamData::float(val));
+        }
+
+        self.render.outdate_frames();
+        Ok(())
+    }
+
 }
 impl Renderer {
     pub fn execute(&mut self, input_bytes: Option<&[u8]>, output_bytes: Option<&mut [u8]>) {
@@ -225,11 +254,28 @@ impl Reforge {
             shader_file_path
         };
 
-        let event_loop = if render_info.swapchain { Some(EventLoop::new()) } else { None };
-        let render = Render::new(render_info, &event_loop);
-        let time_since_start: std::time::Instant = std::time::Instant::now();
 
-        Ok(Renderer { render, event_loop, time_since_start, requested_exit: false })
+        let event_loop = || {
+            if cfg!(unix) || cfg!(windows) {
+                #[cfg(unix)]
+                use winit::platform::unix::EventLoopBuilderExtUnix;
+                #[cfg(windows)]
+                use winit::platform::windows::EventLoopBuilderExtWindows;
+
+                EventLoopBuilder::new().with_any_thread(true).build()
+            }
+            else {
+                EventLoopBuilder::new().build()
+            }
+        };
+
+        let event_loop = if render_info.swapchain { Some(event_loop()) } else { None };
+        let render = Render::new(render_info, &event_loop);
+
+        Ok(Renderer { render,
+                      event_loop,
+                      time_since_start: std::time::Instant::now(),
+                      requested_exit: false })
     }
 }
 

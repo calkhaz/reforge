@@ -2,7 +2,11 @@
 import argparse
 import ffmpeg
 import subprocess
+#import ui
 from subprocess import Popen
+import asyncio
+import importlib
+import importlib.util
 
 import sys
 
@@ -10,6 +14,7 @@ class Args:
     input_file: str
     output_file: str | None
     config_path: str | None
+    pyconfig_path: str | None
     shader_file_path: str | None
 
 def parse_args() -> Args:
@@ -18,14 +23,16 @@ def parse_args() -> Args:
     parser.add_argument('-i', '--input',    help="Input path")
     parser.add_argument('-o', '--output',   help="Output path")
     parser.add_argument('-c', '--config',   help="Config path")
+    parser.add_argument('-p', '--pyconfig', help="Python config path")
     parser.add_argument('-l', '--lib-path', help="Reforge library path (where the .so is)")
-    
+
     pargs = parser.parse_args()
 
     a = Args()
     a.input_file = pargs.input
     a.output_file = pargs.output
     a.config_path = pargs.config
+    a.pyconfig_path = pargs.pyconfig
     a.shader_file_path = pargs.shader_file_path
 
     if pargs.lib_path:
@@ -51,7 +58,7 @@ def ffmpeg_decode_process(in_filename):
         .output('pipe:', format='rawvideo', pix_fmt='rgba')
         .compile()
     )
-    return subprocess.Popen(args, stdout=subprocess.PIPE)
+    return subprocess.Popen(args, stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdout=subprocess.PIPE)
 
 def ffmpeg_encode_process(out_filename, width, height):
     args = (
@@ -61,7 +68,7 @@ def ffmpeg_encode_process(out_filename, width, height):
         .overwrite_output()
         .compile()
     )
-    return subprocess.Popen(args, stdin=subprocess.PIPE)
+    return subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.PIPE)
 
 def read_frame(process: Popen[bytes], bytes_amount: int) -> bytes | None:
 
@@ -79,7 +86,7 @@ def write_frame(encoder, frame: bytearray):
 def ms_s(val: float) -> str:
     return f'{val*1000:.2f}ms'
 
-def main():
+async def run_reforge():
     width, height = get_video_size(args.input_file)
     decoder = ffmpeg_decode_process(args.input_file)
     encoder = ffmpeg_encode_process(args.output_file, width, height) if args.output_file else None
@@ -91,6 +98,25 @@ def main():
     renderer = rf.new_renderer(width, height, config_path=args.config_path, use_swapchain = use_swapchain)
     output_frame = bytearray(bytes_per_frame) if args.output_file else None
 
+    module_name = "module_name"
+    file_path = args.pyconfig_path
+
+    if not file_path:
+        print("Need python config filepath")
+        sys.exit(-1)
+
+    spec = importlib.util.spec_from_file_location(module_name, file_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    # Set all buffer values from config
+    if module.nodes and isinstance(module.nodes,dict):
+        for key, value in module.nodes.items():
+            if isinstance(value, dict):
+                for subkey, subvalue in value.items():
+                    renderer.set_buffer(key, subkey, subvalue)
+                    # print(key, subkey, subvalue)
+
     out_of_frames = False
 
     while True:
@@ -100,7 +126,6 @@ def main():
         if out_of_frames: break
 
         renderer.execute(in_frame, output_frame)
-
         if renderer.requested_exit(): break
 
         if output_frame:
@@ -115,3 +140,7 @@ def main():
         if encoder.stdin is not None:
             encoder.stdin.close()
         encoder.wait()
+
+def main():
+    asyncio.run(run_reforge())
+    #ui.run_ui(run_reforge)

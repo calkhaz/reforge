@@ -1398,6 +1398,7 @@ dependencies = [
  "gpu-allocator",
  "lalrpop",
  "lalrpop-util",
+ "num-traits",
  "pyo3",
  "raw-window-handle 0.5.2",
  "shaderc",

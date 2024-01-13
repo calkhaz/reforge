@@ -21,6 +21,7 @@ clap = { version = "4.2.5", features = ["derive"] }
 spirv-reflect = "0.2.3"
 lalrpop-util = { version = "0.20.0", features = ["lexer", "unicode"] }
 pyo3 = { version = "0.20.1", features = ["extension-module"] }
+num-traits = "0.2.17"
 
 [build-dependencies]
 lalrpop = "0.20.0"
