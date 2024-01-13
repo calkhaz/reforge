@@ -1,5 +1,6 @@
 # TODO: https://github.com/hamdanal/rich-argparse
 import argparse
+from types import ModuleType
 import ffmpeg
 import subprocess
 #import ui
@@ -7,6 +8,7 @@ from subprocess import Popen
 import asyncio
 import importlib
 import importlib.util
+import os
 
 import sys
 
@@ -86,6 +88,25 @@ def write_frame(encoder, frame: bytearray):
 def ms_s(val: float) -> str:
     return f'{val*1000:.2f}ms'
 
+# TODO: types for module https://stackoverflow.com/questions/69090545/typehint-importing-module-dynamically-using-importlib
+def load_python_config(path: str) -> ModuleType | None:
+    spec = importlib.util.spec_from_file_location("module_name", path)
+    if spec and spec.loader:
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    return None
+
+def write_config_to_buffer(renderer: reforge.Renderer, module: ModuleType):
+    # Set all buffer values from config
+    if module.nodes and isinstance(module.nodes,dict):
+        for key, value in module.nodes.items():
+            if isinstance(value, dict):
+                for subkey, subvalue in value.items():
+                    renderer.set_buffer(key, subkey, subvalue)
+                    # print(key, subkey, subvalue)
+
 async def run_reforge():
     width, height = get_video_size(args.input_file)
     decoder = ffmpeg_decode_process(args.input_file)
@@ -98,24 +119,16 @@ async def run_reforge():
     renderer = rf.new_renderer(width, height, config_path=args.config_path, use_swapchain = use_swapchain)
     output_frame = bytearray(bytes_per_frame) if args.output_file else None
 
-    module_name = "module_name"
     file_path = args.pyconfig_path
 
     if not file_path:
         print("Need python config filepath")
         sys.exit(-1)
 
-    spec = importlib.util.spec_from_file_location(module_name, file_path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module = load_python_config(file_path)
+    last_config_modification_time = os.path.getmtime(file_path)
 
-    # Set all buffer values from config
-    if module.nodes and isinstance(module.nodes,dict):
-        for key, value in module.nodes.items():
-            if isinstance(value, dict):
-                for subkey, subvalue in value.items():
-                    renderer.set_buffer(key, subkey, subvalue)
-                    # print(key, subkey, subvalue)
+    write_config_to_buffer(renderer, module)
 
     out_of_frames = False
 
@@ -124,6 +137,12 @@ async def run_reforge():
         out_of_frames = True if in_frame is None else False
 
         if out_of_frames: break
+
+        config_modification_time = os.path.getmtime(file_path)
+        if config_modification_time != last_config_modification_time:
+            module = load_python_config(file_path)
+            last_config_modification_time = config_modification_time
+            write_config_to_buffer(renderer, module)
 
         renderer.execute(in_frame, output_frame)
         if renderer.requested_exit(): break
