@@ -115,10 +115,6 @@ async def run_reforge():
     bytes_per_frame = width * height * 4
     use_swapchain = args.output_file is None
 
-    rf = reforge.Reforge(shader_path = "shaders")
-    renderer = rf.new_renderer(width, height, config_path=args.config_path, use_swapchain = use_swapchain)
-    output_frame = bytearray(bytes_per_frame) if args.output_file else None
-
     file_path = args.pyconfig_path
 
     if not file_path:
@@ -127,6 +123,10 @@ async def run_reforge():
 
     module = load_python_config(file_path)
     last_config_modification_time = os.path.getmtime(file_path)
+
+    rf = reforge.Reforge(shader_path = "shaders")
+    renderer = rf.new_renderer(module.graph, width, height, config_path=args.config_path, use_swapchain = use_swapchain)
+    output_frame = bytearray(bytes_per_frame) if args.output_file else None
 
     write_config_to_buffer(renderer, module)
 

@@ -57,6 +57,7 @@ impl ParamData {
 }
 
 pub struct RenderInfo {
+    pub graph: String,
     pub width: u32,
     pub height: u32,
     pub num_frames: usize,
@@ -157,7 +158,8 @@ impl Render {
                     Some(path) => { Some(config_single_shader_parse(path.clone(), info.has_input_image)) }
 
                     // Use the default passthrough configuration
-                    None => { config_file_parse("input -> passthrough -> output".to_string(), true, &info.shader_path) }
+                    //None => { config_file_parse("input -> passthrough -> output".to_string(), true, &info.shader_path) }
+                    None => { config_file_parse(info.graph.to_string(), true, &info.shader_path) }
                 }
             }
         }

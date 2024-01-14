@@ -240,9 +240,10 @@ impl Reforge {
         Reforge { shader_path }
     }
 
-    pub fn new_renderer(&self, width: u32, height: u32, num_workers: Option<u32>,
+    pub fn new_renderer(&self, graph: String, width: u32, height: u32, num_workers: Option<u32>,
                         use_swapchain: Option<bool>, config_path: Option<String>, shader_file_path: Option<String>) -> PyResult<Renderer> {
         let render_info = RenderInfo {
+            graph,
             width,
             height,
             num_frames: num_workers.unwrap_or(1) as usize,
