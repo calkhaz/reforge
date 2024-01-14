@@ -61,7 +61,6 @@ pub struct RenderInfo {
     pub width: u32,
     pub height: u32,
     pub num_frames: usize,
-    pub config_path: Option<String>,
     pub shader_path: String,
     pub format: vk::Format,
     pub swapchain: bool,
@@ -77,7 +76,6 @@ pub struct Render {
     // Used to bring buffer -> srgba8 -> X or X -> srgba8 -> buffer
     staging_srgb_image: Image,
     pub staging_buffer: Buffer,
-    last_modified_config_time: u64,
     last_modified_shader_times: HashMap<String, u64>,
     present_index: u32,
     pub frame_index: usize,
@@ -149,25 +147,7 @@ impl Render {
     }
 
     fn create_config(info: &RenderInfo) -> Option<Config>{
-        match info.config_path.as_ref() {
-            // Read from provided configuration file
-            Some(path) => { 
-                let contents = utils::load_file_contents(&path);
-                if contents.is_none() { warnln!("Empty configuration file"); return None }
-                config_file_parse(contents.unwrap(), info.has_input_image, &info.shader_path)
-            }
-            // No configuration file path provided
-            None => {
-                match info.shader_file_path.as_ref() {
-                    // Create a configuration for just a single provided shader file
-                    Some(path) => { Some(config_single_shader_parse(path.clone(), info.has_input_image)) }
-
-                    // Use the default passthrough configuration
-                    //None => { config_file_parse("input -> passthrough -> output".to_string(), true, &info.shader_path) }
-                    None => { config_file_parse(info.graph.to_string(), true, &info.shader_path) }
-                }
-            }
-        }
+        config_file_parse(info.graph.to_string(), true, &info.shader_path)
     }
 
     fn recreate_graph(&mut self) -> Option<()> {
@@ -185,35 +165,6 @@ impl Render {
         self.frame_index = 0;
 
         Some(())
-    }
-
-    fn config_changed(&mut self) -> bool {
-        if self.info.config_path.is_none() {
-            return false;
-        }
-        let config_path = self.info.config_path.as_ref().unwrap();
-
-        let current_modified_config_time = utils::get_modified_time(&config_path);
-
-        match current_modified_config_time {
-            0 => {
-                if 0 != self.last_modified_config_time {
-                    warnln!("Unable to access config file: {}", config_path);
-                }
-            },
-            modified_timestamp => {
-                if modified_timestamp == self.last_modified_config_time {
-                    return false;
-                }
-
-                self.last_modified_config_time = current_modified_config_time;
-                self.last_modified_shader_times = utils::get_modified_times(&self.graph.pipelines);
-
-                return true;
-            }
-        };
-
-        false
     }
 
     pub fn write_to_outdated_ubos(&mut self) {
@@ -622,7 +573,6 @@ impl Render {
         }
 
         // If our configuration has changed, live reload it
-        //if self.config_changed() {
         if !self.reload_graph.is_empty() {
             let working_graph = self.info.graph.clone();
             self.info.graph = self.reload_graph.clone();
@@ -689,7 +639,6 @@ impl Render {
                                                        info.width, info.height);
 
         let last_modified_shader_times: HashMap<String, u64> = utils::get_modified_times(&graph.pipelines);
-        let last_modified_config_time: u64 = if let Some(pipeline_config) = info.config_path.as_ref() { utils::get_modified_time(pipeline_config) } else { 0 };
 
         let swapchain = if info.swapchain { Some(SwapChain::new(&vk_core, info.width, info.height)) } else { None };
 
@@ -700,7 +649,6 @@ impl Render {
             info: info,
             staging_srgb_image: staging_srgb_image,
             staging_buffer: staging_buffer,
-            last_modified_config_time: last_modified_config_time,
             last_modified_shader_times: last_modified_shader_times,
             present_index: 0,
             frame_index: 0,

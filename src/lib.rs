@@ -2,7 +2,6 @@ extern crate ash;
 extern crate clap;
 extern crate gpu_allocator;
 extern crate shaderc;
-extern crate ffmpeg_sys_next as ffmpeg;
 #[macro_use] extern crate lalrpop_util;
 
 use pyo3::prelude::*;
@@ -251,7 +250,6 @@ impl Reforge {
             width,
             height,
             num_frames: num_workers.unwrap_or(1) as usize,
-            config_path: None,
             shader_path: self.shader_path.clone(),
             format: (ShaderFormat::Rgba32f).to_vk_format(),
             swapchain: use_swapchain.unwrap_or(false),

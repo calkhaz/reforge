@@ -16,7 +16,6 @@ raw-window-handle = "0.5"
 winit = "0.27.1"
 shaderc = "0.8"
 gpu-allocator = "0.22.0"
-ffmpeg-sys-next = "6.0.1"
 clap = { version = "4.2.5", features = ["derive"] }
 spirv-reflect = "0.2.3"
 lalrpop-util = { version = "0.20.0", features = ["lexer", "unicode"] }
