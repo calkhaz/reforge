@@ -132,11 +132,22 @@ async def run_reforge():
 
     out_of_frames = False
 
+    in_frame = None
+    
     while True:
-        in_frame = read_frame(decoder, bytes_per_frame)
-        out_of_frames = True if in_frame is None else False
+        # Decode the next frame
+        if not out_of_frames:
+            next_frame = read_frame(decoder, bytes_per_frame)
 
-        if out_of_frames: break
+            # No frames left to decode
+            if next_frame is None:
+                out_of_frames = True
+            else:
+                in_frame = next_frame
+
+
+        assert in_frame is not None
+        if out_of_frames and not use_swapchain: break
 
         config_modification_time = os.path.getmtime(file_path)
         if config_modification_time != last_config_modification_time:
@@ -147,7 +158,7 @@ async def run_reforge():
         renderer.execute(in_frame, output_frame)
         if renderer.requested_exit(): break
 
-        if output_frame:
+        if output_frame and not out_of_frames:
             write_frame(encoder, output_frame)
 
     if decoder.stdout: decoder.stdout.close()
