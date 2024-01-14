@@ -134,6 +134,8 @@ async def run_reforge():
 
     in_frame = None
     
+    num_frames = 0
+
     while True:
         # Decode the next frame
         if not out_of_frames:
@@ -141,8 +143,16 @@ async def run_reforge():
 
             # No frames left to decode
             if next_frame is None:
-                out_of_frames = True
+                if num_frames > 1 and use_swapchain:
+                    # Restart decoder so we can infinitely loop in the swapchain
+                    if decoder.stdout: decoder.stdout.close()
+                    decoder.wait()
+                    decoder = ffmpeg_decode_process(args.input_file)
+                    continue
+                else:
+                    out_of_frames = True
             else:
+                num_frames += 1
                 in_frame = next_frame
 
 
