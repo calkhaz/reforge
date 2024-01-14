@@ -16,7 +16,6 @@ class Args:
     input_file: str
     output_file: str | None
     config_path: str | None
-    pyconfig_path: str | None
     shader_file_path: str | None
 
 def parse_args() -> Args:
@@ -25,7 +24,6 @@ def parse_args() -> Args:
     parser.add_argument('-i', '--input',    help="Input path")
     parser.add_argument('-o', '--output',   help="Output path")
     parser.add_argument('-c', '--config',   help="Config path")
-    parser.add_argument('-p', '--pyconfig', help="Python config path")
     parser.add_argument('-l', '--lib-path', help="Reforge library path (where the .so is)")
 
     pargs = parser.parse_args()
@@ -34,7 +32,6 @@ def parse_args() -> Args:
     a.input_file = pargs.input
     a.output_file = pargs.output
     a.config_path = pargs.config
-    a.pyconfig_path = pargs.pyconfig
     a.shader_file_path = pargs.shader_file_path
 
     if pargs.lib_path:
@@ -114,17 +111,17 @@ async def run_reforge():
     bytes_per_frame = width * height * 4
     use_swapchain = args.output_file is None
 
-    file_path = args.pyconfig_path
+    config_path = args.config_path
 
-    if not file_path:
+    if not config_path:
         print("Need python config filepath")
         sys.exit(-1)
 
-    module = load_python_config(file_path)
-    last_config_modification_time = os.path.getmtime(file_path)
+    module = load_python_config(config_path)
+    last_config_modification_time = os.path.getmtime(config_path)
 
     rf = reforge.Reforge(shader_path = "shaders")
-    renderer = rf.new_renderer(module.graph, width, height, config_path=args.config_path, use_swapchain = use_swapchain)
+    renderer = rf.new_renderer(module.graph, width, height, use_swapchain = use_swapchain)
     output_frame = bytearray(bytes_per_frame) if args.output_file else None
 
     write_config_to_buffer(renderer, module)
@@ -158,9 +155,9 @@ async def run_reforge():
         assert in_frame is not None
         if out_of_frames and not use_swapchain: break
 
-        config_modification_time = os.path.getmtime(file_path)
+        config_modification_time = os.path.getmtime(config_path)
         if config_modification_time != last_config_modification_time:
-            module = load_python_config(file_path)
+            module = load_python_config(config_path)
             last_config_modification_time = config_modification_time
             write_config_to_buffer(renderer, module)
 

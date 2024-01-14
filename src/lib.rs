@@ -241,13 +241,13 @@ impl Reforge {
     }
 
     pub fn new_renderer(&self, graph: String, width: u32, height: u32, num_workers: Option<u32>,
-                        use_swapchain: Option<bool>, config_path: Option<String>, shader_file_path: Option<String>) -> PyResult<Renderer> {
+                        use_swapchain: Option<bool>, shader_file_path: Option<String>) -> PyResult<Renderer> {
         let render_info = RenderInfo {
             graph,
             width,
             height,
             num_frames: num_workers.unwrap_or(1) as usize,
-            config_path,
+            config_path: None,
             shader_path: self.shader_path.clone(),
             format: (ShaderFormat::Rgba32f).to_vk_format(),
             swapchain: use_swapchain.unwrap_or(false),
