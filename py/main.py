@@ -181,5 +181,9 @@ async def run_reforge():
         encoder.wait()
 
 def main():
-    asyncio.run(run_reforge())
+    try:
+        loop = asyncio.get_event_loop()
+        loop.run_until_complete(run_reforge())
+    except KeyboardInterrupt:
+        pass
     #ui.run_ui(run_reforge)
