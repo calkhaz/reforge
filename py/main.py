@@ -47,7 +47,6 @@ import reforge as reforge
 
 def get_video_size(filename):
     probe = ffmpeg.probe(filename)
-    print(probe)
     video_info = next(s for s in probe['streams'] if s['codec_type'] == 'video')
     width =  int(video_info['width'])
     height = int(video_info['height'])
@@ -143,8 +142,8 @@ async def run_reforge():
 
             # No frames left to decode
             if next_frame is None:
+                # Restart decoder so we can infinitely loop videos in the swapchain
                 if num_frames > 1 and use_swapchain:
-                    # Restart decoder so we can infinitely loop in the swapchain
                     if decoder.stdout: decoder.stdout.close()
                     decoder.wait()
                     decoder = ffmpeg_decode_process(args.input_file)
