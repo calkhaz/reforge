@@ -9,6 +9,7 @@ import asyncio
 import importlib
 import importlib.util
 import os
+import time
 
 import sys
 
@@ -103,6 +104,18 @@ def write_config_to_buffer(renderer: reforge.Renderer, module: ModuleType):
                     renderer.set_buffer(key, subkey, subvalue)
                     # print(key, subkey, subvalue)
 
+def file_timestamp(path: str) -> float:
+    try:
+        return os.path.getmtime(path)
+
+    # Sometimes if we catch the file during save, we end up here
+    # In such a case, we'll simply sleep .5ms and check again
+    except FileNotFoundError:
+        time.sleep(.5/1e3)
+        return os.path.getmtime(path)
+
+
+
 async def run_reforge():
     width, height = get_video_size(args.input_file)
     decoder = ffmpeg_decode_process(args.input_file)
@@ -118,7 +131,7 @@ async def run_reforge():
         sys.exit(-1)
 
     module = load_python_config(config_path)
-    last_config_modification_time = os.path.getmtime(config_path)
+    last_config_modification_time = file_timestamp(config_path)
     last_graph = module.graph
 
     rf = reforge.Reforge(shader_path = "shaders")
@@ -156,7 +169,7 @@ async def run_reforge():
         assert in_frame is not None
         if out_of_frames and not use_swapchain: break
 
-        config_modification_time = os.path.getmtime(config_path)
+        config_modification_time = file_timestamp(config_path)
         if config_modification_time != last_config_modification_time:
             module = load_python_config(config_path)
             if module.graph != last_graph:
