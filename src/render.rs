@@ -139,10 +139,6 @@ impl Render {
 
         let mut graph = PipelineGraph::new(&vk_core, graph_info)?;
 
-        for (pipeline_name, instance) in &pipeline_config.pipeline_instances {
-            Self::initialize_ubos(&mut graph, pipeline_name, &instance.parameters);
-        }
-
         Some(graph)
     }
 
@@ -218,51 +214,6 @@ impl Render {
 
             write_to_buffer(param, ptr, buffer_block.block_type)
                 .unwrap_or_else(|| warnln!("Failed to write param to buffer {}", name) );
-        }
-    }
-
-    pub fn initialize_ubos(graph: &mut PipelineGraph, pipeline_name: &String, parameters: &HashMap<String, String>) {
-
-        let write_to_buffer = |value_str: &String, ptr: *mut u8, block_type: spirv_reflect::types::ReflectTypeFlags | {
-            match block_type {
-                spirv_reflect::types::ReflectTypeFlags::FLOAT => {
-                    let value = value_str.parse::<f32>().unwrap_or_else(|e| { warnln!("Failed to convert: {}", e); 0.0 });
-                    unsafe { std::ptr::copy_nonoverlapping(&value, ptr as *mut f32, 1); }
-                },
-                spirv_reflect::types::ReflectTypeFlags::INT => {
-                    let value = value_str.parse::<i32>().unwrap_or_else(|e| { warnln!("Failed to convert: {}", e); 0 });
-                    unsafe { std::ptr::copy_nonoverlapping(&value, ptr as *mut i32, 1); }
-                },
-                spirv_reflect::types::ReflectTypeFlags::BOOL => {
-                    let value = value_str.parse::<bool>().unwrap_or_else(|e| { warnln!("Failed to convert: {}", e); false });
-                    unsafe { std::ptr::copy_nonoverlapping(&value, ptr as *mut bool, 1); }
-                },
-                _ => {}
-            };
-        };
-
-        for frame in &mut graph.frames {
-            if let Some(ubo) = frame.ubos.get_mut(pipeline_name) {
-                for (buffer_member_name, buffer_block) in ubo {
-                    if buffer_member_name == "_rf_time" {
-                        continue;
-                    }
-
-                    unsafe {
-                    let ptr = buffer_block.buffer.mapped_data.offset(buffer_block.offset as isize);
-
-                    if let Some(param_value) = parameters.get(buffer_member_name) {
-                        write_to_buffer(param_value, ptr, buffer_block.block_type);
-                    }
-                    else {
-                        let value = 0;
-                        std::ptr::copy_nonoverlapping(&value, ptr as *mut u8, buffer_block.size as usize);
-                    }
-                    }
-
-
-                }
-            }
         }
     }
 
