@@ -85,7 +85,8 @@ pub struct Render {
     window: Option<winit::window::Window>,
     pub vk_core: VkCore,
     pub swapchain_rebuilt_required: bool,
-    pub pipeline_buffer_data: HashMap<String, HashMap<String, ParamData>>
+    pub pipeline_buffer_data: HashMap<String, HashMap<String, ParamData>>,
+    reload_graph: String
 }
 
 impl Render {
@@ -105,6 +106,10 @@ impl Render {
 
     pub fn staging_buffer_ptr(&mut self) -> *mut u8 {
         self.staging_buffer.allocation.mapped_ptr().unwrap().as_ptr() as *mut u8
+    }
+
+    pub fn update_graph(&mut self, graph: String) {
+        self.reload_graph = graph;
     }
 
     fn get_swapchain(&self) -> &SwapChain {
@@ -617,8 +622,16 @@ impl Render {
         }
 
         // If our configuration has changed, live reload it
-        if self.config_changed() {
+        //if self.config_changed() {
+        if !self.reload_graph.is_empty() {
+            let working_graph = self.info.graph.clone();
+            self.info.graph = self.reload_graph.clone();
             full_reload_performed = self.recreate_graph().is_some();
+
+            self.reload_graph.clear();
+            if !full_reload_performed {
+                self.info.graph = working_graph;
+            }
         }
 
         // If any of our shaders have changed, live reload them
@@ -695,7 +708,8 @@ impl Render {
             swapchain: swapchain,
             window: window,
             swapchain_rebuilt_required: false,
-            pipeline_buffer_data: HashMap::new()
+            pipeline_buffer_data: HashMap::new(),
+            reload_graph: "".to_string()
         }
 
         }

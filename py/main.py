@@ -119,6 +119,7 @@ async def run_reforge():
 
     module = load_python_config(config_path)
     last_config_modification_time = os.path.getmtime(config_path)
+    last_graph = module.graph
 
     rf = reforge.Reforge(shader_path = "shaders")
     renderer = rf.new_renderer(module.graph, width, height, use_swapchain = use_swapchain)
@@ -158,6 +159,9 @@ async def run_reforge():
         config_modification_time = os.path.getmtime(config_path)
         if config_modification_time != last_config_modification_time:
             module = load_python_config(config_path)
+            if module.graph != last_graph:
+                renderer.reload_graph(module.graph)
+                last_graph = module.graph
             last_config_modification_time = config_modification_time
             write_config_to_buffer(renderer, module)
 

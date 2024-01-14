@@ -102,6 +102,10 @@ impl Renderer {
         Ok(())
     }
 
+    pub fn reload_graph(&mut self, graph: String) {
+        self.render.update_graph(graph);
+    }
+
 }
 impl Renderer {
     pub fn execute(&mut self, input_bytes: Option<&[u8]>, output_bytes: Option<&mut [u8]>) {
