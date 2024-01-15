@@ -81,20 +81,20 @@ impl Renderer {
         if data.is_instance_of::<pyo3::types::PyList>() {
             let list = data.extract::<&pyo3::types::PyList>()?;
             if let Ok(vec) = list.extract::<Vec<i32>>() {
-                param_map.insert(param, ParamData::integer_arr(vec));
+                param_map.insert(param, ParamData::IntegerArr(vec));
             }
             else if let Ok(vec) = list.extract::<Vec<f32>>() {
-                param_map.insert(param, ParamData::float_arr(vec));
+                param_map.insert(param, ParamData::FloatArr(vec));
             }
             else {
                 println!("Invalid vector in set_buffer");
             }
         }
         else if let Ok(val) = data.extract::<i32>() {
-            param_map.insert(param, ParamData::integer(val));
+            param_map.insert(param, ParamData::Integer(val));
         }
         else if let Ok(val) = data.extract::<f32>() {
-            param_map.insert(param, ParamData::float(val));
+            param_map.insert(param, ParamData::Float(val));
         }
 
         self.render.outdate_frames();

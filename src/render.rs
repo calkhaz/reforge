@@ -30,19 +30,19 @@ use winit::{
 };
 
 pub enum ParamData {
-    boolean(bool),
-    float(f32),
-    integer(i32),
-    float_arr(Vec<f32>),
-    integer_arr(Vec<i32>)
+    Boolean(bool),
+    Float(f32),
+    Integer(i32),
+    FloatArr(Vec<f32>),
+    IntegerArr(Vec<i32>)
 }
 
 impl ParamData {
     fn primitive<T: num_traits::cast::NumCast>(&self) -> Option<T> {
         match self {
-            ParamData::float(v)   => { num_traits::cast::<f32, T>(*v) },
-            ParamData::integer(v) => { num_traits::cast::<i32, T>(*v) },
-            ParamData::boolean(v) => { let tmp = *v as u32;
+            ParamData::Float(v)   => { num_traits::cast::<f32, T>(*v) },
+            ParamData::Integer(v) => { num_traits::cast::<i32, T>(*v) },
+            ParamData::Boolean(v) => { let tmp = *v as u32;
                                        num_traits::cast::<u32, T>(tmp) },
             _ => None
         }
