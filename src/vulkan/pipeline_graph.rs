@@ -67,7 +67,9 @@ struct PipelineGraphFrameInfo<'a> {
 
 pub struct BufferBlock {
     pub size: u32,
-    pub offset:u32,
+    pub offset: u32,
+    pub array_stride: u32,
+    pub array_len: u32,
     pub block_type: ReflectTypeFlags,
     pub buffer: Rc<Buffer>
 }
@@ -277,6 +279,8 @@ impl PipelineGraphFrame {
                     let block = BufferBlock {
                         size: reflect_block.size,
                         offset: reflect_block.offset,
+                        array_stride: reflect_block.array.stride,
+                        array_len: if reflect_block.array.dims.len() == 1 { reflect_block.array.dims[0] } else { 0 },
                         block_type: reflect_block.type_description.as_ref().unwrap().type_flags,
                         buffer: Rc::clone(buffer),
                     };

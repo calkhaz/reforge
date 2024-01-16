@@ -33,8 +33,8 @@ pub enum ParamData {
     Boolean(bool),
     Float(f32),
     Integer(i32),
-    FloatArr(Vec<f32>),
-    IntegerArr(Vec<i32>)
+    FloatArray(Vec<f32>),
+    IntegerArray(Vec<i32>)
 }
 
 impl ParamData {
@@ -54,6 +54,35 @@ impl ParamData {
         Some(())
     }
 
+    fn primitive_vec<T: num_traits::cast::NumCast>(&self) -> Option<Vec<T>> {
+        match self {
+            ParamData::FloatArray(v)   => {
+                Some(v.iter().filter_map(|val|  { num_traits::cast::<f32, T>(*val) }).collect())
+            },
+            ParamData::IntegerArray(v) => {
+                Some(v.iter().filter_map(|val|  { num_traits::cast::<i32, T>(*val) }).collect())
+            },
+            _ => None
+        }
+    }
+
+    fn write_vec_to_buffer<T: num_traits::cast::NumCast>(&self, buffer: *mut u8, block: &BufferBlock) -> Option<()> {
+        let vec = self.primitive_vec::<T>()?;
+        let mut offset_buffer = buffer;
+        let mut offset = 0;
+
+        if vec.len() > block.array_len as usize {
+            warnln!("Vector exceeds block size");
+            return None
+        }
+
+        for v in vec {
+            unsafe { std::ptr::copy_nonoverlapping(&v, offset_buffer as *mut T, 1); }
+            offset_buffer = unsafe { buffer.offset(offset as isize) };
+            offset += block.array_stride;
+        }
+        Some(())
+    }
 }
 
 pub struct RenderInfo {
@@ -172,14 +201,18 @@ impl Render {
 
         let ubos = &mut self.graph.frames[self.frame_index].ubos;
 
-        let write_to_buffer = |val: &ParamData, ptr: *mut u8, block_type: spirv_reflect::types::ReflectTypeFlags | -> Option<()> {
+        let write_to_buffer = |val: &ParamData, ptr: *mut u8, block: &BufferBlock | -> Option<()> {
             use spirv_reflect::types::ReflectTypeFlags as spirv_t;
-            match block_type {
-                spirv_t::FLOAT => { val.write_to_buffer::<f32>(ptr)?; },
-                spirv_t::INT   => { val.write_to_buffer::<i32>(ptr)?; },
-                spirv_t::BOOL  => { val.write_to_buffer::<u32>(ptr)?; },
-                _ => {}
-            };
+            let t = block.block_type;
+
+            // Array primitives
+            if      t == spirv_t::FLOAT | spirv_t::ARRAY  { val.write_vec_to_buffer::<f32>(ptr, block)?; }
+            else if t == spirv_t::INT   | spirv_t::ARRAY  { val.write_vec_to_buffer::<i32>(ptr, block)?; }
+            // Single primitives
+            else if t == spirv_t::FLOAT { val.write_to_buffer::<f32>(ptr)?; }
+            else if t == spirv_t::INT   { val.write_to_buffer::<i32>(ptr)?; }
+            else if t == spirv_t::BOOL  { val.write_to_buffer::<u32>(ptr)?; }
+
             Some(())
         };
 
@@ -196,7 +229,7 @@ impl Render {
         let matched_params: Vec<Vec<(&String, &ParamData, &BufferBlock)>> =
             matched_pipelines.iter().filter_map(|(param_map, buffer_map)|{
 
-                // Courple parameter and buffer block by name and flatten into vector
+                // Couple parameter and buffer block by name and flatten into vector
                 let combined: Vec<(&String, &ParamData, &BufferBlock)> =
                     param_map.iter().filter_map(|(name, param)| {
                         match buffer_map.get(name) {
@@ -212,9 +245,11 @@ impl Render {
         for (name, param, buffer_block) in matched_params.iter().flatten() {
             let ptr = unsafe { buffer_block.buffer.mapped_data.offset(buffer_block.offset as isize) };
 
-            write_to_buffer(param, ptr, buffer_block.block_type)
+            write_to_buffer(param, ptr, &buffer_block)
                 .unwrap_or_else(|| warnln!("Failed to write param to buffer {}", name) );
         }
+
+        for v in &mut self.frame_outdated { *v = false; }
     }
 
     pub fn update_ubos(&mut self, time: f32) {

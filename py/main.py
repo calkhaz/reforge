@@ -114,8 +114,6 @@ def file_timestamp(path: str) -> float:
         time.sleep(.5/1e3)
         return os.path.getmtime(path)
 
-
-
 async def run_reforge():
     width, height = get_video_size(args.input_file)
     decoder = ffmpeg_decode_process(args.input_file)
