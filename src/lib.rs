@@ -2,7 +2,6 @@ extern crate ash;
 extern crate clap;
 extern crate gpu_allocator;
 extern crate shaderc;
-#[macro_use] extern crate lalrpop_util;
 
 use pyo3::prelude::*;
 

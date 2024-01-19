@@ -1,10 +1,9 @@
 use ash::vk;
 use gpu_allocator as gpu_alloc;
 
-use crate::config::config::Config;
-use crate::config::config::parse_file as config_file_parse;
-use crate::config::config::single_shader_parse as config_single_shader_parse;
 use crate::utils;
+use crate::config;
+use crate::config::Config;
 use crate::vulkan::command;
 use crate::vulkan::core::VkCore;
 use crate::vulkan::frame::Frame;
@@ -21,7 +20,6 @@ use crate::warnln;
 
 use std::collections::HashMap;
 use std::default::Default;
-use std::hash::Hash;
 use std::rc::Rc;
 
 use winit::{
@@ -172,7 +170,7 @@ impl Render {
     }
 
     fn create_config(info: &RenderInfo) -> Option<Config>{
-        config_file_parse(info.graph.to_string(), true, &info.shader_path)
+        config::parse(info.graph.to_string(), &info.shader_path)
     }
 
     fn recreate_graph(&mut self) -> Option<()> {
@@ -216,7 +214,7 @@ impl Render {
             Some(())
         };
 
-        // For every ppipeline, pair parameter and bufferblock hashmaps by pipeline name
+        // For every pipeline, pair parameter and bufferblock hashmaps by pipeline name
         let matched_pipelines: Vec<(&HashMap<String, ParamData>, &HashMap<String, BufferBlock>)> =
             ubos.iter().filter_map(|(name, buffer_map)| {
                 match self.pipeline_buffer_data.get(name) {
