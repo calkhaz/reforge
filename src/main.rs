@@ -5,7 +5,6 @@ extern crate shaderc;
 extern crate ffmpeg_sys_next as ffmpeg;
 extern crate tracing;
 extern crate tracing_subscriber;
-#[macro_use] extern crate lalrpop_util;
 
 mod config;
 mod imagefileio;

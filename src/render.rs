@@ -1,10 +1,9 @@
 use ash::vk;
 use gpu_allocator as gpu_alloc;
 
-use crate::config::config::Config;
-use crate::config::config::parse_file as config_file_parse;
-use crate::config::config::single_shader_parse as config_single_shader_parse;
 use crate::utils;
+use crate::config;
+use crate::config::Config;
 use crate::vulkan::command;
 use crate::vulkan::core::VkCore;
 use crate::vulkan::frame::Frame;
@@ -89,34 +88,13 @@ impl Render {
             num_frames: info.num_frames
         };
 
-        let mut graph = PipelineGraph::new(&vk_core, graph_info)?;
-
-        for (pipeline_name, instance) in &pipeline_config.pipeline_instances {
-            Self::initialize_ubos(&mut graph, pipeline_name, &instance.parameters);
-        }
+        let graph = PipelineGraph::new(&vk_core, graph_info)?;
 
         Some(graph)
     }
 
     fn create_config(info: &RenderInfo) -> Option<Config>{
-        match info.config_path.as_ref() {
-            // Read from provided configuration file
-            Some(path) => { 
-                let contents = utils::load_file_contents(&path);
-                if contents.is_none() { warnln!("Empty configuration file"); return None }
-                config_file_parse(contents.unwrap(), info.has_input_image, &info.shader_path)
-            }
-            // No configuration file path provided
-            None => {
-                match info.shader_file_path.as_ref() {
-                    // Create a configuration for just a single provided shader file
-                    Some(path) => { Some(config_single_shader_parse(path.clone(), info.has_input_image)) }
-
-                    // Use the RenderInfo graph
-                    None => { config_file_parse(info.graph.to_string(), true, &info.shader_path) }
-                }
-            }
-        }
+        config::parse(info.graph.to_string(), &info.shader_path)
     }
 
     fn recreate_graph(&mut self) -> Option<()> {
@@ -134,80 +112,6 @@ impl Render {
         self.frame_index = 0;
 
         Some(())
-    }
-
-    fn config_changed(&mut self) -> bool {
-        if self.info.config_path.is_none() {
-            return false;
-        }
-        let config_path = self.info.config_path.as_ref().unwrap();
-
-        let current_modified_config_time = utils::get_modified_time(&config_path);
-
-        match current_modified_config_time {
-            0 => {
-                if 0 != self.last_modified_config_time {
-                    warnln!("Unable to access config file: {}", config_path);
-                }
-            },
-            modified_timestamp => {
-                if modified_timestamp == self.last_modified_config_time {
-                    return false;
-                }
-
-                self.last_modified_config_time = current_modified_config_time;
-                self.last_modified_shader_times = utils::get_modified_times(&self.graph.pipelines);
-
-                return true;
-            }
-        };
-
-        false
-    }
-
-    pub fn initialize_ubos(graph: &mut PipelineGraph, pipeline_name: &String, parameters: &HashMap<String, String>) {
-
-        let write_to_buffer = |value_str: &String, ptr: *mut u8, block_type: spirv_reflect::types::ReflectTypeFlags | {
-            match block_type {
-                spirv_reflect::types::ReflectTypeFlags::FLOAT => {
-                    let value = value_str.parse::<f32>().unwrap_or_else(|e| { warnln!("Failed to convert: {}", e); 0.0 });
-                    unsafe { std::ptr::copy_nonoverlapping(&value, ptr as *mut f32, 1); }
-                },
-                spirv_reflect::types::ReflectTypeFlags::INT => {
-                    let value = value_str.parse::<i32>().unwrap_or_else(|e| { warnln!("Failed to convert: {}", e); 0 });
-                    unsafe { std::ptr::copy_nonoverlapping(&value, ptr as *mut i32, 1); }
-                },
-                spirv_reflect::types::ReflectTypeFlags::BOOL => {
-                    let value = value_str.parse::<bool>().unwrap_or_else(|e| { warnln!("Failed to convert: {}", e); false });
-                    unsafe { std::ptr::copy_nonoverlapping(&value, ptr as *mut bool, 1); }
-                },
-                _ => {}
-            };
-        };
-
-        for frame in &mut graph.frames {
-            if let Some(ubo) = frame.ubos.get_mut(pipeline_name) {
-                for (buffer_member_name, buffer_block) in ubo {
-                    if buffer_member_name == "_rf_time" {
-                        continue;
-                    }
-
-                    unsafe {
-                    let ptr = buffer_block.buffer.mapped_data.offset(buffer_block.offset as isize);
-
-                    if let Some(param_value) = parameters.get(buffer_member_name) {
-                        write_to_buffer(param_value, ptr, buffer_block.block_type);
-                    }
-                    else {
-                        let value = 0;
-                        std::ptr::copy_nonoverlapping(&value, ptr as *mut u8, buffer_block.size as usize);
-                    }
-                    }
-
-
-                }
-            }
-        }
     }
 
     pub fn update_ubos(&mut self, time: f32) {
@@ -506,9 +410,9 @@ impl Render {
         }
 
         // If our configuration has changed, live reload it
-        if self.config_changed() {
-            full_reload_performed = self.recreate_graph().is_some();
-        }
+        //if self.config_changed() {
+        //    full_reload_performed = self.recreate_graph().is_some();
+        //}
 
         // If any of our shaders have changed, live reload them
         if full_reload_performed {

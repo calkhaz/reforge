@@ -8,7 +8,8 @@ use ash::vk;
 use spirv_reflect::types::ReflectDescriptorBinding;
 use spirv_reflect::types::ReflectDescriptorType;
 use spirv_reflect::types::ReflectShaderStageFlags;
-use crate::config::config::ConfigDescriptor;
+use crate::config::Config;
+use crate::config::ConfigDescriptor;
 use crate::vulkan::core::VkCore;
 use crate::vulkan::shader::ShaderBindings;
 use crate::vulkan::shader::Shader;
@@ -20,7 +21,6 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 
-use crate::config::config::Config;
 
 pub struct Sampler {
     device: Rc<ash::Device>,
