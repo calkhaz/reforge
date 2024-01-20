@@ -99,7 +99,7 @@ pub struct Render {
     frames: Vec<Frame>,
     frame_outdated: Vec<bool>,
     graph: PipelineGraph,
-    info: RenderInfo,
+    pub info: RenderInfo,
     // Used to bring buffer -> srgba8 -> X or X -> srgba8 -> buffer
     staging_srgb_image: Image,
     pub staging_buffer: Buffer,

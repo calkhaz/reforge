@@ -121,8 +121,8 @@ def file_timestamp(path: str | None) -> float:
         return os.path.getmtime(path)
 
 async def run_reforge():
-    width, height = get_video_size(args.input_file)
-    decoder = ffmpeg_decode_process(args.input_file)
+    width, height = get_video_size(args.input_file) if args.input_file else (800, 600)
+    decoder = ffmpeg_decode_process(args.input_file) if args.input_file else None
     encoder = ffmpeg_encode_process(args.output_file, width, height) if args.output_file else None
     shader_dir = args.shader_dir
 
@@ -152,7 +152,8 @@ async def run_reforge():
     elif args.shader_file_path:
         shader_dir = os.path.dirname(args.shader_file_path)
         file_name = os.path.basename(args.shader_file_path)
-        graph = f"input -> {file_name} -> output"
+        if args.input_file: graph = f"input -> {file_name} -> output"
+        else:               graph = f"{file_name} -> output"
 
     rf = reforge.Reforge(shader_path = shader_dir)
     renderer = rf.new_renderer(graph, width, height, use_swapchain = use_swapchain)
@@ -167,7 +168,7 @@ async def run_reforge():
 
     while True:
         # Decode the next frame
-        if not out_of_frames:
+        if decoder and not out_of_frames:
             next_frame = read_frame(decoder, bytes_per_frame)
 
             # No frames left to decode
@@ -185,7 +186,7 @@ async def run_reforge():
                 in_frame = next_frame
 
 
-        assert in_frame is not None
+        #assert in_frame is not None
         if out_of_frames and not use_swapchain: break
 
         config_modification_time = file_timestamp(config_path)
@@ -203,10 +204,11 @@ async def run_reforge():
         if output_frame and not out_of_frames:
             write_frame(encoder, output_frame)
 
-    if decoder.stdout: decoder.stdout.close()
+    if decoder and decoder.stdout: decoder.stdout.close()
 
-    if out_of_frames: decoder.wait()
-    else:             decoder.terminate()
+    if decoder:
+        if out_of_frames: decoder.wait()
+        else:             decoder.terminate()
 
     if encoder:
         if encoder.stdin is not None:

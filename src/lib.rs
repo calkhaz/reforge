@@ -111,6 +111,7 @@ impl Renderer {
 impl Renderer {
     pub fn execute(&mut self, input_bytes: Option<&[u8]>, output_bytes: Option<&mut [u8]>) {
         let mut first_run = vec![true; self.render.num_frames()];
+        self.render.info.has_input_image = input_bytes.is_some();
 
         //let mut avg_ms = 0.0;
         let mapped_input_image_data: *mut u8 = self.render.staging_buffer_ptr();
