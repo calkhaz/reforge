@@ -1,4 +1,4 @@
 target
-test-images
-misc
 Cargo.lock
+prototype
+__pycache__
