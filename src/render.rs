@@ -66,7 +66,6 @@ impl ParamData {
 
     fn write_vec_to_buffer<T: num_traits::cast::NumCast>(&self, buffer: *mut u8, block: &BufferBlock) -> Option<()> {
         let vec = self.primitive_vec::<T>()?;
-        let mut offset_buffer = buffer;
         let mut offset = 0;
 
         if vec.len() > block.array_len as usize {
@@ -75,8 +74,8 @@ impl ParamData {
         }
 
         for v in vec {
+            let offset_buffer = unsafe { buffer.offset(offset as isize) };
             unsafe { std::ptr::copy_nonoverlapping(&v, offset_buffer as *mut T, 1); }
-            offset_buffer = unsafe { buffer.offset(offset as isize) };
             offset += block.array_stride;
         }
         Some(())
