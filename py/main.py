@@ -18,14 +18,16 @@ class Args:
     output_file: str | None
     config_path: str | None
     shader_file_path: str | None
+    shader_dir: str
 
 def parse_args() -> Args:
     parser = argparse.ArgumentParser(description="Reforge")
-    parser.add_argument('shader_file_path', help="Direct shader file", metavar="shader-file", default='', nargs='?')
-    parser.add_argument('-i', '--input',    help="Input path")
-    parser.add_argument('-o', '--output',   help="Output path")
-    parser.add_argument('-c', '--config',   help="Config path")
-    parser.add_argument('-l', '--lib-path', help="Reforge library path (where the .so is)")
+    parser.add_argument('shader_file_path',   help="Direct shader file", metavar="shader-file", default='', nargs='?')
+    parser.add_argument('-i', '--input',      help="Input path")
+    parser.add_argument('-o', '--output',     help="Output path")
+    parser.add_argument('-c', '--config',     help="Config path")
+    parser.add_argument('-l', '--lib-path',   help="Reforge library path (where the .so is)")
+    parser.add_argument('-d', '--shader-dir', help="Directory to find shaders in", default="shaders")
 
     pargs = parser.parse_args()
 
@@ -34,6 +36,7 @@ def parse_args() -> Args:
     a.output_file = pargs.output
     a.config_path = pargs.config
     a.shader_file_path = pargs.shader_file_path
+    a.shader_dir = pargs.shader_dir
 
     if pargs.lib_path:
         sys.path.insert(1, pargs.lib_path)
@@ -104,7 +107,10 @@ def write_config_to_buffer(renderer: reforge.Renderer, module: ModuleType):
                     renderer.set_buffer(key, subkey, subvalue)
                     # print(key, subkey, subvalue)
 
-def file_timestamp(path: str) -> float:
+def file_timestamp(path: str | None) -> float:
+    if path is None:
+        return 0.0
+
     try:
         return os.path.getmtime(path)
 
@@ -118,30 +124,45 @@ async def run_reforge():
     width, height = get_video_size(args.input_file)
     decoder = ffmpeg_decode_process(args.input_file)
     encoder = ffmpeg_encode_process(args.output_file, width, height) if args.output_file else None
+    shader_dir = args.shader_dir
 
     bytes_per_frame = width * height * 4
     use_swapchain = args.output_file is None
 
     config_path = args.config_path
 
-    if not config_path:
-        print("Need python config filepath")
-        sys.exit(-1)
+    #if not config_path:
+    #    print("Need python config filepath")
+    #    sys.exit(-1)
 
-    module = load_python_config(config_path)
-    last_config_modification_time = file_timestamp(config_path)
-    last_graph = module.graph
+    graph = ""
+    last_graph = ""
+    last_config_modification_time = 0
 
-    rf = reforge.Reforge(shader_path = "shaders")
-    renderer = rf.new_renderer(module.graph, width, height, use_swapchain = use_swapchain)
+    module: None | ModuleType = None
+    if config_path:
+        module = load_python_config(config_path)
+
+        if not module:
+            print(f"Failed to load python config from {config_path}")
+            sys.exit(-1)
+
+        last_config_modification_time = file_timestamp(config_path)
+        graph = last_graph = module.graph
+    elif args.shader_file_path:
+        shader_dir = os.path.dirname(args.shader_file_path)
+        file_name = os.path.basename(args.shader_file_path)
+        graph = f"input -> {file_name} -> output"
+
+    rf = reforge.Reforge(shader_path = shader_dir)
+    renderer = rf.new_renderer(graph, width, height, use_swapchain = use_swapchain)
     output_frame = bytearray(bytes_per_frame) if args.output_file else None
 
-    write_config_to_buffer(renderer, module)
+    if module:
+        write_config_to_buffer(renderer, module)
 
     out_of_frames = False
-
     in_frame = None
-    
     num_frames = 0
 
     while True:
