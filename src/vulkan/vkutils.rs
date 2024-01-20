@@ -361,7 +361,7 @@ pub unsafe fn create_sampler(device: Rc<ash::Device>) -> Sampler {
         .min_filter(vk::Filter::LINEAR)
         .mag_filter(vk::Filter::LINEAR)
         .address_mode_u(vk::SamplerAddressMode::CLAMP_TO_EDGE)
-        .address_mode_w(vk::SamplerAddressMode::CLAMP_TO_EDGE)
+        .address_mode_v(vk::SamplerAddressMode::CLAMP_TO_EDGE)
         .address_mode_w(vk::SamplerAddressMode::CLAMP_TO_EDGE);
 
     let vk = device.create_sampler(&sampler_info, None).unwrap();
