@@ -19,12 +19,10 @@ class Decoder:
     process: Popen[bytes]
     width:  int
     height: int
-    path: str
     out_of_frames: bool = False
 
     def __init__(self, path: str):
         self.width, self.height = self._get_video_size(path)
-        self.path = path
 
         args = (
             ffmpeg
@@ -54,7 +52,6 @@ class Decoder:
         else:
             return in_bytes
 
-
     def _get_video_size(self, path: str) -> Tuple[int, int]:
         probe = ffmpeg.probe(path)
         video_info = next(s for s in probe['streams'] if s['codec_type'] == 'video')
@@ -62,6 +59,33 @@ class Decoder:
         height = int(video_info['height'])
         return width, height
 
+
+class Encoder:
+    process: Popen[bytes]
+
+    def __init__(self, path: str, width: int, height: int):
+        args = (
+            ffmpeg
+            .input('pipe:', format='rawvideo', pix_fmt='rgba', s='{}x{}'.format(width, height))
+            .output(path, pix_fmt='yuv420p')
+            .overwrite_output()
+            .compile()
+        )
+        self.process = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.PIPE)
+
+    def __del__(self):
+        self.close()
+
+    def write_frame(self, frame: bytearray):
+        if self.process.stdin is None:
+            raise RuntimeError("Error: Cannot write to ffmpeg process stdin - it is None")
+
+        self.process.stdin.write(frame)
+
+    def close(self):
+        if self.process.stdin:
+            self.process.stdin.close()
+        self.process.wait()
 
 
 class Args:
@@ -96,19 +120,6 @@ def parse_args() -> Args:
 
 args = parse_args()
 import reforge as reforge
-
-def ffmpeg_encode_process(out_filename, width, height):
-    args = (
-        ffmpeg
-        .input('pipe:', format='rawvideo', pix_fmt='rgba', s='{}x{}'.format(width, height))
-        .output(out_filename, pix_fmt='yuv420p')
-        .overwrite_output()
-        .compile()
-    )
-    return subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.PIPE)
-
-def write_frame(encoder, frame: bytearray):
-    encoder.stdin.write(frame)
 
 def ms_s(val: float) -> str:
     return f'{val*1000:.2f}ms'
@@ -149,7 +160,7 @@ async def run_reforge():
     decoder = Decoder(args.input_file) if args.input_file else None
 
     width, height = (decoder.width, decoder.height) if decoder else (800, 600)
-    encoder = ffmpeg_encode_process(args.output_file, width, height) if args.output_file else None
+    encoder = Encoder(args.output_file, width, height) if args.output_file else None
     shader_dir = args.shader_dir
 
     bytes_per_frame = width * height * 4
@@ -220,13 +231,8 @@ async def run_reforge():
         renderer.execute(in_frame, output_frame)
         if renderer.requested_exit(): break
 
-        if output_frame and decoder and not decoder.out_of_frames:
-            write_frame(encoder, output_frame)
-
-    if encoder:
-        if encoder.stdin is not None:
-            encoder.stdin.close()
-        encoder.wait()
+        if encoder and output_frame:
+            encoder.write_frame(output_frame)
 
 def main():
     try:
