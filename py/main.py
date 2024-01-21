@@ -10,8 +10,59 @@ import importlib
 import importlib.util
 import os
 import time
+from typing import Tuple
+
 
 import sys
+
+class Decoder:
+    process: Popen[bytes]
+    width:  int
+    height: int
+    path: str
+    out_of_frames: bool = False
+
+    def __init__(self, path: str):
+        self.width, self.height = self._get_video_size(path)
+        self.path = path
+
+        args = (
+            ffmpeg
+            .input(path)
+            .output('pipe:', format='rawvideo', pix_fmt='rgba')
+            .compile()
+        )
+        self.process = subprocess.Popen(args, stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdout=subprocess.PIPE)
+
+    def __del__(self):
+        self.close()
+
+    def close(self):
+        if self.process.stdout: self.process.stdout.close()
+        self.process.wait()
+
+    def read_frame(self, bytes_amount: int) -> bytes | None:
+    
+        if self.process.stdout is None:
+            return None
+    
+        in_bytes = self.process.stdout.read(bytes_amount)
+    
+        if len(in_bytes) == 0:
+            self.out_of_frames = True
+            return None
+        else:
+            return in_bytes
+
+
+    def _get_video_size(self, path: str) -> Tuple[int, int]:
+        probe = ffmpeg.probe(path)
+        video_info = next(s for s in probe['streams'] if s['codec_type'] == 'video')
+        width =  int(video_info['width'])
+        height = int(video_info['height'])
+        return width, height
+
+
 
 class Args:
     input_file: str
@@ -46,22 +97,6 @@ def parse_args() -> Args:
 args = parse_args()
 import reforge as reforge
 
-def get_video_size(filename):
-    probe = ffmpeg.probe(filename)
-    video_info = next(s for s in probe['streams'] if s['codec_type'] == 'video')
-    width =  int(video_info['width'])
-    height = int(video_info['height'])
-    return width, height
-
-def ffmpeg_decode_process(in_filename):
-    args = (
-        ffmpeg
-        .input(in_filename)
-        .output('pipe:', format='rawvideo', pix_fmt='rgba')
-        .compile()
-    )
-    return subprocess.Popen(args, stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdout=subprocess.PIPE)
-
 def ffmpeg_encode_process(out_filename, width, height):
     args = (
         ffmpeg
@@ -71,16 +106,6 @@ def ffmpeg_encode_process(out_filename, width, height):
         .compile()
     )
     return subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.PIPE)
-
-def read_frame(process: Popen[bytes], bytes_amount: int) -> bytes | None:
-
-    if process.stdout is None:
-        return None
-
-    in_bytes = process.stdout.read(bytes_amount)
-
-    if len(in_bytes) == 0: return None
-    else: return in_bytes
 
 def write_frame(encoder, frame: bytearray):
     encoder.stdin.write(frame)
@@ -121,8 +146,9 @@ def file_timestamp(path: str | None) -> float:
         return os.path.getmtime(path)
 
 async def run_reforge():
-    width, height = get_video_size(args.input_file) if args.input_file else (800, 600)
-    decoder = ffmpeg_decode_process(args.input_file) if args.input_file else None
+    decoder = Decoder(args.input_file) if args.input_file else None
+
+    width, height = (decoder.width, decoder.height) if decoder else (800, 600)
     encoder = ffmpeg_encode_process(args.output_file, width, height) if args.output_file else None
     shader_dir = args.shader_dir
 
@@ -130,10 +156,6 @@ async def run_reforge():
     use_swapchain = args.output_file is None
 
     config_path = args.config_path
-
-    #if not config_path:
-    #    print("Need python config filepath")
-    #    sys.exit(-1)
 
     graph = ""
     last_graph = ""
@@ -162,32 +184,29 @@ async def run_reforge():
     if module:
         write_config_to_buffer(renderer, module)
 
-    out_of_frames = False
     in_frame = None
     num_frames = 0
 
     while True:
         # Decode the next frame
-        if decoder and not out_of_frames:
-            next_frame = read_frame(decoder, bytes_per_frame)
+        if decoder and not decoder.out_of_frames:
+            next_frame = decoder.read_frame(bytes_per_frame)
 
             # No frames left to decode
             if next_frame is None:
                 # Restart decoder so we can infinitely loop videos in the swapchain
                 if num_frames > 1 and use_swapchain:
-                    if decoder.stdout: decoder.stdout.close()
-                    decoder.wait()
-                    decoder = ffmpeg_decode_process(args.input_file)
+                    decoder.close()
+                    decoder = Decoder(args.input_file)
                     continue
-                else:
-                    out_of_frames = True
             else:
                 num_frames += 1
                 in_frame = next_frame
 
 
-        #assert in_frame is not None
-        if out_of_frames and not use_swapchain: break
+        # Don't run forever if we aren't running in a window
+        if decoder and decoder.out_of_frames and not use_swapchain:
+            break
 
         config_modification_time = file_timestamp(config_path)
         if config_modification_time != last_config_modification_time:
@@ -201,14 +220,8 @@ async def run_reforge():
         renderer.execute(in_frame, output_frame)
         if renderer.requested_exit(): break
 
-        if output_frame and not out_of_frames:
+        if output_frame and decoder and not decoder.out_of_frames:
             write_frame(encoder, output_frame)
-
-    if decoder and decoder.stdout: decoder.stdout.close()
-
-    if decoder:
-        if out_of_frames: decoder.wait()
-        else:             decoder.terminate()
 
     if encoder:
         if encoder.stdin is not None:
