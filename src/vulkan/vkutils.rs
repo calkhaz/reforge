@@ -18,7 +18,6 @@ use crate::warnln;
 
 use std::rc::Rc;
 use std::cell::RefCell;
-use std::collections::BTreeMap;
 use std::collections::HashMap;
 
 
@@ -47,9 +46,10 @@ pub struct Buffer {
 pub struct GpuTimer {
     device: Rc<ash::Device>,
     pub query_pool: vk::QueryPool,
-    query_indices: BTreeMap<String, u32>, // BTreeMap because we want names sorted for printing
+    query_indices: HashMap<String, u32>,
     current_query_index: u32,
-    pub query_pool_size: u32
+    pub query_pool_size: u32,
+    pub last_times: HashMap<String, f32>
 }
 
 impl GpuTimer{
@@ -65,11 +65,12 @@ impl GpuTimer{
         let query_pool = device.create_query_pool(&query_info, None).unwrap();
 
         GpuTimer {
-            device: device,
-            query_pool: query_pool,
-            query_indices: BTreeMap::new(),
+            device,
+            query_pool,
+            query_indices: HashMap::new(),
             current_query_index: 0,
-            query_pool_size: count
+            query_pool_size: count,
+            last_times: HashMap::new()
         }
         }
     }
@@ -101,11 +102,11 @@ impl GpuTimer{
         *self.query_indices.get(name).unwrap() + 1
     }
 
-    pub fn get_elapsed_ms(&mut self) -> String {
-        let mut times: String = String::new();
+    pub fn set_elapsed_ms(&mut self) {
+        let mut times: HashMap<String, f32> = HashMap::new();
 
         if self.current_query_index == 0 {
-            return times;
+            return;
         }
 
         let mut timestamps: Vec<u64> = vec![0; self.current_query_index as usize];
@@ -122,14 +123,10 @@ impl GpuTimer{
         for (name, idx) in &self.query_indices {
             let nanosec_diff = timestamps[*idx as usize+1] - timestamps[*idx as usize];
             let ms = (nanosec_diff as f32)/1e6;
-
-            times.push_str(&format!("{}: {:.3}ms, ", name.to_string(), ms));
+            times.insert(name.clone(), ms);
         }
 
-        // Remove last ", "
-        times.truncate(times.len()-2);
-
-        times
+        self.last_times =  times
 
     }
 }

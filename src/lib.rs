@@ -16,6 +16,8 @@ use render::RenderInfo;
 use utils::TERM_CLEAR;
 use render::ParamData;
 
+use std::collections::HashMap;
+
 use winit::{
     event::{ElementState, Event, KeyboardInput, VirtualKeyCode, WindowEvent},
     event_loop::{ControlFlow, EventLoop, EventLoopBuilder},
@@ -53,6 +55,10 @@ struct Renderer {
 
 #[pymethods]
 impl Renderer {
+    pub fn gpu_times(&self) -> HashMap<String, f32> {
+        self.render.last_frame_gpu_times()
+    }
+
     pub fn idle(&self) -> bool {
         self.render.frame_fence_signaled()
     }
@@ -121,6 +127,7 @@ impl Renderer {
             unsafe { std::ptr::copy_nonoverlapping(input_bytes.as_ptr(), mapped_input_image_data, input_bytes.len()); }
         }
 
+        let timer = std::time::Instant::now();
         //let elapsed_ms = utils::get_elapsed_ms(&timer);
 //        println!("reforge copy time: {:.2}ms", elapsed_ms);
 
@@ -147,10 +154,11 @@ impl Renderer {
 
             //let elapsed_ms = utils::get_elapsed_ms(&timer);
             //avg_ms = utils::moving_avg(avg_ms, elapsed_ms);
-            //timer = std::time::Instant::now();
+            //let timer = std::time::Instant::now();
 
-            //let gpu_times = render.last_frame_gpu_times();
+            let gpu_times = render.set_last_frame_gpu_times();
             //eprint!("\rFrame: {:5.2}ms, Frame-Avg: {:5.2}ms, GPU: {{{}}}", elapsed_ms, avg_ms, gpu_times);
+            //eprint!("\rGPU: {:?}", gpu_times);
 
             render.begin_record();
 

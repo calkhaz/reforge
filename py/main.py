@@ -153,6 +153,8 @@ async def run_reforge():
             write_config_to_buffer(renderer, module)
 
         renderer.execute(in_frame, output_frame)
+        times: dict = sorted(renderer.gpu_times().items())
+        #print(times)
         if renderer.requested_exit(): break
 
         if encoder and output_frame:

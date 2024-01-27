@@ -576,8 +576,12 @@ impl Render {
         full_reload_performed
     }
 
-    pub fn last_frame_gpu_times(&mut self) -> String {
-        self.frames[self.frame_index].timer.get_elapsed_ms()
+    pub fn last_frame_gpu_times(&self) -> HashMap<String, f32> {
+        self.frames[self.frame_index].timer.last_times.clone()
+    }
+
+    pub fn set_last_frame_gpu_times(&mut self) {
+        self.frames[self.frame_index].timer.set_elapsed_ms();
     }
 
     fn rebuild_swapchain(&mut self) {

@@ -16,6 +16,7 @@ class Decoder:
         args = (
             ffmpeg
             .input(path)
+            #.filter('scale', 400, -1)
             .output('pipe:', format='rawvideo', pix_fmt='rgba')
             .compile()
         )
