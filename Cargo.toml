@@ -7,7 +7,7 @@ edition = "2021"
 
 [lib]
 name = "reforge"
-crate-type = ["cdylib"]
+crate-type = ["rlib", "cdylib"]
 
 [dependencies]
 ash = "0.37.2"
@@ -16,10 +16,5 @@ raw-window-handle = "0.5"
 winit = "0.27.1"
 shaderc = "0.8"
 gpu-allocator = "0.22.0"
-clap = { version = "4.2.5", features = ["derive"] }
 spirv-reflect = "0.2.3"
-pyo3 = { version = "0.20.1", features = ["extension-module"] }
 num-traits = "0.2.17"
-
-[build-dependencies]
-lalrpop = "0.20.0"

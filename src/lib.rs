@@ -1,9 +1,6 @@
 extern crate ash;
-extern crate clap;
 extern crate gpu_allocator;
 extern crate shaderc;
-
-use pyo3::prelude::*;
 
 mod config;
 mod render;
@@ -14,7 +11,6 @@ use ash::vk;
 use render::Render;
 use render::RenderInfo;
 use utils::TERM_CLEAR;
-use render::ParamData;
 
 use std::collections::HashMap;
 
@@ -24,8 +20,16 @@ use winit::{
     platform::run_return::EventLoopExtRunReturn
 };
 
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, clap::ValueEnum)]
-#[pyclass]
+#[derive(Clone, Debug)]
+pub enum ParamData {
+    Boolean(bool),
+    Float(f32),
+    Integer(i32),
+    FloatArray(Vec<f32>),
+    IntegerArray(Vec<i32>)
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ShaderFormat {
     Rgba8,
     Rgba32f
@@ -40,20 +44,17 @@ impl ShaderFormat {
     }
 }
 
-#[pyclass(unsendable)]
-struct Reforge {
+pub struct Reforge {
     shader_path: String,
 }
 
-#[pyclass(unsendable)]
-struct Renderer {
+pub struct Renderer {
     render: Render,
     time_since_start: std::time::Instant,
     event_loop: Option<EventLoop<()>>,
     requested_exit: bool
 }
 
-#[pymethods]
 impl Renderer {
     pub fn gpu_times(&self) -> HashMap<String, f32> {
         self.render.last_frame_gpu_times()
@@ -67,46 +68,14 @@ impl Renderer {
         self.requested_exit
     }
 
-    #[pyo3(name = "execute")]
-    pub fn execute_py(&mut self, input_bytes: Option<&[u8]>, py_output_bytes: Option<&pyo3::types::PyByteArray>) {
-        let output_bytes = unsafe {
-            if let Some(bytes) = py_output_bytes {
-                Some(bytes.as_bytes_mut())
-            }
-            else { None }
-        };
+     // TODO: Make data ParamData
+    pub fn set_buffer(&mut self, pipeline: &String, param: &String, data: &ParamData) {
 
-        self.execute(input_bytes, output_bytes);
-    }
+        let param_map = self.render.pipeline_buffer_data.entry(pipeline.clone()).or_default();
 
-    pub fn set_buffer(&mut self, pipeline: String, param: String, data: &pyo3::types::PyAny) -> PyResult<()> {
-
-        let param_map = self.render.pipeline_buffer_data.entry(pipeline).or_default();
-
-        if data.is_instance_of::<pyo3::types::PyList>() {
-            let list = data.extract::<&pyo3::types::PyList>()?;
-            if let Ok(vec) = list.extract::<Vec<i32>>() {
-                param_map.insert(param, ParamData::IntegerArray(vec));
-            }
-            else if let Ok(vec) = list.extract::<Vec<f32>>() {
-                param_map.insert(param, ParamData::FloatArray(vec));
-            }
-            else {
-                println!("Invalid vector in set_buffer");
-            }
-        }
-        else if let Ok(val) = data.extract::<bool>() {
-            param_map.insert(param, ParamData::Boolean(val));
-        }
-        else if let Ok(val) = data.extract::<i32>() {
-            param_map.insert(param, ParamData::Integer(val));
-        }
-        else if let Ok(val) = data.extract::<f32>() {
-            param_map.insert(param, ParamData::Float(val));
-        }
+        param_map.insert(param.clone(), data.clone());
 
         self.render.outdate_frames();
-        Ok(())
     }
 
     pub fn reload_graph(&mut self, graph: String) {
@@ -247,15 +216,13 @@ impl Renderer {
     }
 }
 
-#[pymethods]
 impl Reforge {
-    #[new]
     pub fn new(shader_path: String) -> Self{
         Reforge { shader_path }
     }
 
     pub fn new_renderer(&self, graph: String, width: u32, height: u32, num_workers: Option<u32>,
-                        use_swapchain: Option<bool>, shader_file_path: Option<String>) -> PyResult<Renderer> {
+                        use_swapchain: Option<bool>, shader_file_path: Option<String>) -> Renderer {
         let render_info = RenderInfo {
             graph,
             width,
@@ -286,16 +253,9 @@ impl Reforge {
         let event_loop = if render_info.swapchain { Some(event_loop()) } else { None };
         let render = Render::new(render_info, &event_loop);
 
-        Ok(Renderer { render,
+        Renderer { render,
                       event_loop,
                       time_since_start: std::time::Instant::now(),
-                      requested_exit: false })
+                      requested_exit: false }
     }
-}
-
-#[pymodule]
-fn reforge(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
-    m.add_class::<Reforge>()?;
-    m.add_class::<Renderer>()?;
-    Ok(())
 }

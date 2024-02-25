@@ -17,6 +17,7 @@ use crate::vulkan::vkutils;
 use crate::vulkan::vkutils::Buffer;
 use crate::vulkan::vkutils::Image;
 use crate::warnln;
+use crate::ParamData;
 
 use std::collections::HashMap;
 use std::default::Default;
@@ -26,14 +27,6 @@ use winit::{
     event_loop::EventLoop,
     window::WindowBuilder,
 };
-
-pub enum ParamData {
-    Boolean(bool),
-    Float(f32),
-    Integer(i32),
-    FloatArray(Vec<f32>),
-    IntegerArray(Vec<i32>)
-}
 
 impl ParamData {
     fn primitive<T: num_traits::cast::NumCast>(&self) -> Option<T> {
