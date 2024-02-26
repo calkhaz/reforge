@@ -5,6 +5,7 @@ use gpu_allocator as gpu_alloc;
 use gpu_allocator::vulkan as gpu_alloc_vk;
 
 use ash::vk;
+use ash::vk::Handle;
 use spirv_reflect::types::ReflectDescriptorBinding;
 use spirv_reflect::types::ReflectDescriptorType;
 use spirv_reflect::types::ReflectShaderStageFlags;
@@ -224,6 +225,8 @@ pub unsafe fn create_buffer(core: &VkCore,
         std::ptr::null_mut()
     };
 
+    core.set_debug_name(&name, buffer.as_raw(), vk::ObjectType::BUFFER);
+
     Buffer{device: Rc::clone(&core.device), allocator: Rc::clone(&allocator), vk: buffer, allocation: allocation, mapped_data: mapped_data}
 }
 
@@ -287,6 +290,8 @@ pub unsafe fn create_image(core: &VkCore, name: String, format: vk::Format, widt
     else {
         None
     };
+
+    core.set_debug_name(&name, vk_image.as_raw(), vk::ObjectType::IMAGE);
 
     Image {
         device: Rc::clone(&core.device),

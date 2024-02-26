@@ -68,7 +68,6 @@ impl Renderer {
         self.requested_exit
     }
 
-     // TODO: Make data ParamData
     pub fn set_buffer(&mut self, pipeline: &String, param: &String, data: &ParamData) {
 
         let param_map = self.render.pipeline_buffer_data.entry(pipeline.clone()).or_default();
