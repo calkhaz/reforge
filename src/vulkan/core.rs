@@ -145,6 +145,21 @@ impl VkCore {
         }
     }
 
+    pub fn set_debug_name(&self, name: &str, handle: u64, object_type: vk::ObjectType) {
+        let c_string = std::ffi::CString::new(name).expect("Failed to convert string to CString");
+        let name = c_string.as_ptr();
+
+        let info = vk::DebugUtilsObjectNameInfoEXT {
+            object_type,
+            object_handle: handle,
+            p_object_name: name,
+            ..Default::default()
+        };
+
+        unsafe {
+        self.debug_utils_loader.set_debug_utils_object_name(self.device.handle(), &info).unwrap();
+        }
+    }
 
     unsafe fn create_surface(entry: &ash::Entry, instance: &ash::Instance, window: &Window) -> (vk::SurfaceKHR, khr::Surface) {
         let surface_loader = khr::Surface::new(&entry, &instance);
