@@ -1,9 +1,8 @@
 use ash::vk;
 use gpu_allocator as gpu_alloc;
 
+use crate::Config;
 use crate::utils;
-use crate::config;
-use crate::config::Config;
 use crate::vulkan::command;
 use crate::vulkan::core::VkCore;
 use crate::vulkan::frame::Frame;
@@ -76,15 +75,13 @@ impl ParamData {
 }
 
 pub struct RenderInfo {
-    pub graph: String,
+    pub config: Config,
     pub width: u32,
     pub height: u32,
     pub num_frames: usize,
-    pub shader_path: String,
     pub format: vk::Format,
     pub swapchain: bool,
     pub has_input_image: bool,
-    pub shader_file_path: Option<String>
 }
 
 pub struct Render {
@@ -103,7 +100,7 @@ pub struct Render {
     pub vk_core: VkCore,
     pub swapchain_rebuilt_required: bool,
     pub pipeline_buffer_data: HashMap<String, HashMap<String, ParamData>>,
-    reload_graph: String
+    reload_config: Option<Config>
 }
 
 impl Render {
@@ -125,8 +122,8 @@ impl Render {
         self.staging_buffer.allocation.mapped_ptr().unwrap().as_ptr() as *mut u8
     }
 
-    pub fn update_graph(&mut self, graph: String) {
-        self.reload_graph = graph;
+    pub fn update_config(&mut self, config: Config) {
+        self.reload_config = Some(config);
     }
 
     fn get_swapchain(&self) -> &SwapChain {
@@ -145,8 +142,8 @@ impl Render {
             .unwrap()
     }
 
-    unsafe fn create_graph(vk_core: &VkCore, info: &RenderInfo, pipeline_config: &Config) -> Option<PipelineGraph> {
-        let pipeline_infos = vkutils::synthesize_config(Rc::clone(&vk_core.device), &pipeline_config, &info.shader_path)?;
+    unsafe fn create_graph(vk_core: &VkCore, info: &RenderInfo) -> Option<PipelineGraph> {
+        let pipeline_infos = vkutils::synthesize_config(Rc::clone(&vk_core.device), &info.config)?;
 
         let graph_info = PipelineGraphInfo {
             pipeline_infos: pipeline_infos,
@@ -156,23 +153,15 @@ impl Render {
             num_frames: info.num_frames
         };
 
-        let mut graph = PipelineGraph::new(&vk_core, graph_info)?;
-
-        Some(graph)
-    }
-
-    fn create_config(info: &RenderInfo) -> Option<Config>{
-        config::parse(info.graph.to_string(), &info.shader_path)
+        Some(PipelineGraph::new(&vk_core, graph_info)?)
     }
 
     fn recreate_graph(&mut self) -> Option<()> {
-        let pipeline_config = Self::create_config(&self.info)?;
-
         unsafe {
         self.vk_core.device.device_wait_idle().unwrap();
 
-        let num_pipelines = pipeline_config.graph_pipelines.len() as u32;
-        let graph = Self::create_graph(&self.vk_core, &self.info, &pipeline_config)?;
+        let num_pipelines = self.info.config.graph_pipelines.len() as u32;
+        let graph = Self::create_graph(&self.vk_core, &self.info)?;
 
         self.graph = graph;
         self.frames.iter_mut().for_each(|f| f.rebuild_timer(num_pipelines));
@@ -549,15 +538,22 @@ impl Render {
         }
 
         // If our configuration has changed, live reload it
-        if !self.reload_graph.is_empty() {
-            let working_graph = self.info.graph.clone();
-            self.info.graph = self.reload_graph.clone();
+        if self.reload_config.is_some() {
+            // Swap reload into info
+            {
+            let reload_config = self.reload_config.as_mut().unwrap();
+            std::mem::swap(&mut self.info.config, reload_config);
+            }
+
+            // Try to reload with the new config
             full_reload_performed = self.recreate_graph().is_some();
 
-            self.reload_graph.clear();
+            // If the reload failed, return to our original state
             if !full_reload_performed {
-                self.info.graph = working_graph;
+                let reload_config = self.reload_config.as_mut().unwrap();
+                std::mem::swap(&mut self.info.config, reload_config);
             }
+            self.reload_config = None;
         }
 
         // If any of our shaders have changed, live reload them
@@ -592,15 +588,13 @@ impl Render {
     pub fn new(info: RenderInfo, event_loop: &Option<EventLoop<()>>) -> Render {
         let window = if info.swapchain { Some(Self::create_window(&event_loop.as_ref().unwrap(), info.width, info.height)) } else { None };
 
-        let pipeline_config = Self::create_config(&info).unwrap();
-
         unsafe {
         let vk_core = VkCore::new(&window);
 
-        let graph = Self::create_graph(&vk_core, &info, &pipeline_config).unwrap();
+        let graph = Self::create_graph(&vk_core, &info).unwrap();
 
         let frames : Vec<Frame> = (0..info.num_frames).map(|_|{
-            Frame::new(&vk_core, pipeline_config.graph_pipelines.len() as u32)
+            Frame::new(&vk_core, info.config.graph_pipelines.len() as u32)
         }).collect();
 
         // We use rgba8 as the input file format
@@ -637,7 +631,7 @@ impl Render {
             window: window,
             swapchain_rebuilt_required: false,
             pipeline_buffer_data: HashMap::new(),
-            reload_graph: "".to_string()
+            reload_config: None
         }
 
         }

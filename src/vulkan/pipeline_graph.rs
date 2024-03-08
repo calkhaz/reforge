@@ -19,8 +19,8 @@ use crate::vulkan::pipeline::{Pipeline, PipelineInfo};
 use crate::vulkan::render_pass;
 use crate::warnln;
 
-pub const FILE_INPUT: &str = "rf:file-input";
-pub const FINAL_OUTPUT: &str = "rf:final-output";
+pub const FILE_INPUT: &str = "input";
+pub const FINAL_OUTPUT: &str = "output";
 
 pub struct PipelineGraphFrame {
     device: Rc<ash::Device>,

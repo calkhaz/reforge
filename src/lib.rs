@@ -2,7 +2,6 @@ extern crate ash;
 extern crate gpu_allocator;
 extern crate shaderc;
 
-mod config;
 mod render;
 mod utils;
 mod vulkan;
@@ -29,6 +28,29 @@ pub enum ParamData {
     IntegerArray(Vec<i32>)
 }
 
+#[derive(Debug)]
+pub struct ConfigDescriptor {
+    pub resource_name  : String,
+    pub descriptor_name: String
+}
+
+#[derive(Default, Debug)]
+pub struct GraphPipeline {
+    // images and ssbos
+    pub inputs : Vec<ConfigDescriptor>,
+    pub outputs: Vec<ConfigDescriptor>,
+    pub file_path: String
+}
+
+pub struct PipelineInstance {
+    pub pipeline_type: String,
+}
+
+pub struct Config {
+    pub graph_pipelines: HashMap<String, GraphPipeline>,
+    pub pipeline_instances: HashMap<String, PipelineInstance>
+}
+
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ShaderFormat {
     Rgba8,
@@ -45,7 +67,6 @@ impl ShaderFormat {
 }
 
 pub struct Reforge {
-    shader_path: String,
 }
 
 pub struct Renderer {
@@ -77,8 +98,8 @@ impl Renderer {
         self.render.outdate_frames();
     }
 
-    pub fn reload_graph(&mut self, graph: String) {
-        self.render.update_graph(graph);
+    pub fn reload_config(&mut self, config: Config) {
+        self.render.update_config(config);
     }
 
 }
@@ -216,22 +237,20 @@ impl Renderer {
 }
 
 impl Reforge {
-    pub fn new(shader_path: String) -> Self{
-        Reforge { shader_path }
+    pub fn new() -> Self{
+        Reforge {}
     }
 
-    pub fn new_renderer(&self, graph: String, width: u32, height: u32, num_workers: Option<u32>,
-                        use_swapchain: Option<bool>, shader_file_path: Option<String>) -> Renderer {
+    pub fn new_renderer(&self, config: Config, width: u32, height: u32, num_workers: Option<u32>,
+                        use_swapchain: Option<bool>) -> Renderer {
         let render_info = RenderInfo {
-            graph,
+            config,
             width,
             height,
             num_frames: num_workers.unwrap_or(1) as usize,
-            shader_path: self.shader_path.clone(),
             format: (ShaderFormat::Rgba32f).to_vk_format(),
             swapchain: use_swapchain.unwrap_or(false),
             has_input_image: true,
-            shader_file_path
         };
 
 
@@ -253,8 +272,8 @@ impl Reforge {
         let render = Render::new(render_info, &event_loop);
 
         Renderer { render,
-                      event_loop,
-                      time_since_start: std::time::Instant::now(),
-                      requested_exit: false }
+                   event_loop,
+                   time_since_start: std::time::Instant::now(),
+                   requested_exit: false }
     }
 }

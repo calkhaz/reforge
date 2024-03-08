@@ -9,8 +9,8 @@ use ash::vk::Handle;
 use spirv_reflect::types::ReflectDescriptorBinding;
 use spirv_reflect::types::ReflectDescriptorType;
 use spirv_reflect::types::ReflectShaderStageFlags;
-use crate::config::Config;
-use crate::config::ConfigDescriptor;
+use crate::Config;
+use crate::ConfigDescriptor;
 use crate::vulkan::core::VkCore;
 use crate::vulkan::shader::ShaderBindings;
 use crate::vulkan::shader::Shader;
@@ -135,11 +135,11 @@ impl GpuTimer{
 /* Take the parsed configuration and read the shader of each corresponding pipeline
  * We then match up the bindings parsed from the spirv of the shader and the
  * configuration to create the PipelineInfo(s) */
-pub fn synthesize_config(device: Rc<ash::Device>, config: &Config, shader_path: &String) -> Option<HashMap<String, PipelineInfo>> {
+pub fn synthesize_config(device: Rc<ash::Device>, config: &Config) -> Option<HashMap<String, PipelineInfo>> {
     let mut infos: HashMap<String, PipelineInfo> = HashMap::new();
 
-    for (pipeline_name, config_bindings) in &config.graph_pipelines {
-        let shader = Shader::from_path(&device, &config_bindings.file_path)?;
+    for (pipeline_name, pipeline) in &config.graph_pipelines {
+        let shader = Shader::from_path(&device, &pipeline.file_path)?;
 
         let mut info = PipelineInfo {
             name: pipeline_name.clone(),
@@ -149,7 +149,7 @@ pub fn synthesize_config(device: Rc<ash::Device>, config: &Config, shader_path: 
         };
 
         // Match up the parsed configuration with what the parsed spirv bindings of the shader
-        let add_resource_and_descriptor = |config_bindings: &Vec<ConfigDescriptor> |
+        let add_resource_and_descriptor = |file_path: &str, config_bindings: &Vec<ConfigDescriptor> |
                                            -> Option<(Vec<(String, ReflectDescriptorBinding)>, Vec<(String, ReflectDescriptorBinding)>)> {
             let mut image_bindings : Vec<(String, ReflectDescriptorBinding)> = Vec::new();
             let mut buffer_bindings: Vec<(String, ReflectDescriptorBinding)> = Vec::new();
@@ -173,7 +173,7 @@ pub fn synthesize_config(device: Rc<ash::Device>, config: &Config, shader_path: 
                             if info.shader.borrow().stage == vk::ShaderStageFlags::FRAGMENT && config_binding.descriptor_name == "output_image" {
                                 continue;
                             }
-                            warnln!("Shader {shader_path} has no binding named: {}", config_binding.descriptor_name);
+                            warnln!("Shader {file_path} has no binding named: {}", config_binding.descriptor_name);
                             return None
                         }
                     }
@@ -183,9 +183,8 @@ pub fn synthesize_config(device: Rc<ash::Device>, config: &Config, shader_path: 
             Some((image_bindings, buffer_bindings))
         };
 
-
-        (info.input_images , info.input_ssbos)  = add_resource_and_descriptor(&config_bindings.inputs)?;
-        (info.output_images, info.output_ssbos) = add_resource_and_descriptor(&config_bindings.outputs)?;
+        (info.input_images , info.input_ssbos)  = add_resource_and_descriptor(&pipeline.file_path, &pipeline.inputs)?;
+        (info.output_images, info.output_ssbos) = add_resource_and_descriptor(&pipeline.file_path, &pipeline.outputs)?;
 
         infos.insert(pipeline_name.clone(), info);
     }
