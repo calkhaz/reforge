@@ -569,9 +569,11 @@ impl Render {
         self.frames[self.frame_index].timer.last_times.clone()
     }
 
+    /*
     pub fn set_last_frame_gpu_times(&mut self) {
         self.frames[self.frame_index].timer.set_elapsed_ms();
     }
+    */
 
     fn rebuild_swapchain(&mut self) {
         let window_size = self.window.as_ref().unwrap().inner_size();

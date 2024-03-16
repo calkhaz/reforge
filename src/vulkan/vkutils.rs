@@ -103,6 +103,7 @@ impl GpuTimer{
         *self.query_indices.get(name).unwrap() + 1
     }
 
+    /*
     pub fn set_elapsed_ms(&mut self) {
         let mut times: HashMap<String, f32> = HashMap::new();
 
@@ -130,6 +131,7 @@ impl GpuTimer{
         self.last_times =  times
 
     }
+    */
 }
 
 /* Take the parsed configuration and read the shader of each corresponding pipeline

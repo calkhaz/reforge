@@ -118,7 +118,7 @@ impl Renderer {
             unsafe { std::ptr::copy_nonoverlapping(input_bytes.as_ptr(), mapped_input_image_data, input_bytes.len()); }
         }
 
-        let timer = std::time::Instant::now();
+        //let timer = std::time::Instant::now();
         //let elapsed_ms = utils::get_elapsed_ms(&timer);
 //        println!("reforge copy time: {:.2}ms", elapsed_ms);
 
@@ -147,7 +147,7 @@ impl Renderer {
             //avg_ms = utils::moving_avg(avg_ms, elapsed_ms);
             //let timer = std::time::Instant::now();
 
-            let gpu_times = render.set_last_frame_gpu_times();
+            //let gpu_times = render.set_last_frame_gpu_times();
             //eprint!("\rFrame: {:5.2}ms, Frame-Avg: {:5.2}ms, GPU: {{{}}}", elapsed_ms, avg_ms, gpu_times);
             //eprint!("\rGPU: {:?}", gpu_times);
 

@@ -6,9 +6,7 @@ use std::rc::Rc;
 use std::cell::RefCell;
 
 pub const TERM_CLEAR : &str = "\r\x1b[2K";
-pub const TERM_RED   : &str = "\x1b[31m";
-pub const TERM_YELLOW: &str = "\x1b[33m";
-const MOVING_AVG_SIZE: f64 = 60.0;
+//const MOVING_AVG_SIZE: f64 = 60.0;
 
 #[macro_export]
 macro_rules! warnln {
@@ -53,6 +51,7 @@ pub fn get_modified_times(pipelines: &HashMap<String, Rc<RefCell<Pipeline>>>) ->
     timestamps
 }
 
+/*
 pub fn moving_avg(mut avg: f64, next_value: f64) -> f64 {
 
     avg -= avg / MOVING_AVG_SIZE;
@@ -64,4 +63,5 @@ pub fn moving_avg(mut avg: f64, next_value: f64) -> f64 {
 pub fn get_elapsed_ms(inst: &std::time::Instant) -> f64{
     return (inst.elapsed().as_nanos() as f64)/1e6 as f64;
 }
+*/
 
