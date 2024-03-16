@@ -28,13 +28,13 @@ pub enum ParamData {
     IntegerArray(Vec<i32>)
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct ConfigDescriptor {
     pub resource_name  : String,
     pub descriptor_name: String
 }
 
-#[derive(Default, Debug)]
+#[derive(Clone, Default, Debug)]
 pub struct GraphPipeline {
     // images and ssbos
     pub inputs : Vec<ConfigDescriptor>,
@@ -42,10 +42,12 @@ pub struct GraphPipeline {
     pub file_path: String
 }
 
+#[derive(Debug)]
 pub struct PipelineInstance {
     pub pipeline_type: String,
 }
 
+#[derive(Debug)]
 pub struct Config {
     pub graph_pipelines: HashMap<String, GraphPipeline>,
     pub pipeline_instances: HashMap<String, PipelineInstance>
