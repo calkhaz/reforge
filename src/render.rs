@@ -556,7 +556,7 @@ impl Render {
                                                         "input-image-staging-buffer".to_string(),
                                                         buffer_size,
                                                         vk::BufferUsageFlags::TRANSFER_SRC | vk::BufferUsageFlags::TRANSFER_DST,
-                                                        gpu_alloc::MemoryLocation::CpuToGpu);
+                                                        gpu_alloc::MemoryLocation::GpuToCpu);
 
         let staging_srgb_image = vkutils::create_image(&vk_core,
                                                        "input-image-srgb".to_string(),

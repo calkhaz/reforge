@@ -253,7 +253,7 @@ impl PipelineGraphFrame {
                     let buffer = buffers.entry(name.clone()).or_insert({
                         let usage = vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST;
                         let size = *ssbo_sizes.get(name).unwrap();
-                        vkutils::create_buffer(core, name.to_string(), size as u64, usage, gpu_allocator::MemoryLocation::CpuToGpu)
+                        vkutils::create_buffer(core, name.to_string(), size as u64, usage, gpu_allocator::MemoryLocation::GpuToCpu)
                     });
 
                     descriptor_writes.push(Self::buffer_write(&buffer, vk::DescriptorType::STORAGE_BUFFER, &mut desc_buffer_infos, binding_idx, descriptor_set));
@@ -296,7 +296,7 @@ impl PipelineGraphFrame {
                         let buffer_name = format!("{}:{}", pipeline.borrow().name, buffer_reflect.type_description.as_ref().unwrap().type_name.clone());
                         let usage = vk::BufferUsageFlags::UNIFORM_BUFFER | vk::BufferUsageFlags::TRANSFER_DST;
 
-                        let buffer = Rc::new(vkutils::create_buffer(core, buffer_name, buffer_reflect.block.size as u64, usage, gpu_allocator::MemoryLocation::CpuToGpu));
+                        let buffer = Rc::new(vkutils::create_buffer(core, buffer_name, buffer_reflect.block.size as u64, usage, gpu_allocator::MemoryLocation::GpuToCpu));
                         descriptor_writes.push(Self::buffer_write(&buffer, vk::DescriptorType::UNIFORM_BUFFER, &mut desc_buffer_infos, buffer_reflect.binding, descriptor_set));
 
                         recurse_block(&buffer_reflect.block, &"".to_string(), &buffer, &mut pipeline_ubos);
