@@ -135,6 +135,7 @@ fn main() -> Result<()> {
     };
 
     let render_info = RenderInfo {
+        graph: "input -> passthrough -> output".to_string(),
         width: width,
         height: height,
         num_frames: num_frames,
