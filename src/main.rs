@@ -2,13 +2,12 @@ extern crate ash;
 extern crate clap;
 extern crate gpu_allocator;
 extern crate shaderc;
-extern crate ffmpeg_sys_next as ffmpeg;
 extern crate pyo3;
 extern crate tracing;
 extern crate tracing_subscriber;
 
 mod config;
-mod imagefileio;
+mod ffmpeg;
 mod py;
 mod render;
 mod utils;
@@ -17,11 +16,10 @@ mod vulkan;
 use ash::vk;
 use anyhow::{anyhow, Context, Result};
 use clap::Parser;
-use imagefileio::ImageFileDecoder;
-use imagefileio::ImageFileEncoder;
+use ffmpeg::{Decoder, Encoder};
 use render::Render;
 use render::RenderInfo;
-use tracing::debug;
+use tracing::{debug, info};
 use utils::TERM_CLEAR;
 
 use winit::{
@@ -149,22 +147,19 @@ fn main() -> Result<()> {
         std::process::exit(1);
     }
 
-    imagefileio::init();
+    let (mut width, mut height) = utils::get_dim(800, 600, args.width, args.height);
 
-    let file_decoder = match args.input_file.as_ref() {
-        Some(input_file) => {
-            match ImageFileDecoder::new(&input_file) {
-                Ok(decoder) => Some(decoder),
-                Err(err) => panic!("{}", err)
-            }
-        },
-        None => None
-    };
+    let mut decoder = if let Some(input_file) = &args.input_file {
+        let decoder = Decoder::new(input_file, args.width, args.height).context("Failed to create decoder")?;
+        info!("Decoded size: {} X {}", decoder.width, decoder.height);
+        width = decoder.width;
+        height = decoder.height;
+        Some(decoder)
+    } else { None };
 
-    let (width, height) = match file_decoder.as_ref() {
-        Some(decoder) => utils::get_dim(decoder.width, decoder.height, args.width, args.height),
-        None => utils::get_dim(800, 600, args.width, args.height)
-    };
+    let encoder = if let Some(output_file) = &args.output_file {
+        Some(Encoder::new(&output_file, width, height).context("Failed to create encoder")?)
+    } else { None };
 
     let (graph, py_config_timestamp) = if let Some(python_config) = args.python_config.as_ref() {
         let graph = py::py_config(&python_config)?;
@@ -174,7 +169,7 @@ fn main() -> Result<()> {
         // Verified by this point in an earlier check
         let shader_file = args.shader_file.as_ref().unwrap();
 
-        let graph = match file_decoder {
+        let graph = match decoder {
             Some(_) => format!("input -> {} -> output", shader_file),
             None    => format!(         "{} -> output", shader_file)
         };
@@ -209,9 +204,12 @@ fn main() -> Result<()> {
     let time_since_start: std::time::Instant = std::time::Instant::now();
 
     // Decode the file into the staging buffer
-    if file_decoder.as_ref().is_some() {
-        file_decoder.unwrap().decode(mapped_input_image_data, width, height).unwrap_or_else(|err| panic!("Error: {}", err));
+    let (frame, is_last_frame) = if let Some(decoder) = decoder.as_mut() {
+        let (frame, is_last_frame) = decoder.read_frame()?;
+        unsafe { std::ptr::copy_nonoverlapping(frame.as_ptr(), mapped_input_image_data, frame.len()); }
+        (Some(frame), is_last_frame)
     }
+    else { (None, false) };
 
     let elapsed_ms = utils::get_elapsed_ms(&timer);
     println!("File Decode and resize: {:.2}ms", elapsed_ms);
@@ -305,7 +303,10 @@ fn main() -> Result<()> {
     else {
         render_fn(&mut render);
         render.wait_for_frame_fence();
-        ImageFileEncoder::encode(&args.output_file.unwrap(), mapped_input_image_data, width as i32, height as i32).unwrap_or_else(|err| panic!("Encoding error: {}", err));
+        if let Some(mut encoder) = encoder {
+            let slice = core::slice::from_raw_parts(mapped_input_image_data, (width as usize)*(height as usize)*4);
+            encoder.write_frame(slice)?;
+        }
     }
 
     }
