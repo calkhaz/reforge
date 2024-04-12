@@ -9,17 +9,19 @@ extern crate tracing_subscriber;
 
 mod config;
 mod imagefileio;
+mod py;
 mod render;
 mod utils;
 mod vulkan;
 
 use ash::vk;
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use clap::Parser;
 use imagefileio::ImageFileDecoder;
 use imagefileio::ImageFileEncoder;
 use render::Render;
 use render::RenderInfo;
+use tracing::debug;
 use utils::TERM_CLEAR;
 
 use winit::{
@@ -66,14 +68,23 @@ impl LogLevel {
 
 #[derive(clap::Parser)]
 pub struct Args {
-    #[arg(value_name="shader", help = "A single shader to execute instead of a config")]
-    shader_file_path: Option<String>,
-
     #[arg(short='i', long="input-file", help = "File to read from")]
     input_file: Option<String>,
 
     #[arg(short='o', long="output-file", help = "Jpg file to write to")]
     output_file: Option<String>,
+
+    #[arg(short='p', long="py", help = "Python config file [Absolute or relative to py-config-path (.py optional)]")]
+    python_config: Option<String>,
+
+    #[arg(short='P', long="py-config-path", help = "Python config path [Defaults to $REFORGE_PY_CONFIG_PATH]")]
+    python_path: Option<String>,
+
+    #[arg(short='S', long="shader-path", help = "Path to find shaders [Defaults to $REFORGE_SHADER_PATH]")]
+    shader_path: Option<String>,
+
+    #[arg(short='s', long="shader-file", help = "Direct path to a shader file")]
+    shader_file: Option<String>,
 
     #[arg(long)]
     width: Option<u32>,
@@ -87,14 +98,30 @@ pub struct Args {
     #[arg(long, value_name="config", help = "Path to the pipeline configuration file")]
     config: Option<String>,
 
-    #[arg(long, default_value="shaders", value_name="shader-path", help = "Path to the shader directory")]
-    shader_path: String,
-
     #[arg(long, default_value= "2", help = "Number of frame-in-flight to be used when displaying to the swapchain")]
     num_frames: Option<usize>,
 
     #[arg(short='l', long="log-level", help = "Tracing log level")]
     log_level: Option<LogLevel>,
+}
+
+// Validation checks and adjust args
+fn update_args(mut args: Args) -> Result<Args> {
+    if args.shader_file.is_none() && args.shader_path.is_none() {
+        let env_path = std::env::var("EOB1_SHADER_PATH").context("Missing required --shader-path, --shader-file or env var EOB1_SHADER_PATH")?;
+        debug!("Setting shader_path via env to: {}", env_path);
+        args.shader_path = Some(env_path);
+    }
+
+    if let Some(python_config) = args.python_config.as_ref() {
+        args.python_config = Some(utils::find_python_config(&python_config, args.python_path.clone())?);
+    }
+
+    if args.shader_file.is_none() && args.python_config.is_none() {
+        return Err(anyhow!("Expected either --shader-file or --python-config"))
+    }
+
+    Ok(args)
 }
 
 fn main() -> Result<()> {
@@ -107,12 +134,17 @@ fn main() -> Result<()> {
 
     tracing::subscriber::set_global_default(subscriber).context("setting tracing default failed")?;
 
+    let span = tracing::trace_span!("reforge");
+    let _guard = span.enter();
+
+    let args = update_args(args)?;
+
     let use_swapchain = args.output_file.is_none();
 
     // Only one frame to be in flight if we aren't using the swapchain
     let num_frames = if use_swapchain { args.num_frames.unwrap() } else { 1 } ;
 
-    if args.config.is_some() && args.shader_file_path.is_some() {
+    if args.config.is_some() && args.shader_file.is_some() {
         warnln!("Cannot specify both a config and shader file");
         std::process::exit(1);
     }
@@ -134,17 +166,34 @@ fn main() -> Result<()> {
         None => utils::get_dim(800, 600, args.width, args.height)
     };
 
+    let (graph, py_config_timestamp) = if let Some(python_config) = args.python_config.as_ref() {
+        let graph = py::py_config(&python_config)?;
+        (graph, utils::get_modified_time(&python_config))
+    }
+    else {
+        // Verified by this point in an earlier check
+        let shader_file = args.shader_file.as_ref().unwrap();
+
+        let graph = match file_decoder {
+            Some(_) => format!("input -> {} -> output", shader_file),
+            None    => format!(         "{} -> output", shader_file)
+        };
+
+        (graph, 0)
+    };
+
+    let shader_path = args.shader_path.clone().unwrap_or("".to_string());
+    let config = config::parse(graph.clone(), &shader_path).context("Failed to create config")?;
+    debug!("Config: {:?}", config);
+
     let render_info = RenderInfo {
-        graph: "input -> passthrough -> output".to_string(),
+        config,
         width: width,
         height: height,
         num_frames: num_frames,
-        config_path: args.config,
-        shader_path: args.shader_path,
         format: args.shader_format.unwrap().to_vk_format(),
         swapchain: use_swapchain,
         has_input_image: args.input_file.is_some(),
-        shader_file_path: args.shader_file_path
     };
 
     let event_loop = if use_swapchain { Some(EventLoop::new()) } else { None };

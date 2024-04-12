@@ -4,10 +4,10 @@ use crate::vulkan::pipeline::Pipeline;
 
 use std::rc::Rc;
 use std::cell::RefCell;
+use tracing::{debug, trace};
+use anyhow::{anyhow, Result};
 
 pub const TERM_CLEAR : &str = "\r\x1b[2K";
-pub const TERM_RED   : &str = "\x1b[31m";
-pub const TERM_YELLOW: &str = "\x1b[33m";
 const MOVING_AVG_SIZE: f64 = 60.0;
 
 #[macro_export]
@@ -85,3 +85,40 @@ pub fn get_elapsed_ms(inst: &std::time::Instant) -> f64{
     return (inst.elapsed().as_nanos() as f64)/1e6 as f64;
 }
 
+fn file_exists(path: &str) -> bool {
+    std::path::Path::new(path).is_file()
+}
+
+pub fn find_python_config(python_config: &str, mut python_path: Option<String>) -> Result<String> {
+    if python_path.is_none() {
+        if let Ok(env_path) = std::env::var("REFORGE_PY_CONFIG_PATH") {
+            trace!("Setting py_config_path via env to: {}", env_path);
+            python_path = Some(env_path);
+        }
+    }
+
+    debug!("Looking for {python_config} in {:?}", python_path);
+
+    let inferred_path = if let Some(python_path) = python_path.as_ref() {
+        let file_path = format!("{}/{}", python_path, python_config);
+        let file_path_py = format!("{}.py", file_path);
+        println!("{} {}", file_path, file_path_py);
+
+        if file_exists(&file_path)        { Some(file_path) }
+        else if file_exists(&file_path_py){ Some(file_path_py) }
+        else { None }
+    }
+    else { None };
+
+    let path = if let Some(p) = inferred_path.as_ref() { &p } else { python_config };
+
+    if file_exists(path) {
+        Ok(path.to_string())
+    }
+    else if let Some(python_path) = python_path {
+        Err(anyhow!("Could not find python config: {} in {}", python_config, python_path))
+    }
+    else {
+        Err(anyhow!("Could not find python config: {}", python_config))
+    }
+}

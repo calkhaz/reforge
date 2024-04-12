@@ -2,7 +2,6 @@ use ash::vk;
 use gpu_allocator as gpu_alloc;
 
 use crate::utils;
-use crate::config;
 use crate::config::Config;
 use crate::vulkan::command;
 use crate::vulkan::core::VkCore;
@@ -27,16 +26,13 @@ use winit::{
 };
 
 pub struct RenderInfo {
-    pub graph: String,
+    pub config: Config,
     pub width: u32,
     pub height: u32,
     pub num_frames: usize,
-    pub config_path: Option<String>,
-    pub shader_path: String,
     pub format: vk::Format,
     pub swapchain: bool,
     pub has_input_image: bool,
-    pub shader_file_path: Option<String>
 }
 
 pub struct Render {
@@ -46,7 +42,6 @@ pub struct Render {
     // Used to bring buffer -> srgba8 -> X or X -> srgba8 -> buffer
     staging_srgb_image: Image,
     pub staging_buffer: Buffer,
-    last_modified_config_time: u64,
     last_modified_shader_times: HashMap<String, u64>,
     present_index: u32,
     pub frame_index: usize,
@@ -78,7 +73,7 @@ impl Render {
     }
 
     unsafe fn create_graph(vk_core: &VkCore, info: &RenderInfo, pipeline_config: &Config) -> Option<PipelineGraph> {
-        let pipeline_infos = vkutils::synthesize_config(Rc::clone(&vk_core.device), &pipeline_config, &info.shader_path)?;
+        let pipeline_infos = vkutils::synthesize_config(Rc::clone(&vk_core.device), &info.config)?;
 
         let graph_info = PipelineGraphInfo {
             pipeline_infos: pipeline_infos,
@@ -88,23 +83,15 @@ impl Render {
             num_frames: info.num_frames
         };
 
-        let graph = PipelineGraph::new(&vk_core, graph_info)?;
-
-        Some(graph)
-    }
-
-    fn create_config(info: &RenderInfo) -> Option<Config>{
-        config::parse(info.graph.to_string(), &info.shader_path)
+        Some(PipelineGraph::new(&vk_core, graph_info))?
     }
 
     fn recreate_graph(&mut self) -> Option<()> {
-        let pipeline_config = Self::create_config(&self.info)?;
-
         unsafe {
         self.vk_core.device.device_wait_idle().unwrap();
 
-        let num_pipelines = pipeline_config.graph_pipelines.len() as u32;
-        let graph = Self::create_graph(&self.vk_core, &self.info, &pipeline_config)?;
+        let num_pipelines = self.info.config.graph_pipelines.len() as u32;
+        let graph = Self::create_graph(&self.vk_core, &self.info, &self.info.config)?;
 
         self.graph = graph;
         self.frames.iter_mut().for_each(|f| f.rebuild_timer(num_pipelines));
@@ -442,15 +429,13 @@ impl Render {
     pub fn new(info: RenderInfo, event_loop: &Option<EventLoop<()>>) -> Render {
         let window = if info.swapchain { Some(Self::create_window(&event_loop.as_ref().unwrap(), info.width, info.height)) } else { None };
 
-        let pipeline_config = Self::create_config(&info).unwrap();
-
         unsafe {
         let vk_core = VkCore::new(&window);
 
-        let graph = Self::create_graph(&vk_core, &info, &pipeline_config).unwrap();
+        let graph = Self::create_graph(&vk_core, &info, &info.config).unwrap();
 
         let frames : Vec<Frame> = (0..info.num_frames).map(|_|{
-            Frame::new(&vk_core, pipeline_config.graph_pipelines.len() as u32)
+            Frame::new(&vk_core, info.config.graph_pipelines.len() as u32)
         }).collect();
 
         // We use rgba8 as the input file format
@@ -469,7 +454,6 @@ impl Render {
                                                        info.width, info.height);
 
         let last_modified_shader_times: HashMap<String, u64> = utils::get_modified_times(&graph.pipelines);
-        let last_modified_config_time: u64 = if let Some(pipeline_config) = info.config_path.as_ref() { utils::get_modified_time(pipeline_config) } else { 0 };
 
         let swapchain = if info.swapchain { Some(SwapChain::new(&vk_core, info.width, info.height)) } else { None };
 
@@ -479,7 +463,6 @@ impl Render {
             info: info,
             staging_srgb_image: staging_srgb_image,
             staging_buffer: staging_buffer,
-            last_modified_config_time: last_modified_config_time,
             last_modified_shader_times: last_modified_shader_times,
             present_index: 0,
             frame_index: 0,
