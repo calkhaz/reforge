@@ -72,11 +72,11 @@ impl Render {
             .unwrap()
     }
 
-    unsafe fn create_graph(vk_core: &VkCore, info: &RenderInfo, pipeline_config: &Config) -> Option<PipelineGraph> {
+    unsafe fn create_graph(vk_core: &VkCore, info: &RenderInfo) -> Option<PipelineGraph> {
         let pipeline_infos = vkutils::synthesize_config(Rc::clone(&vk_core.device), &info.config)?;
 
         let graph_info = PipelineGraphInfo {
-            pipeline_infos: pipeline_infos,
+            pipeline_infos,
             format: info.format,
             width: info.width,
             height: info.height,
@@ -91,7 +91,7 @@ impl Render {
         self.vk_core.device.device_wait_idle().unwrap();
 
         let num_pipelines = self.info.config.graph_pipelines.len() as u32;
-        let graph = Self::create_graph(&self.vk_core, &self.info, &self.info.config)?;
+        let graph = Self::create_graph(&self.vk_core, &self.info)?;
 
         self.graph = graph;
         self.frames.iter_mut().for_each(|f| f.rebuild_timer(num_pipelines));
@@ -432,7 +432,7 @@ impl Render {
         unsafe {
         let vk_core = VkCore::new(&window);
 
-        let graph = Self::create_graph(&vk_core, &info, &info.config).unwrap();
+        let graph = Self::create_graph(&vk_core, &info).unwrap();
 
         let frames : Vec<Frame> = (0..info.num_frames).map(|_|{
             Frame::new(&vk_core, info.config.graph_pipelines.len() as u32)
