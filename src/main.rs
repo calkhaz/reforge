@@ -3,6 +3,7 @@ extern crate clap;
 extern crate gpu_allocator;
 extern crate shaderc;
 extern crate ffmpeg_sys_next as ffmpeg;
+extern crate pyo3;
 extern crate tracing;
 extern crate tracing_subscriber;
 
