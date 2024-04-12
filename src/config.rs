@@ -1,8 +1,7 @@
 use std::collections::HashMap;
+use tracing::warn;
 
 use crate::vulkan::pipeline_graph::{FINAL_OUTPUT, FILE_INPUT};
-
-use crate::warnln;
 
 #[derive(Debug)]
 pub struct ConfigDescriptor {
@@ -18,10 +17,12 @@ pub struct GraphPipeline {
     pub file_path: String
 }
 
+#[derive(Debug)]
 pub struct PipelineInstance {
     pub pipeline_type: String,
 }
 
+#[derive(Debug)]
 pub struct Config {
     pub graph_pipelines: HashMap<String, GraphPipeline>,
     pub pipeline_instances: HashMap<String, PipelineInstance>
@@ -40,7 +41,7 @@ fn add_file_paths(mut config: Config, shader_path: &String) -> Config {
             }
         };
 
-        let base_path = format!("{shader_path}/{pipeline_type}");
+        let base_path = format!("{shader_path}{pipeline_type}").replace("//", "/");
         let path = std::path::Path::new(&base_path);
 
         if path.exists() {
@@ -121,7 +122,7 @@ pub fn parse(graph: String, shader_dir: &String) -> Option<Config> {
 
     config = add_file_paths(config, shader_dir);
 
-    if config.graph_pipelines.len() == 0 { warnln!("Configuration had an empty graph");  return None }
+    if config.graph_pipelines.len() == 0 { warn!("Configuration had an empty graph");  return None }
 
     Some(config)
 }
