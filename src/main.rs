@@ -3,6 +3,8 @@ extern crate clap;
 extern crate gpu_allocator;
 extern crate shaderc;
 extern crate ffmpeg_sys_next as ffmpeg;
+extern crate tracing;
+extern crate tracing_subscriber;
 #[macro_use] extern crate lalrpop_util;
 
 mod config;
@@ -12,6 +14,7 @@ mod utils;
 mod vulkan;
 
 use ash::vk;
+use anyhow::{Context, Result};
 use clap::Parser;
 use imagefileio::ImageFileDecoder;
 use imagefileio::ImageFileEncoder;
@@ -36,6 +39,27 @@ impl ShaderFormat {
         match self {
             ShaderFormat::Rgba8 => vk::Format::R8G8B8A8_UNORM,
             ShaderFormat::Rgba32f => vk::Format::R32G32B32A32_SFLOAT
+        }
+    }
+}
+
+#[derive(Copy, Clone, clap::ValueEnum)]
+enum LogLevel {
+    Trace,
+    Debug,
+    Info,
+    Warn,
+    Error
+}
+
+impl LogLevel {
+    pub fn to_trace(&self) -> tracing::Level {
+        match self {
+            LogLevel::Trace => tracing::Level::TRACE,
+            LogLevel::Debug => tracing::Level::DEBUG,
+            LogLevel::Info  => tracing::Level::INFO,
+            LogLevel::Warn  => tracing::Level::WARN,
+            LogLevel::Error => tracing::Level::ERROR,
         }
     }
 }
@@ -68,10 +92,21 @@ pub struct Args {
 
     #[arg(long, default_value= "2", help = "Number of frame-in-flight to be used when displaying to the swapchain")]
     num_frames: Option<usize>,
+
+    #[arg(short='l', long="log-level", help = "Tracing log level")]
+    log_level: Option<LogLevel>,
 }
 
-fn main() {
+fn main() -> Result<()> {
     let args = Args::parse();
+
+    let log_level = args.log_level.unwrap_or(LogLevel::Warn).to_trace();
+
+    let subscriber = tracing_subscriber::fmt()
+        .with_max_level(log_level).finish();
+
+    tracing::subscriber::set_global_default(subscriber).context("setting tracing default failed")?;
+
     let use_swapchain = args.output_file.is_none();
 
     // Only one frame to be in flight if we aren't using the swapchain
@@ -224,4 +259,6 @@ fn main() {
     }
 
     }
+
+    Ok(())
 }
