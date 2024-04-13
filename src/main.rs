@@ -19,7 +19,7 @@ use clap::Parser;
 use ffmpeg::{Decoder, Encoder};
 use render::Render;
 use render::RenderInfo;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 use utils::TERM_CLEAR;
 
 use crate::render::ParamData;
@@ -145,7 +145,7 @@ impl Reforge {
         self.event_loop.is_some()
     }
 
-    pub fn write_params(&mut self) {
+    fn write_params(&mut self) {
         self.params.iter().for_each(|(node_name, params)| {
             params.iter().for_each(|(param_name, value)| {
                 let param_map = self.render.pipeline_buffer_data.entry(node_name.clone()).or_default();
@@ -154,6 +154,51 @@ impl Reforge {
                 self.render.outdate_frames();
             })
         });
+    }
+
+    fn py_needs_reload(&mut self) -> bool {
+        if let Some(python_config) = self.args.python_config.as_ref() {
+            let current_py_config_timestamp = utils::get_modified_time(&python_config);
+
+            if current_py_config_timestamp == 0 {
+                warn!("Unable to access python config: {}", python_config);
+            }
+
+            if current_py_config_timestamp > self.py_config_timestamp {
+                self.py_config_timestamp = current_py_config_timestamp;
+                return true;
+            }
+        }
+
+        false
+    }
+
+    fn reload_py_config(&mut self) -> Result<()> {
+        if let Some(python_config) = self.args.python_config.as_ref() {
+            let shader_path = self.args.shader_path.as_ref().unwrap().clone();
+            match py::py_config(&python_config) {
+                Ok((graph, params)) => {
+                    self.params = params;
+
+                    if graph != self.graph {
+                        let config = config::parse(graph.clone(), &shader_path).context("Failed to create config")?;
+                        self.render.update_config(config);
+                        self.graph = graph;
+
+                        debug!("Reload graph: {}", self.graph);
+                    }
+
+                    debug!("Reload Params: {:?}", self.params);
+
+                    self.write_params();
+                    Ok(())
+                },
+                Err(err) => Err(anyhow!("Python err in {}: {}", python_config, err))
+            }
+        }
+        else {
+            Ok(())
+        }
     }
 
     fn new(args: Args) -> Result<Reforge> {
@@ -334,6 +379,12 @@ impl Reforge {
                     (Some(frame), is_last_frame)
             }
             else { (None, false) };
+
+            if self.py_needs_reload() {
+                if let Err(err) = self.reload_py_config() {
+                    warn!("{}", err);
+                }
+            }
 
             if (is_last_frame && self.encoder.is_some()) || window_exit_requested {
                 break;
