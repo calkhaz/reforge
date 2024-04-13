@@ -18,9 +18,9 @@ fn ffprobe_info(input_path: &str) -> Result<(u32, u32, u32)> {
     let cmd = Command::new("ffprobe")
         .args([
             "-loglevel", "error", // Only show critical messages
-            "-count_frames",
-            "-show_entries", "stream=width,height,nb_read_frames",
-            "-of", "csv",
+            "-count_packets",
+            "-show_entries", "stream=width,height,nb_read_packets",
+            "-of", "csv=p=0",
             input_path
          ])
         .stdout(std::process::Stdio::piped())
@@ -37,19 +37,17 @@ fn ffprobe_info(input_path: &str) -> Result<(u32, u32, u32)> {
                 return Err(anyhow!("ffprobe exited with status code: {} - {} - {}", code, stdout_str, stderr_str));
             }
 
-            let mut parts = stdout_str.split(',');
-            let mut last3: Vec<&str> = parts.by_ref().rev().take(3).collect();
-            last3.swap(0, 2); // Reverse again to get original order
+            let parts: Vec<&str> = stdout_str.split(',').take(3).collect();
 
-            if last3.len() != 3 {
+            if parts.len() != 3 {
                 return Err(anyhow!("ffprobe returned nonsense: {}", stdout_str));
             }
 
             let parse_err = |e: &str| format!("Failed to parse ffprobe - Tried to parse ({}) as u32", e);
 
-            let width     : u32 = last3[0].trim().parse().context(parse_err(last3[0]))?;
-            let height    : u32 = last3[1].trim().parse().context(parse_err(last3[1]))?;
-            let num_frames: u32 = last3[2].trim().parse().context(parse_err(last3[2]))?;
+            let width     : u32 = parts[0].trim().parse().context(parse_err(parts[0]))?;
+            let height    : u32 = parts[1].trim().parse().context(parse_err(parts[1]))?;
+            let num_frames: u32 = parts[2].trim().parse().context(parse_err(parts[2]))?;
 
             Ok((width, height, num_frames))
         },
