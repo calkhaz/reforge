@@ -6,6 +6,7 @@ use crate::config::Config;
 use crate::vulkan::command;
 use crate::vulkan::core::VkCore;
 use crate::vulkan::frame::Frame;
+use crate::vulkan::pipeline_graph::BufferBlock;
 use crate::vulkan::pipeline_graph::FILE_INPUT;
 use crate::vulkan::pipeline_graph::PipelineGraph;
 use crate::vulkan::pipeline_graph::PipelineGraphInfo;
@@ -25,6 +26,62 @@ use winit::{
     window::WindowBuilder,
 };
 
+#[derive(Clone, Debug)]
+pub enum ParamData {
+    Boolean(bool),
+    Float(f32),
+    Integer(i32),
+    FloatArray(Vec<f32>),
+    IntegerArray(Vec<i32>)
+}
+
+impl ParamData {
+    fn primitive<T: num_traits::cast::NumCast>(&self) -> Option<T> {
+        match self {
+            ParamData::Float(v)   => { num_traits::cast::<f32, T>(*v) },
+            ParamData::Integer(v) => { num_traits::cast::<i32, T>(*v) },
+            ParamData::Boolean(v) => { let tmp = *v as u32;
+                                       num_traits::cast::<u32, T>(tmp) },
+            _ => None
+        }
+    }
+
+    fn write_to_buffer<T: num_traits::cast::NumCast>(&self, buffer: *mut u8) -> Option<()> {
+        let val = self.primitive::<T>()?;
+        unsafe { std::ptr::copy_nonoverlapping(&val, buffer as *mut T, 1); }
+        Some(())
+    }
+
+    fn primitive_vec<T: num_traits::cast::NumCast>(&self) -> Option<Vec<T>> {
+        match self {
+            ParamData::FloatArray(v)   => {
+                Some(v.iter().filter_map(|val|  { num_traits::cast::<f32, T>(*val) }).collect())
+            },
+            ParamData::IntegerArray(v) => {
+                Some(v.iter().filter_map(|val|  { num_traits::cast::<i32, T>(*val) }).collect())
+            },
+            _ => None
+        }
+    }
+
+    fn write_vec_to_buffer<T: num_traits::cast::NumCast>(&self, buffer: *mut u8, block: &BufferBlock) -> Option<()> {
+        let vec = self.primitive_vec::<T>()?;
+        let mut offset = 0;
+
+        if vec.len() > block.array_len as usize {
+            warnln!("Vector exceeds block size");
+            return None
+        }
+
+        for v in vec {
+            let offset_buffer = unsafe { buffer.offset(offset as isize) };
+            unsafe { std::ptr::copy_nonoverlapping(&v, offset_buffer as *mut T, 1); }
+            offset += block.array_stride;
+        }
+        Some(())
+    }
+}
+
 pub struct RenderInfo {
     pub config: Config,
     pub width: u32,
@@ -37,6 +94,7 @@ pub struct RenderInfo {
 
 pub struct Render {
     frames: Vec<Frame>,
+    frame_outdated: Vec<bool>,
     graph: PipelineGraph,
     info: RenderInfo,
     // Used to bring buffer -> srgba8 -> X or X -> srgba8 -> buffer
@@ -48,10 +106,17 @@ pub struct Render {
     swapchain: Option<SwapChain>,
     window: Option<winit::window::Window>,
     pub vk_core: VkCore,
-    pub swapchain_rebuilt_required: bool
+    pub swapchain_rebuilt_required: bool,
+    pub pipeline_buffer_data: HashMap<String, HashMap<String, ParamData>>
 }
 
 impl Render {
+    pub fn outdate_frames(&mut self) {
+        for f in &mut self.frame_outdated {
+            *f = true;
+        }
+    }
+
     pub fn staging_buffer_ptr(&mut self) -> *mut u8 {
         self.staging_buffer.allocation.mapped_ptr().unwrap().as_ptr() as *mut u8
     }
@@ -101,7 +166,69 @@ impl Render {
         Some(())
     }
 
+    pub fn write_to_outdated_ubos(&mut self) {
+        let outdated = self.frame_outdated[self.frame_index];
+    
+        if !outdated {
+            return
+        }
+    
+        let ubos = &mut self.graph.frames[self.frame_index].ubos;
+    
+        let write_to_buffer = |val: &ParamData, ptr: *mut u8, block: &BufferBlock | -> Option<()> {
+            use spirv_reflect::types::ReflectTypeFlags as spirv_t;
+            let t = block.block_type;
+    
+            // Array primitives
+            if      t == spirv_t::FLOAT | spirv_t::ARRAY  { val.write_vec_to_buffer::<f32>(ptr, block)?; }
+            else if t == spirv_t::INT   | spirv_t::ARRAY  { val.write_vec_to_buffer::<i32>(ptr, block)?; }
+            // Single primitives
+            else if t == spirv_t::FLOAT { val.write_to_buffer::<f32>(ptr)?; }
+            else if t == spirv_t::INT   { val.write_to_buffer::<i32>(ptr)?; }
+            else if t == spirv_t::BOOL  { val.write_to_buffer::<u32>(ptr)?; }
+    
+            Some(())
+        };
+    
+        // For every pipeline, pair parameter and bufferblock hashmaps by pipeline name
+        let matched_pipelines: Vec<(&HashMap<String, ParamData>, &HashMap<String, BufferBlock>)> =
+            ubos.iter().filter_map(|(name, buffer_map)| {
+                match self.pipeline_buffer_data.get(name) {
+                    Some(param_map) => Some((param_map, buffer_map)),
+                    None => None
+                }}).collect();
+    
+        // For every pipeline (1st vec), we'll want vector (2nd vec)
+        // for each parameter containing a tuple of the param name, param data, and buffer block
+        let matched_params: Vec<Vec<(&String, &ParamData, &BufferBlock)>> =
+            matched_pipelines.iter().filter_map(|(param_map, buffer_map)|{
+    
+                // Couple parameter and buffer block by name and flatten into vector
+                let combined: Vec<(&String, &ParamData, &BufferBlock)> =
+                    param_map.iter().filter_map(|(name, param)| {
+                        match buffer_map.get(name) {
+                            Some(buffer) => Some((name, param, buffer)),
+                            None => None
+                    }}).collect();
+    
+                // Don't add empty vectors
+                if combined.is_empty() { None } else { Some(combined) }
+    
+            }).collect();
+    
+        for (name, param, buffer_block) in matched_params.iter().flatten() {
+            let ptr = unsafe { buffer_block.buffer.mapped_data.offset(buffer_block.offset as isize) };
+    
+            write_to_buffer(param, ptr, &buffer_block)
+                .unwrap_or_else(|| warnln!("Failed to write param to buffer {}", name) );
+        }
+    
+        self.frame_outdated[self.frame_index] = false;
+    }
+
     pub fn update_ubos(&mut self, time: f32) {
+        self.write_to_outdated_ubos();
+    
         self.graph.frames[self.frame_index].ubos.iter_mut().for_each(|(_pipeline_name, buffer_block_map)| {
             buffer_block_map.iter_mut().for_each(|(buffer_member_name, buffer_block)| {
                 if buffer_member_name.ends_with("_rf_time") {
@@ -461,6 +588,7 @@ impl Render {
 
         Render {
             frames: frames,
+            frame_outdated: (0..info.num_frames).map(|_| { true } ).collect(),
             graph: graph,
             info: info,
             staging_srgb_image: staging_srgb_image,
@@ -471,7 +599,8 @@ impl Render {
             vk_core: vk_core,
             swapchain: swapchain,
             window: window,
-            swapchain_rebuilt_required: false
+            swapchain_rebuilt_required: false,
+            pipeline_buffer_data: HashMap::new()
         }
 
         }
