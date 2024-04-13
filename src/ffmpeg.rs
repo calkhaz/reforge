@@ -18,6 +18,7 @@ fn ffprobe_info(input_path: &str) -> Result<(u32, u32, u32)> {
     let cmd = Command::new("ffprobe")
         .args([
             "-loglevel", "error", // Only show critical messages
+            "-select_streams", "v:0",
             "-count_packets",
             "-show_entries", "stream=width,height,nb_read_packets",
             "-of", "csv=p=0",
