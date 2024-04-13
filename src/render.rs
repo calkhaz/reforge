@@ -107,7 +107,8 @@ pub struct Render {
     window: Option<winit::window::Window>,
     pub vk_core: VkCore,
     pub swapchain_rebuilt_required: bool,
-    pub pipeline_buffer_data: HashMap<String, HashMap<String, ParamData>>
+    pub pipeline_buffer_data: HashMap<String, HashMap<String, ParamData>>,
+    reload_config: Option<Config>
 }
 
 impl Render {
@@ -119,6 +120,10 @@ impl Render {
 
     pub fn staging_buffer_ptr(&mut self) -> *mut u8 {
         self.staging_buffer.allocation.mapped_ptr().unwrap().as_ptr() as *mut u8
+    }
+
+    pub fn update_config(&mut self, config: Config) {
+        self.reload_config = Some(config);
     }
 
     fn get_swapchain(&self) -> &SwapChain {
@@ -523,12 +528,27 @@ impl Render {
             self.rebuild_swapchain();
             full_reload_performed = self.recreate_graph().is_some();
             self.swapchain_rebuilt_required = false;
+            self.outdate_frames();
         }
 
         // If our configuration has changed, live reload it
-        //if self.config_changed() {
-        //    full_reload_performed = self.recreate_graph().is_some();
-        //}
+        if self.reload_config.is_some() {
+            // Swap reload into info
+            {
+            let reload_config = self.reload_config.as_mut().unwrap();
+            std::mem::swap(&mut self.info.config, reload_config);
+            }
+
+            // Try to reload with the new config
+            full_reload_performed = self.recreate_graph().is_some();
+
+            // If the reload failed, return to our original state
+            if !full_reload_performed {
+                let reload_config = self.reload_config.as_mut().unwrap();
+                std::mem::swap(&mut self.info.config, reload_config);
+            }
+            self.reload_config = None;
+        }
 
         // If any of our shaders have changed, live reload them
         if full_reload_performed {
@@ -600,7 +620,8 @@ impl Render {
             swapchain: swapchain,
             window: window,
             swapchain_rebuilt_required: false,
-            pipeline_buffer_data: HashMap::new()
+            pipeline_buffer_data: HashMap::new(),
+            reload_config: None
         }
 
         }
