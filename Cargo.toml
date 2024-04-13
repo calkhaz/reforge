@@ -18,3 +18,4 @@ spirv-reflect = "0.2.3"
 tracing = "0.1.40"
 tracing-subscriber = "0.3.18"
 pyo3 = { version = "0.20.3", features = ["auto-initialize"] }
+num-traits = "0.2.18"

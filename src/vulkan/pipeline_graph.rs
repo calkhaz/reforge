@@ -67,7 +67,9 @@ struct PipelineGraphFrameInfo<'a> {
 
 pub struct BufferBlock {
     pub size: u32,
-    pub offset:u32,
+    pub offset: u32,
+    pub array_stride: u32,
+    pub array_len: u32,
     pub block_type: ReflectTypeFlags,
     pub buffer: Rc<Buffer>
 }
@@ -273,14 +275,16 @@ impl PipelineGraphFrame {
                 // ubos for this pipeline
                 let mut pipeline_ubos: HashMap<String, BufferBlock> = HashMap::new();
 
-                fn recurse_block(reflect_block: &ReflectBlockVariable, base_name: &String, buffer: &Rc<Buffer>, ubos: &mut HashMap<String, BufferBlock>) { // -> BufferBlock
+                fn recurse_block(reflect_block: &ReflectBlockVariable, base_name: &String, buffer: &Rc<Buffer>, ubos: &mut HashMap<String, BufferBlock>) {
                     let block = BufferBlock {
                         size: reflect_block.size,
                         offset: reflect_block.offset,
+                        array_stride: reflect_block.array.stride,
+                        array_len: if reflect_block.array.dims.len() == 1 { reflect_block.array.dims[0] } else { 0 },
                         block_type: reflect_block.type_description.as_ref().unwrap().type_flags,
                         buffer: Rc::clone(buffer),
                     };
-
+                    
                     let name = if base_name.is_empty() { reflect_block.name.clone() }
                     else                               { format!("{}.{}", base_name, reflect_block.name.clone()) };
 

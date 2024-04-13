@@ -22,6 +22,10 @@ use render::RenderInfo;
 use tracing::{debug, info};
 use utils::TERM_CLEAR;
 
+use crate::render::ParamData;
+
+use std::collections::HashMap;
+
 use winit::{
     event::{ElementState, Event, KeyboardInput, VirtualKeyCode, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
@@ -130,6 +134,7 @@ struct Reforge {
     encoder: Option<Encoder>,
     render: Render,
     graph: String,
+    params: HashMap<String, HashMap<String, ParamData>>,
     py_config_timestamp: u64,
     event_loop: Option<EventLoop<()>>,
     time_since_start: std::time::Instant,
@@ -138,6 +143,17 @@ struct Reforge {
 impl Reforge {
     fn has_swapchain(&self) -> bool {
         self.event_loop.is_some()
+    }
+
+    pub fn write_params(&mut self) {
+        self.params.iter().for_each(|(node_name, params)| {
+            params.iter().for_each(|(param_name, value)| {
+                let param_map = self.render.pipeline_buffer_data.entry(node_name.clone()).or_default();
+                param_map.insert(param_name.clone(), value.clone());
+
+                self.render.outdate_frames();
+            })
+        });
     }
 
     fn new(args: Args) -> Result<Reforge> {
@@ -157,20 +173,20 @@ impl Reforge {
             Some(Encoder::new(&output_file, width, height).context("Failed to create encoder")?)
         } else { None };
     
-        let (graph, py_config_timestamp) = if let Some(python_config) = args.python_config.as_ref() {
-            let graph = py::py_config(&python_config)?;
-            (graph, utils::get_modified_time(&python_config))
+        let (graph, params, py_config_timestamp) = if let Some(python_config) = args.python_config.as_ref() {
+            let (graph, params) = py::py_config(&python_config)?;
+            (graph, params, utils::get_modified_time(&python_config))
         }
         else {
             // Verified by this point in an earlier check
             let shader_file = args.shader_file.as_ref().unwrap();
-    
+
             let graph = match decoder {
                 Some(_) => format!("input -> {} -> output", shader_file),
                 None    => format!(         "{} -> output", shader_file)
             };
-    
-            (graph, 0)
+
+            (graph, HashMap::new(), 0)
         };
     
         let shader_path = args.shader_path.clone().unwrap_or("".to_string());
@@ -193,7 +209,7 @@ impl Reforge {
         let render = Render::new(render_info, &event_loop);
         let time_since_start: std::time::Instant = std::time::Instant::now();
     
-        Ok(Reforge { args, width, height, decoder, encoder, render, graph, py_config_timestamp, event_loop, time_since_start })
+        Ok(Reforge { args, width, height, decoder, encoder, render, graph, params, py_config_timestamp, event_loop, time_since_start })
     }
 
     pub fn execute(&mut self, input_bytes: Option<&[u8]>, output_bytes: Option<&mut [u8]>) -> bool {
@@ -310,6 +326,7 @@ impl Reforge {
 
         let mut rf_output: Vec<u8> = Vec::with_capacity(frame_size);
         unsafe { rf_output.set_len(frame_size) }
+        self.write_params();
 
         loop {
             let (frame, is_last_frame) = if let Some(decoder) = self.decoder.as_mut() {
