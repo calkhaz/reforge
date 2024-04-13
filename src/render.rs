@@ -140,8 +140,9 @@ impl Render {
         self.last_modified_shader_times = current_modified_shader_times;
     }
 
-    pub unsafe fn acquire_swapchain(&mut self) {
+    pub fn acquire_swapchain(&mut self) {
         let swapchain = self.get_swapchain();
+        unsafe {
         let (present_index, _) = swapchain.loader.acquire_next_image(
                 swapchain.vk,
                 std::u64::MAX,
@@ -151,6 +152,7 @@ impl Render {
             .unwrap();
 
         self.present_index = present_index;
+        }
     }
 
     pub fn record_initial_image_load(&self) {
