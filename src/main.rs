@@ -69,7 +69,7 @@ pub struct Args {
     #[arg(short='i', long="input-file", help = "File to read from")]
     input_file: Option<String>,
 
-    #[arg(short='o', long="output-file", help = "Jpg file to write to")]
+    #[arg(short='o', long="output-file", help = "File to write to. A window preview is used otherwise")]
     output_file: Option<String>,
 
     #[arg(short='p', long="py", help = "Python config file [Absolute or relative to py-config-path (.py optional)]")]
