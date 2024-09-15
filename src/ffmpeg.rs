@@ -2,6 +2,7 @@ use std::{process::Command, io::{Read, Write}};
 use anyhow::{anyhow, Context, Result};
 use tracing::trace;
 use crate::utils;
+use std::path::Path;
 
 pub struct Decoder {
     stdout_reader: std::io::BufReader<std::process::ChildStdout>,
@@ -121,6 +122,12 @@ impl Decoder {
 
 impl Encoder {
     pub fn new(output_file: &str, width: u32, height: u32) -> Result<Encoder, std::io::Error> {
+        let file_path = Path::new(output_file);
+
+        if let Some(parent_dir) = file_path.parent() {
+            std::fs::create_dir_all(parent_dir)?;
+        }
+
         let mut cmd = Command::new("ffmpeg")
             .args([
                 "-loglevel", "error", // Only show critical messages
