@@ -41,7 +41,10 @@ fn add_file_paths(mut config: Config, shader_path: &String) -> Config {
             }
         };
 
-        let base_path = format!("{shader_path}{pipeline_type}").replace("//", "/");
+        let base_path = if shader_path.is_empty() { pipeline_type }
+        else { format!("{shader_path}/{pipeline_type}")
+        }.replace("//", "/");
+
         let path = std::path::Path::new(&base_path);
 
         if path.exists() {
