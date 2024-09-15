@@ -19,3 +19,7 @@ tracing = "0.1.40"
 tracing-subscriber = "0.3.18"
 pyo3 = { version = "0.20.3", features = ["auto-initialize"] }
 num-traits = "0.2.18"
+
+[dev-dependencies]
+image-compare = "0.4.1"
+image = "0.25.2"
