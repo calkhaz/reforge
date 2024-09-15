@@ -466,28 +466,27 @@ mod tests {
         Ok(compare.score)
     }
 
-    fn test_single_io_compute() -> Result<f64> {
+    fn make_io(input: &str) -> (String, String, String) {
         let func_name = std::thread::current().name().unwrap().to_string();
-        let input = "tests/images/waterfall.jpg";
-        let candidate = &format!("tests/candidate-images/{func_name}.png");
-        let reference = &format!("tests/reference-images/{func_name}.png");
+        (input.to_string(),
+        format!("tests/candidate-images/{func_name}.png"),
+        format!("tests/reference-images/{func_name}.png"))
+    }
 
+    fn test_single_io_compute() -> Result<f64> {
+        let (input, candidate, reference) = make_io("tests/images/waterfall.jpg");
         let args = make_args(&format!("-i {input} --shader-file tests/shaders/passthrough.comp -o {candidate}"));
         let _ = run_reforge(args)?;
 
-        compare_images(candidate, reference)
+        compare_images(&candidate, &reference)
     }
 
     fn test_chaining_io_compute() -> Result<f64> {
-        let func_name = std::thread::current().name().unwrap().to_string();
-        let input = "tests/images/waterfall.jpg";
-        let candidate = &format!("tests/candidate-images/{func_name}.png");
-        let reference = &format!("tests/reference-images/{func_name}.png");
-
+        let (input, candidate, reference) = make_io("tests/images/waterfall.jpg");
         let args = make_args(&format!("-i {input} --shader-path tests/shaders --py-config-path tests/py -p chaining_io -o {candidate}"));
         let _ = run_reforge(args)?;
 
-        compare_images(candidate, reference)
+        compare_images(&candidate, &reference)
     }
 
     fn test_compare_res(compare: Result<f64>) {
@@ -498,13 +497,6 @@ mod tests {
         assert!(compare.unwrap() > 0.95);
     }
 
-    #[test]
-    fn single_io_compute() {
-        test_compare_res(test_single_io_compute())
-    }
-
-    #[test]
-    fn chaining_io_compute() {
-        test_compare_res(test_chaining_io_compute())
-    }
+    #[test] fn single_io_compute()   { test_compare_res(test_single_io_compute()) }
+    #[test] fn chaining_io_compute() { test_compare_res(test_chaining_io_compute()) }
 }
