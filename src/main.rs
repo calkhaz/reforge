@@ -68,7 +68,7 @@ impl LogLevel {
     }
 }
 
-#[derive(clap::Parser)]
+#[derive(clap::Parser, Default)]
 pub struct Args {
     #[arg(short='i', long="input-file", help = "File to read from")]
     input_file: Option<String>,
@@ -409,15 +409,13 @@ impl Reforge {
     }
 }
 
-fn main() -> Result<()> {
-    let args = Args::parse();
-
+fn run_reforge(args: Args) -> Result<()> {
     let log_level = args.log_level.unwrap_or(LogLevel::Warn).to_trace();
 
     let subscriber = tracing_subscriber::fmt()
         .with_max_level(log_level).finish();
 
-    tracing::subscriber::set_global_default(subscriber).context("setting tracing default failed")?;
+    let _ = tracing::subscriber::set_global_default(subscriber).context("setting tracing default failed");
 
     let span = tracing::trace_span!("reforge");
     let _guard = span.enter();
@@ -427,4 +425,86 @@ fn main() -> Result<()> {
     let mut reforge = Reforge::new(args)?;
 
     reforge.run()
+}
+
+fn main() -> Result<()> {
+    let args = Args::parse();
+    run_reforge(args)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_args(args_str: &str) -> Args {
+        let prefixed_string = format!("reforge {args_str}");
+        let split_args: Vec<&str> = prefixed_string.split_whitespace().collect();
+
+        Args::parse_from(split_args)
+    }
+
+    fn compare_images(candidate: &str, reference: &str) -> Result<f64> {
+        // Seems using ffmpeg cmd to externally write the file
+        // causes us a race condition where the file may not be fully written
+        // No amount of flushing/manual closing seems to help, so we wait a short moment before
+        // opening the files we just finished writing
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        let c_bytes = std::fs::read(candidate).context(format!("Error reading: {candidate}"))?;
+        let r_bytes = std::fs::read(reference).context(format!("Error reading: {reference}"))?;
+
+        if c_bytes.len() == r_bytes.len() {
+            if c_bytes == r_bytes {
+                return Ok(1.0)
+            }
+        }
+
+        let c_data = image::ImageReader::new(std::io::Cursor::new(c_bytes.clone())).with_guessed_format()?.decode()?.into_rgba8();
+        let r_data = image::ImageReader::new(std::io::Cursor::new(r_bytes.clone())).with_guessed_format()?.decode()?.into_rgba8();
+
+        let compare = image_compare::rgba_hybrid_compare(&c_data, &r_data)?;
+
+        Ok(compare.score)
+    }
+
+    fn test_single_io_compute() -> Result<f64> {
+        let func_name = std::thread::current().name().unwrap().to_string();
+        let input = "tests/images/waterfall.jpg";
+        let candidate = &format!("tests/candidate-images/{func_name}.png");
+        let reference = &format!("tests/reference-images/{func_name}.png");
+
+        let args = make_args(&format!("-i {input} --shader-file tests/shaders/passthrough.comp -o {candidate}"));
+        let _ = run_reforge(args)?;
+
+        compare_images(candidate, reference)
+    }
+
+    fn test_chaining_io_compute() -> Result<f64> {
+        let func_name = std::thread::current().name().unwrap().to_string();
+        let input = "tests/images/waterfall.jpg";
+        let candidate = &format!("tests/candidate-images/{func_name}.png");
+        let reference = &format!("tests/reference-images/{func_name}.png");
+
+        let args = make_args(&format!("-i {input} --shader-path tests/shaders --py-config-path tests/py -p chaining_io -o {candidate}"));
+        let _ = run_reforge(args)?;
+
+        compare_images(candidate, reference)
+    }
+
+    fn test_compare_res(compare: Result<f64>) {
+        if let Err(err) = &compare {
+            eprintln!("{:?}", err);
+        }
+        assert!(compare.is_ok());
+        assert!(compare.unwrap() > 0.95);
+    }
+
+    #[test]
+    fn single_io_compute() {
+        test_compare_res(test_single_io_compute())
+    }
+
+    #[test]
+    fn chaining_io_compute() {
+        test_compare_res(test_chaining_io_compute())
+    }
 }

@@ -1,0 +1,81 @@
+#version 450
+
+layout (local_size_x = 16, local_size_y = 16) in;
+layout (binding = 0, rgba8) uniform readonly  image2D input_image;
+layout (binding = 1, rgba8) uniform writeonly image2D output_image;
+
+layout (binding=3) uniform data {
+    float saturation;
+    float contrast;
+    float brightness;
+    float hue_adjust;
+};
+
+// https://www.shadertoy.com/view/ssyyDh
+float cbrt(float x)
+{
+    float y = uintBitsToFloat(709973695u+floatBitsToUint(x)/3u);
+    y = y*(2.0/3.0) + (1.0/3.0)*x/(y*y);
+    y = y*(2.0/3.0) + (1.0/3.0)*x/(y*y);
+    return y;
+}
+
+// https://bottosson.github.io/posts/oklab/
+vec3 linear_srgb_to_oklab(vec3 c) 
+{
+    float l = 0.4122214708f * c.r + 0.5363325363f * c.g + 0.0514459929f * c.b;
+	float m = 0.2119034982f * c.r + 0.6806995451f * c.g + 0.1073969566f * c.b;
+	float s = 0.0883024619f * c.r + 0.2817188376f * c.g + 0.6299787005f * c.b;
+
+    float l_ = cbrt(l);
+    float m_ = cbrt(m);
+    float s_ = cbrt(s);
+
+    return vec3(
+        0.2104542553f*l_ + 0.7936177850f*m_ - 0.0040720468f*s_,
+        1.9779984951f*l_ - 2.4285922050f*m_ + 0.4505937099f*s_,
+        0.0259040371f*l_ + 0.7827717662f*m_ - 0.8086757660f*s_
+    );
+}
+
+vec3 oklab_to_linear_srgb(vec3 c) 
+{
+    // x = L
+    // y = a
+    // z = b
+    float l_ = c.x + 0.3963377774f * c.y + 0.2158037573f * c.z;
+    float m_ = c.x - 0.1055613458f * c.y - 0.0638541728f * c.z;
+    float s_ = c.x - 0.0894841775f * c.y - 1.2914855480f * c.z;
+
+    float l = l_*l_*l_;
+    float m = m_*m_*m_;
+    float s = s_*s_*s_;
+
+    return vec3(
+		+4.0767416621f * l - 3.3077115913f * m + 0.2309699292f * s,
+		-1.2684380046f * l + 2.6097574011f * m - 0.3413193965f * s,
+		-0.0041960863f * l - 0.7034186147f * m + 1.7076147010f * s
+    );
+}
+
+void main()
+{	
+    vec4 color = imageLoad(input_image, ivec2(gl_GlobalInvocationID.xy));
+
+    color.rgb = linear_srgb_to_oklab(color.rgb);
+
+    const float L = contrast*color.x + brightness;
+    float a = color.y;
+    float b = color.z;
+
+    const float chroma = saturation*length(vec2(a,b));
+    const float hue = atan(b, a) + hue_adjust;
+
+    a = chroma*cos(hue);
+    b = chroma*sin(hue);
+
+    color.rgb = oklab_to_linear_srgb(vec3(L, a, b));
+
+    imageStore(output_image, ivec2(gl_GlobalInvocationID.xy), color);
+}
+
