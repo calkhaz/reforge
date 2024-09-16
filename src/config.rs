@@ -99,7 +99,7 @@ pub fn parse(graph: String, shader_dir: &String) -> Option<Config> {
                 let split: Vec<&str> = graph[i-1].split(':').collect();
                 let (input_pipeline, input_descriptor) = (split[0].trim(), split.get(1));
 
-                let descriptor_name = descriptor_name.unwrap_or(&"input_image").to_string();
+                let descriptor_name = descriptor_name.unwrap_or(&"input_image").trim().to_string();
 
                 let resource_name = if input_pipeline == "input" { FILE_INPUT.to_string() } 
                                     else { format!("{input_pipeline}:{}", input_descriptor.unwrap_or(&"output_image").to_string()) };
@@ -113,7 +113,7 @@ pub fn parse(graph: String, shader_dir: &String) -> Option<Config> {
                 let output_pipeline = split[0].trim();
 
 
-                let descriptor_name = descriptor_name.unwrap_or(&"output_image").to_string();
+                let descriptor_name = descriptor_name.unwrap_or(&"output_image").trim().to_string();
 
                 let resource_name = if output_pipeline == "output" { FINAL_OUTPUT.to_string() }
                                     else { format!("{pipeline_name}:{descriptor_name}") };
