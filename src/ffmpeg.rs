@@ -4,6 +4,13 @@ use tracing::trace;
 use crate::utils;
 use std::path::Path;
 
+fn is_multi_frame_format(ext: &str) -> bool {
+    match ext {
+        "mkv" | "mp4" | "avi" | "webm" | "gif" => true,
+        _ => false
+    }
+}
+
 pub struct Decoder {
     stdout_reader: std::io::BufReader<std::process::ChildStdout>,
     pub width: u32,
@@ -12,7 +19,8 @@ pub struct Decoder {
 }
 
 pub struct Encoder {
-    stdin_writer: std::io::BufWriter<std::process::ChildStdin>
+    stdin_writer: std::io::BufWriter<std::process::ChildStdin>,
+    pub is_multi_frame: bool
 }
 
 fn ffprobe_info(input_path: &str) -> Result<(u32, u32, u32)> {
@@ -123,6 +131,9 @@ impl Decoder {
 impl Encoder {
     pub fn new(output_file: &str, width: u32, height: u32) -> Result<Encoder, std::io::Error> {
         let file_path = Path::new(output_file);
+        let ext = if let Some(ext) = file_path.extension() {
+            ext.to_str().unwrap()
+        } else { "" };
 
         if let Some(parent_dir) = file_path.parent() {
             std::fs::create_dir_all(parent_dir)?;
@@ -144,7 +155,7 @@ impl Encoder {
         let stdin = cmd.stdin.take().expect("Failed to obtain decoder stdout");
         let stdin_writer = std::io::BufWriter::new(stdin);
 
-        Ok(Encoder{stdin_writer})
+        Ok(Encoder{stdin_writer, is_multi_frame: is_multi_frame_format(ext)})
     }
 
     pub fn write_frame(&mut self, buffer: &[u8]) -> Result<()> {

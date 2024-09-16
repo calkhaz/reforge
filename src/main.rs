@@ -239,11 +239,17 @@ impl Reforge {
         debug!("Graph: {}", graph);
         debug!("Config: {:?}", config);
 
+        // We write each frame to the encoder and that cannot
+        // currently work in multi-frame mode
+        let num_frames = if encoder.is_some() {
+            1
+        } else { args.num_frames.unwrap() };
+
         let render_info = RenderInfo {
             config,
             width,
             height,
-            num_frames: args.num_frames.unwrap(),
+            num_frames,
             format: args.shader_format.unwrap().to_vk_format(),
             swapchain: encoder.is_none(),
             has_input_image: decoder.is_some(),
@@ -399,6 +405,11 @@ impl Reforge {
 
                 // Encode to file
                 self.encoder.as_mut().unwrap().write_frame(&rf_output)?;
+
+                // Only need to write one frame and exit
+                if !self.encoder.as_ref().unwrap().is_multi_frame {
+                    break;
+                }
             }
             else {
                 window_exit_requested = self.execute(frame.as_deref(), None);
@@ -489,6 +500,14 @@ mod tests {
         compare_images(&candidate, &reference)
     }
 
+    fn test_gen_compute() -> Result<f64> {
+        let (_, candidate, reference) = make_io("");
+        let args = make_args(&format!("--shader-file tests/shaders/noise.comp -o {candidate}"));
+        let _ = run_reforge(args)?;
+
+        compare_images(&candidate, &reference)
+    }
+
     fn test_compare_res(compare: Result<f64>) {
         if let Err(err) = &compare {
             eprintln!("{:?}", err);
@@ -499,4 +518,5 @@ mod tests {
 
     #[test] fn single_io_compute()   { test_compare_res(test_single_io_compute()) }
     #[test] fn chaining_io_compute() { test_compare_res(test_chaining_io_compute()) }
+    #[test] fn gen_compute() { test_compare_res(test_gen_compute()) }
 }
