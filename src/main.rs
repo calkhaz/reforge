@@ -508,6 +508,14 @@ mod tests {
         compare_images(&candidate, &reference)
     }
 
+    fn test_point_op_compute() -> Result<f64> {
+        let (input, candidate, reference) = make_io("tests/images/waterfall.jpg");
+        let args = make_args(&format!("-i {input} --py-config-path tests/py -p point_op --shader-path tests/shaders/ -o {candidate}"));
+        let _ = run_reforge(args)?;
+
+        compare_images(&candidate, &reference)
+    }
+
     fn test_compare_res(compare: Result<f64>) {
         if let Err(err) = &compare {
             eprintln!("{:?}", err);
@@ -519,4 +527,5 @@ mod tests {
     #[test] fn single_io_compute()   { test_compare_res(test_single_io_compute()) }
     #[test] fn chaining_io_compute() { test_compare_res(test_chaining_io_compute()) }
     #[test] fn gen_compute() { test_compare_res(test_gen_compute()) }
+    #[test] fn point_op() { test_compare_res(test_point_op_compute()) }
 }
