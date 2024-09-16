@@ -484,7 +484,7 @@ mod tests {
         format!("tests/reference-images/{func_name}.png"))
     }
 
-    fn test_single_io_compute() -> Result<f64> {
+    fn test_single_io() -> Result<f64> {
         let (input, candidate, reference) = make_io("tests/images/waterfall.jpg");
         let args = make_args(&format!("-i {input} --shader-file tests/shaders/passthrough.comp -o {candidate}"));
         let _ = run_reforge(args)?;
@@ -492,7 +492,7 @@ mod tests {
         compare_images(&candidate, &reference)
     }
 
-    fn test_chaining_io_compute() -> Result<f64> {
+    fn test_chaining_io() -> Result<f64> {
         let (input, candidate, reference) = make_io("tests/images/waterfall.jpg");
         let args = make_args(&format!("-i {input} --shader-path tests/shaders --py-config-path tests/py -p chaining_io -o {candidate}"));
         let _ = run_reforge(args)?;
@@ -500,7 +500,7 @@ mod tests {
         compare_images(&candidate, &reference)
     }
 
-    fn test_gen_compute() -> Result<f64> {
+    fn test_gen() -> Result<f64> {
         let (_, candidate, reference) = make_io("");
         let args = make_args(&format!("--shader-file tests/shaders/noise.comp -o {candidate}"));
         let _ = run_reforge(args)?;
@@ -508,7 +508,7 @@ mod tests {
         compare_images(&candidate, &reference)
     }
 
-    fn test_point_op_compute() -> Result<f64> {
+    fn test_point_op() -> Result<f64> {
         let (input, candidate, reference) = make_io("tests/images/waterfall.jpg");
         let args = make_args(&format!("-i {input} --py-config-path tests/py -p point_op --shader-path tests/shaders/ -o {candidate}"));
         let _ = run_reforge(args)?;
@@ -524,8 +524,8 @@ mod tests {
         assert!(compare.unwrap() > 0.95);
     }
 
-    #[test] fn single_io_compute()   { test_compare_res(test_single_io_compute()) }
-    #[test] fn chaining_io_compute() { test_compare_res(test_chaining_io_compute()) }
-    #[test] fn gen_compute() { test_compare_res(test_gen_compute()) }
-    #[test] fn point_op() { test_compare_res(test_point_op_compute()) }
+    #[test] fn single_io()   { test_compare_res(test_single_io()) }
+    #[test] fn chaining_io() { test_compare_res(test_chaining_io()) }
+    #[test] fn gen() { test_compare_res(test_gen()) }
+    #[test] fn point_op() { test_compare_res(test_point_op()) }
 }
