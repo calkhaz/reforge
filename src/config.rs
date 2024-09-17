@@ -102,7 +102,7 @@ pub fn parse(graph: String, shader_dir: &String) -> Option<Config> {
                 let descriptor_name = descriptor_name.unwrap_or(&"input_image").trim().to_string();
 
                 let resource_name = if input_pipeline == "input" { FILE_INPUT.to_string() } 
-                                    else { format!("{input_pipeline}:{}", input_descriptor.unwrap_or(&"output_image").to_string()) };
+                                    else { format!("{input_pipeline}:{}", input_descriptor.unwrap_or(&"output_image").trim().to_string()) };
 
                 info.inputs.push(ConfigDescriptor{resource_name, descriptor_name});
             }
