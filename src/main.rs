@@ -516,6 +516,14 @@ mod tests {
         compare_images(&candidate, &reference)
     }
 
+    fn test_buffer_chain() -> Result<f64> {
+        let (input, candidate, reference) = make_io("tests/images/waterfall.jpg");
+        let args = make_args(&format!("-i {input} --py-config-path tests/py -p buffer_chain --shader-path tests/shaders/ -o {candidate}"));
+        let _ = run_reforge(args)?;
+
+        compare_images(&candidate, &reference)
+    }
+
     fn test_compare_res(compare: Result<f64>) {
         if let Err(err) = &compare {
             eprintln!("{:?}", err);
@@ -528,4 +536,5 @@ mod tests {
     #[test] fn chaining_io() { test_compare_res(test_chaining_io()) }
     #[test] fn gen() { test_compare_res(test_gen()) }
     #[test] fn point_op() { test_compare_res(test_point_op()) }
+    #[test] fn buffer_chain() { test_compare_res(test_buffer_chain()) }
 }
