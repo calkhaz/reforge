@@ -3,7 +3,6 @@ extern crate shaderc;
 extern crate gpu_allocator;
 
 use ash::vk;
-use spirv_reflect::types::{ReflectDescriptorBinding, ReflectDescriptorType, ReflectBlockVariable, ReflectTypeFlags};
 use std::collections::HashSet;
 use std::default::Default;
 use std::collections::HashMap;
@@ -18,6 +17,10 @@ use crate::vulkan::shader::Shader;
 use crate::vulkan::pipeline::{Pipeline, PipelineInfo};
 use crate::vulkan::render_pass;
 use crate::warnln;
+
+use crate::vulkan::shader::DescBlockType;
+
+use super::shader::{SsboBinding, ImageBinding};
 
 pub const FILE_INPUT: &str = "rf:file-input";
 pub const FINAL_OUTPUT: &str = "rf:final-output";
@@ -65,12 +68,13 @@ struct PipelineGraphFrameInfo<'a> {
     image_reuse_remapping: &'a HashMap<String, String>
 }
 
+#[derive(Debug)]
 pub struct BufferBlock {
     pub size: u32,
     pub offset: u32,
     pub array_stride: u32,
     pub array_len: u32,
-    pub block_type: ReflectTypeFlags,
+    pub block_type: DescBlockType,
     pub buffer: Rc<Buffer>
 }
 
@@ -97,7 +101,7 @@ impl PipelineGraphFrame {
         }
     }
 
-    unsafe fn image_write(image: &Image, infos: &mut Vec<vk::DescriptorImageInfo>, binding: &ReflectDescriptorBinding, set: vk::DescriptorSet, sampler: &Sampler) -> vk::WriteDescriptorSet {
+    unsafe fn image_write(image: &Image, infos: &mut Vec<vk::DescriptorImageInfo>, binding: &ImageBinding, set: vk::DescriptorSet, sampler: &Sampler) -> vk::WriteDescriptorSet {
         infos.push(vk::DescriptorImageInfo {
             image_layout: vk::ImageLayout::GENERAL,
             image_view: image.view.unwrap(),
@@ -108,7 +112,7 @@ impl PipelineGraphFrame {
             dst_set: set,
             dst_binding: binding.binding,
             descriptor_count: 1,
-            descriptor_type: vkutils::reflect_desc_to_vk(binding.descriptor_type).unwrap(),
+            descriptor_type: binding.image_type.to_vk(),
             p_image_info: infos.last().unwrap(),
             ..Default::default()
         }
@@ -160,9 +164,9 @@ impl PipelineGraphFrame {
         for layer in frame_info.ordered_pipelines {
             for pipeline in layer {
                 let info = &pipeline.borrow().info;
-                let mut add_ssbo_sizes = |buffer_name_pairs: &Vec<(String, ReflectDescriptorBinding)>| {
+                let mut add_ssbo_sizes = |buffer_name_pairs: &Vec<(String, SsboBinding)>| {
                     for (buffer_name, binding) in buffer_name_pairs {
-                        let size: u32 = binding.block.members.iter().map(|s| s.padded_size).sum();
+                        let size: u32 = binding.size as u32;
 
                         // Insert the size or max of current size and new size found
                         ssbo_sizes.entry(buffer_name.clone()).and_modify(|curr_val| {
@@ -196,11 +200,14 @@ impl PipelineGraphFrame {
                     Vec::with_capacity(info.input_images.len() + info.output_images.len());
 
                 let mut desc_buffer_infos: Vec<vk::DescriptorBufferInfo> =
-                    Vec::with_capacity(info.shader.borrow().bindings.buffers.len());
+                    Vec::with_capacity(info.shader.borrow().bindings.ubos.len() +
+                                       info.shader.borrow().bindings.ssbos.len());
 
                 let mut descriptor_writes: Vec<vk::WriteDescriptorSet> =
-                    Vec::with_capacity(info.input_images.len()  + info.output_images .len() +
-                                       info.shader.borrow().bindings.buffers.len());
+                    Vec::with_capacity(info.input_images.len() +
+                                       info.output_images.len() +
+                                       info.shader.borrow().bindings.ubos.len() +
+                                       info.shader.borrow().bindings.ssbos.len());
 
                 // The only input not guaranteed to appear in any outputs is a file input
                 // Go ahead and create it if it is found
@@ -255,6 +262,7 @@ impl PipelineGraphFrame {
                     let buffer = buffers.entry(name.clone()).or_insert({
                         let usage = vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST;
                         let size = *ssbo_sizes.get(name).unwrap();
+
                         vkutils::create_buffer(core, name.to_string(), size as u64, usage, gpu_allocator::MemoryLocation::GpuToCpu)
                     });
 
@@ -275,35 +283,23 @@ impl PipelineGraphFrame {
                 // ubos for this pipeline
                 let mut pipeline_ubos: HashMap<String, BufferBlock> = HashMap::new();
 
-                fn recurse_block(reflect_block: &ReflectBlockVariable, base_name: &String, buffer: &Rc<Buffer>, ubos: &mut HashMap<String, BufferBlock>) {
-                    let block = BufferBlock {
-                        size: reflect_block.size,
-                        offset: reflect_block.offset,
-                        array_stride: reflect_block.array.stride,
-                        array_len: if reflect_block.array.dims.len() == 1 { reflect_block.array.dims[0] } else { 0 },
-                        block_type: reflect_block.type_description.as_ref().unwrap().type_flags,
-                        buffer: Rc::clone(buffer),
-                    };
-                    
-                    let name = if base_name.is_empty() { reflect_block.name.clone() }
-                    else                               { format!("{}.{}", base_name, reflect_block.name.clone()) };
+                for (name, ubo_binding) in &info.shader.borrow().bindings.ubos {
+                    let usage = vk::BufferUsageFlags::UNIFORM_BUFFER | vk::BufferUsageFlags::TRANSFER_DST;
+                    let buffer = Rc::new(vkutils::create_buffer(core, name.clone(), ubo_binding.size as u64, usage, gpu_allocator::MemoryLocation::GpuToCpu));
+                    descriptor_writes.push(Self::buffer_write(&buffer, vk::DescriptorType::UNIFORM_BUFFER, &mut desc_buffer_infos, ubo_binding.binding, descriptor_set));
 
-                    if !reflect_block.name.is_empty() {
-                        ubos.insert(name.clone(), block);
-                    }
+                    for (ubo_name, ubo) in &ubo_binding.ubos {
 
-                    reflect_block.members.iter().for_each(|member| recurse_block(&member, &name, &buffer, ubos));
-                }
+                        let block = BufferBlock {
+                            size: ubo.size as u32,
+                            offset: ubo.offset as u32,
+                            array_stride: ubo.array_stride as u32,
+                            array_len: ubo.array_len,
+                            block_type: ubo.block_type,
+                            buffer: Rc::clone(&buffer),
+                        };
 
-                for buffer_reflect in &info.shader.borrow().bindings.buffers {
-                    if buffer_reflect.descriptor_type == ReflectDescriptorType::UniformBuffer {
-                        let buffer_name = format!("{}:{}", pipeline.borrow().name, buffer_reflect.type_description.as_ref().unwrap().type_name.clone());
-                        let usage = vk::BufferUsageFlags::UNIFORM_BUFFER | vk::BufferUsageFlags::TRANSFER_DST;
-
-                        let buffer = Rc::new(vkutils::create_buffer(core, buffer_name, buffer_reflect.block.size as u64, usage, gpu_allocator::MemoryLocation::GpuToCpu));
-                        descriptor_writes.push(Self::buffer_write(&buffer, vk::DescriptorType::UNIFORM_BUFFER, &mut desc_buffer_infos, buffer_reflect.binding, descriptor_set));
-
-                        recurse_block(&buffer_reflect.block, &"".to_string(), &buffer, &mut pipeline_ubos);
+                        pipeline_ubos.insert(ubo_name.clone(), block);
                     }
                 }
 
@@ -364,7 +360,7 @@ impl PipelineGraph {
         let mut images: HashSet<String> = HashSet::new();
         let mut image_reuse: HashMap<String, String> = HashMap::new();
 
-        let images_have_remap = | name: &String, images: &Vec<(String, ReflectDescriptorBinding)>, image_reuse: &HashMap<String, String> | {
+        let images_have_remap = | name: &String, images: &Vec<(String, ImageBinding)>, image_reuse: &HashMap<String, String> | {
             images.iter().any(|(image_name, _)| {
                 let reuse_name = image_reuse.get(image_name);
                 return reuse_name.is_some() && reuse_name.unwrap() == name;

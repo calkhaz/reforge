@@ -3,7 +3,6 @@ extern crate shaderc;
 extern crate gpu_allocator;
 
 use ash::vk;
-use spirv_reflect::types::ReflectDescriptorBinding;
 use std::ffi::CStr;
 use std::default::Default;
 use std::collections::HashMap;
@@ -14,14 +13,16 @@ use std::ops::Drop;
 use crate::vulkan::vkutils;
 use crate::vulkan::shader::Shader;
 
+use super::shader::{ImageBinding, SsboBinding};
+
 #[derive(Clone)]
 pub struct PipelineInfo {
     pub name: String,
     pub shader: Rc<RefCell<Shader>>,
-    pub input_images:  Vec<(String, ReflectDescriptorBinding)>,
-    pub output_images: Vec<(String, ReflectDescriptorBinding)>,
-    pub input_ssbos:   Vec<(String, ReflectDescriptorBinding)>,
-    pub output_ssbos:  Vec<(String, ReflectDescriptorBinding)>,
+    pub input_images:  Vec<(String, ImageBinding)>,
+    pub output_images: Vec<(String, ImageBinding)>,
+    pub input_ssbos:   Vec<(String, SsboBinding)>,
+    pub output_ssbos:  Vec<(String, SsboBinding)>,
 }
 
 pub struct Pipeline {

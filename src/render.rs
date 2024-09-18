@@ -16,6 +16,7 @@ use crate::vulkan::vkutils;
 use crate::vulkan::vkutils::Buffer;
 use crate::vulkan::vkutils::Image;
 use crate::warnln;
+use crate::vulkan::shader::DescBlockType;
 
 use std::collections::HashMap;
 use std::default::Default;
@@ -181,19 +182,22 @@ impl Render {
         let ubos = &mut self.graph.frames[self.frame_index].ubos;
     
         let write_to_buffer = |val: &ParamData, ptr: *mut u8, block: &BufferBlock | -> Option<()> {
-            use spirv_reflect::types::ReflectTypeFlags as spirv_t;
             let t = block.block_type;
     
             // Array primitives
-            if      t == spirv_t::FLOAT | spirv_t::ARRAY  { val.write_vec_to_buffer::<f32>(ptr, block)?; }
-            else if t == spirv_t::INT   | spirv_t::ARRAY  { val.write_vec_to_buffer::<i32>(ptr, block)?; }
+            if      t == DescBlockType::FLOAT | DescBlockType::ARRAY  { val.write_vec_to_buffer::<f32>(ptr, block)?; }
+            else if t == DescBlockType::INT   | DescBlockType::ARRAY  { val.write_vec_to_buffer::<i32>(ptr, block)?; }
             // Single primitives
-            else if t == spirv_t::FLOAT { val.write_to_buffer::<f32>(ptr)?; }
-            else if t == spirv_t::INT   { val.write_to_buffer::<i32>(ptr)?; }
-            else if t == spirv_t::BOOL  { val.write_to_buffer::<u32>(ptr)?; }
+            else if t == DescBlockType::FLOAT { val.write_to_buffer::<f32>(ptr)?; }
+            else if t == DescBlockType::INT   { val.write_to_buffer::<i32>(ptr)?; }
+            else if t == DescBlockType::BOOL  { val.write_to_buffer::<u32>(ptr)?; }
     
             Some(())
         };
+
+        // Descripting debugging
+        // println!("ubos: {:#?}", ubos);
+        // println!("pipeline_buffer_data: {:#?}", self.pipeline_buffer_data);
     
         // For every pipeline, pair parameter and bufferblock hashmaps by pipeline name
         let matched_pipelines: Vec<(&HashMap<String, ParamData>, &HashMap<String, BufferBlock>)> =

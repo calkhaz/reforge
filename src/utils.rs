@@ -17,6 +17,13 @@ macro_rules! warnln {
     }}
 }
 
+#[macro_export]
+macro_rules! err {
+    ($($arg:tt)*) => {{
+        Err(anyhow!($($arg)*))
+    }};
+}
+
 pub fn load_file_contents(config_path: &str) -> Option<String> {
     let contents = match std::fs::read_to_string(config_path) {
         Ok(contents) => contents,

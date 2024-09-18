@@ -6,9 +6,6 @@ use gpu_allocator::vulkan as gpu_alloc_vk;
 
 use ash::vk;
 use ash::vk::Handle;
-use spirv_reflect::types::ReflectDescriptorBinding;
-use spirv_reflect::types::ReflectDescriptorType;
-use spirv_reflect::types::ReflectShaderStageFlags;
 use crate::config::Config;
 use crate::config::ConfigDescriptor;
 use crate::vulkan::core::VkCore;
@@ -21,6 +18,10 @@ use std::rc::Rc;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
+
+use super::shader::DescType;
+use super::shader::ImageBinding;
+use super::shader::SsboBinding;
 
 
 pub struct Sampler {
@@ -43,6 +44,13 @@ pub struct Buffer {
     pub allocation: gpu_alloc_vk::Allocation,
     pub vk: vk::Buffer,
     pub mapped_data: *mut u8
+}
+
+impl std::fmt::Debug for Buffer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        f.debug_struct("Buffer").finish()
+    }
+
 }
 
 pub struct GpuTimer {
@@ -153,9 +161,9 @@ pub fn synthesize_config(device: Rc<ash::Device>, config: &Config) -> Option<Has
 
         // Match up the parsed configuration with what the parsed spirv bindings of the shader
         let add_resource_and_descriptor = |file_path: &str, config_bindings: &Vec<ConfigDescriptor> |
-                                           -> Option<(Vec<(String, ReflectDescriptorBinding)>, Vec<(String, ReflectDescriptorBinding)>)> {
-            let mut image_bindings : Vec<(String, ReflectDescriptorBinding)> = Vec::new();
-            let mut buffer_bindings: Vec<(String, ReflectDescriptorBinding)> = Vec::new();
+                                           -> Option<(Vec<(String, ImageBinding)>, Vec<(String, SsboBinding)>)> {
+            let mut image_bindings : Vec<(String, ImageBinding)> = Vec::new();
+            let mut buffer_bindings: Vec<(String, SsboBinding)> = Vec::new();
 
             for config_binding in config_bindings {
                 match info.shader.borrow().bindings.images.get(&config_binding.descriptor_name) {
@@ -305,57 +313,33 @@ pub unsafe fn create_image(core: &VkCore, name: String, format: vk::Format, widt
     }
 }
 
-pub fn reflect_desc_to_vk(desc_type: ReflectDescriptorType) -> Option<vk::DescriptorType> {
-    match desc_type {
-        ReflectDescriptorType::StorageImage         => Some(vk::DescriptorType::STORAGE_IMAGE),
-        ReflectDescriptorType::CombinedImageSampler => Some(vk::DescriptorType::COMBINED_IMAGE_SAMPLER),
-        ReflectDescriptorType::Sampler              => Some(vk::DescriptorType::SAMPLER),
-        ReflectDescriptorType::UniformBuffer        => Some(vk::DescriptorType::UNIFORM_BUFFER),
-        ReflectDescriptorType::StorageBuffer        => Some(vk::DescriptorType::STORAGE_BUFFER),
-        _ => None
-    }
-}
-
-pub fn reflect_stage_to_vk(desc_type: ReflectShaderStageFlags) -> Option<vk::ShaderStageFlags> {
-    match desc_type {
-        ReflectShaderStageFlags::VERTEX   => Some(vk::ShaderStageFlags::VERTEX),
-        ReflectShaderStageFlags::FRAGMENT => Some(vk::ShaderStageFlags::FRAGMENT),
-        ReflectShaderStageFlags::COMPUTE  => Some(vk::ShaderStageFlags::COMPUTE),
-        _ => None
-    }
-}
-
-//pub fn create_descriptor_layout_bindings(bindings: &HashMap<String, ReflectDescriptorBinding>,
 pub fn create_descriptor_layout_bindings(bindings: &ShaderBindings,
                                          num_frames: usize,
                                          pool_sizes: &mut HashMap<vk::DescriptorType, u32>) -> Vec<vk::DescriptorSetLayoutBinding> {
 
-    let mut vk_bindings: Vec<vk::DescriptorSetLayoutBinding> = Vec::with_capacity(bindings.images.len() + bindings.buffers.len());
+    let mut vk_bindings: Vec<vk::DescriptorSetLayoutBinding> = Vec::with_capacity(bindings.images.len() + bindings.ssbos.len());
 
-    let mut image_binding = vk::DescriptorSetLayoutBinding {
+    let mut desc_binding = vk::DescriptorSetLayoutBinding {
         descriptor_count: 1,
         stage_flags: vk::ShaderStageFlags::COMPUTE,
         ..Default::default()
     };
 
-    let mut add_binding = |binding: &ReflectDescriptorBinding| {
-        let desc_type = reflect_desc_to_vk(binding.descriptor_type).expect(&format!("Can\'t handle descriptor type: {:?}", binding.descriptor_type));
+    let mut add_binding = |binding: u32, ty: DescType| {
+        let desc_type = ty.to_vk();
+
         // Add to pool size
         *pool_sizes.entry(desc_type).or_insert(0) += num_frames as u32;
 
         // Add vulkan descriptor binding
-        image_binding.binding = binding.binding;
-        image_binding.descriptor_type = desc_type;
-        vk_bindings.push(image_binding);
+        desc_binding.binding = binding;
+        desc_binding.descriptor_type = desc_type;
+        vk_bindings.push(desc_binding);
     };
 
-    for (_, binding) in &bindings.images {
-        add_binding(binding);
-    }
-
-    for binding in &bindings.buffers {
-        add_binding(binding);
-    }
+    for (_, binding) in &bindings.images { add_binding(binding.binding, binding.image_type); }
+    for (_, binding) in &bindings.ssbos  { add_binding(binding.binding, DescType::StorageBuffer); }
+    for (_, binding) in &bindings.ubos   { add_binding(binding.binding, DescType::UniformBuffer); }
 
     vk_bindings
 }
