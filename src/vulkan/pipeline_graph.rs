@@ -28,6 +28,7 @@ pub const FINAL_OUTPUT: &str = "rf:final-output";
 pub struct PipelineGraphFrame {
     device: Rc<ash::Device>,
     pub images: HashMap<String, Image>,
+    #[allow(dead_code)]
     pub buffers: HashMap<String, Buffer>,
     pub ubos: HashMap<String, HashMap<String, BufferBlock>>,
     pub descriptor_sets: HashMap<String, vk::DescriptorSet>,
@@ -70,6 +71,7 @@ struct PipelineGraphFrameInfo<'a> {
 
 #[derive(Debug)]
 pub struct BufferBlock {
+    #[allow(dead_code)]
     pub size: u32,
     pub offset: u32,
     pub array_stride: u32,

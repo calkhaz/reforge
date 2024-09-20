@@ -8,7 +8,6 @@ use tracing::{debug, trace};
 use anyhow::{anyhow, Result};
 
 pub const TERM_CLEAR : &str = "\r\x1b[2K";
-const MOVING_AVG_SIZE: f64 = 60.0;
 
 #[macro_export]
 macro_rules! warnln {
@@ -80,8 +79,10 @@ pub fn get_dim(width: u32, height: u32, new_width: Option<u32>, new_height: Opti
     (w, h)
 }
 
+/*
 pub fn moving_avg(mut avg: f64, next_value: f64) -> f64 {
 
+    const MOVING_AVG_SIZE: f64 = 60.0;
     avg -= avg / MOVING_AVG_SIZE;
     avg += next_value / MOVING_AVG_SIZE;
 
@@ -91,6 +92,7 @@ pub fn moving_avg(mut avg: f64, next_value: f64) -> f64 {
 pub fn get_elapsed_ms(inst: &std::time::Instant) -> f64{
     return (inst.elapsed().as_nanos() as f64)/1e6 as f64;
 }
+*/
 
 fn file_exists(path: &str) -> bool {
     std::path::Path::new(path).is_file()

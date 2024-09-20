@@ -1,9 +1,5 @@
-extern crate ash;
-extern crate gpu_allocator;
-
-
-use ash::{vk::{self }};
-use std::{ffi::CStr};
+use ash::vk;
+use std::ffi::CStr;
 use ash::extensions::khr;
 use std::borrow::Cow;
 use std::default::Default;
@@ -49,6 +45,7 @@ pub struct VkCore {
     // move this out of a mutable reference during drop and gpu_alloc_vk::Allocator
     // has no default, so Option<> was the workaround
     pub allocator: Option<Rc<RefCell<gpu_alloc_vk::Allocator>>>,
+    #[allow(dead_code)]
     pub entry: ash::Entry,
     pub instance: ash::Instance,
     pub device: Rc<ash::Device>,

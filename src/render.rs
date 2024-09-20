@@ -563,9 +563,11 @@ impl Render {
         full_reload_performed
     }
 
+    /*
     pub fn last_frame_gpu_times(&mut self) -> String {
         self.frames[self.frame_index].timer.get_elapsed_ms()
     }
+    */
 
     fn rebuild_swapchain(&mut self) {
         let window_size = self.window.as_ref().unwrap().inner_size();

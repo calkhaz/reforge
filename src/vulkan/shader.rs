@@ -52,21 +52,18 @@ pub struct DescBlockType: u32 {
 #[derive(Clone, Debug)]
 pub struct ImageBinding {
     pub binding: u32,
-    pub set: u32,
     pub image_type: DescType
 }
 
 #[derive(Clone, Debug)]
 pub struct SsboBinding {
     pub binding: u32,
-    pub set: u32,
     pub size: usize
 }
 
 #[derive(Debug)]
 pub struct UboBinding {
     pub binding: u32,
-    pub set: u32,
     pub ubos: HashMap<String, UboVar>,
     pub size: usize
 }
@@ -78,7 +75,8 @@ pub struct UboVar {
     pub block_type: DescBlockType,
     pub array_stride: usize,
     pub array_len: u32,
-    pub dims: Vec<u32>
+    // Currently vecs are unsupported
+    //pub dims: Vec<u32>
 }
 
 pub struct ShaderBindings {
@@ -89,9 +87,9 @@ pub struct ShaderBindings {
 
 pub struct Shader {
     device: Rc<ash::Device>,
+    pub _name: String,
     pub module: vk::ShaderModule,
     pub bindings: ShaderBindings,
-    pub name: String,
     pub path: Option<String>,
     pub stage: vk::ShaderStageFlags
 }
@@ -148,7 +146,6 @@ impl UboBinding {
                     block_type: Self::get_scalar_type(v)?,
                     array_stride: 0,
                     array_len: 0,
-                    dims: Vec::new()
                 };
                 ubos.insert(name, block_var);
             },
@@ -161,7 +158,6 @@ impl UboBinding {
                     block_type,
                     array_stride: arr_stride,
                     array_len: arr_len,
-                    dims: Vec::new()
                 };
                 ubos.insert(name, block_var);
             },
@@ -200,7 +196,6 @@ impl UboBinding {
 
         //println!("ubos: {:?}", ubos);
         Ok(UboBinding {
-            set: desc_bind.set(),
             binding: desc_bind.bind(),
             ubos,
             size
@@ -244,7 +239,7 @@ impl Shader {
 
         Some(Shader {
             device: Rc::clone(device), module, bindings,
-            name, path: None, stage
+            _name: name, path: None, stage
         })
     }
 
@@ -315,6 +310,10 @@ impl Shader {
                     let binding = desc_bind.bind();
                     let set = desc_bind.set();
 
+                    if set != 0 {
+                        return err!("Only sets at idx 0 are supported currently")
+                    }
+
                     use spirq::ty::DescriptorType::*;
 
                     match desc_ty {
@@ -333,11 +332,11 @@ impl Shader {
                         },
                         CombinedImageSampler() => {
                             let name = name.as_ref().context("Descriptor has no name")?;
-                            images.insert(name.clone(), ImageBinding{ binding, set, image_type: DescType::CombinedImageSampler });
+                            images.insert(name.clone(), ImageBinding{ binding, image_type: DescType::CombinedImageSampler });
                         },
                         StorageImage(_) => {
                             let name = name.as_ref().context("Descriptor has no name")?;
-                            images.insert(name.clone(), ImageBinding{ binding, set,  image_type: DescType::StorageImage });
+                            images.insert(name.clone(), ImageBinding{ binding, image_type: DescType::StorageImage });
                         },
                         StorageBuffer(_) => {
                             let size = match ty.min_nbyte() {
@@ -352,7 +351,7 @@ impl Shader {
                             println!("ssbo name: {:?}", ty);
 
 
-                            ssbos.insert(ssbo_name, SsboBinding{ binding, set, size });
+                            ssbos.insert(ssbo_name, SsboBinding{ binding, size });
                         },
                         _ => println!("Note unsupported descriptor ignored {:?}", desc_ty)
                     }

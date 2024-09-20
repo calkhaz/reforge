@@ -35,6 +35,7 @@ pub struct Image {
     pub allocation: gpu_alloc_vk::Allocation,
     pub vk: vk::Image,
     pub view: Option<vk::ImageView>,
+    #[allow(dead_code)]
     pub format: vk::Format
 }
 
@@ -110,6 +111,7 @@ impl GpuTimer{
         *self.query_indices.get(name).unwrap() + 1
     }
 
+    /*
     pub fn get_elapsed_ms(&mut self) -> String {
         let mut times: String = String::new();
 
@@ -141,6 +143,7 @@ impl GpuTimer{
         times
 
     }
+    */
 }
 
 /* Take the parsed configuration and read the shader of each corresponding pipeline
