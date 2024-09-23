@@ -1,5 +1,6 @@
 use std::collections::HashMap;
-use tracing::warn;
+use crate::err;
+use anyhow::{anyhow, Result};
 
 use crate::vulkan::pipeline_graph::{FINAL_OUTPUT, FILE_INPUT};
 
@@ -59,7 +60,7 @@ fn add_file_paths(mut config: Config, shader_path: &String) -> Config {
     config
 }
 
-pub fn parse(graph: String, shader_dir: &String) -> Option<Config> {
+pub fn parse(graph: String, shader_dir: &String) -> Result<Config> {
     let mut config = Config {
         graph_pipelines: HashMap::new(),
         pipeline_instances: HashMap::new()
@@ -125,7 +126,7 @@ pub fn parse(graph: String, shader_dir: &String) -> Option<Config> {
 
     config = add_file_paths(config, shader_dir);
 
-    if config.graph_pipelines.len() == 0 { warn!("Configuration had an empty graph");  return None }
+    if config.graph_pipelines.len() == 0 { return err!("Configuration had an empty graph") }
 
-    Some(config)
+    Ok(config)
 }

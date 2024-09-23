@@ -257,13 +257,13 @@ impl Reforge {
 
         let use_swapchain = encoder.is_none();
         let event_loop = if use_swapchain { Some(EventLoop::new()) } else { None };
-        let render = Render::new(render_info, &event_loop);
+        let render = Render::new(render_info, &event_loop)?;
         let time_since_start: std::time::Instant = std::time::Instant::now();
     
         Ok(Reforge { args, width, height, decoder, encoder, render, graph, params, py_config_timestamp, event_loop, time_since_start })
     }
 
-    pub fn execute(&mut self, input_bytes: Option<&[u8]>, output_bytes: Option<&mut [u8]>) -> bool {
+    pub fn execute(&mut self, input_bytes: Option<&[u8]>, output_bytes: Option<&mut [u8]>) -> Result<bool> {
         let mut first_run = vec![true; self.args.num_frames.unwrap()];
 
         //let mut avg_ms = 0.0;
@@ -323,17 +323,19 @@ impl Reforge {
         // changing or executing on its resources
         self.render.wait_for_frame_fence();
 
-        if self.render.trigger_reloads() {
+        if self.render.trigger_reloads()? {
             // Clear current line of timers
             eprint!("{TERM_CLEAR}");
             first_run.iter_mut().for_each(|b| *b = true);
         }
 
-        self.render.update_ubos(self.time_since_start.elapsed().as_secs_f32());
+        if let Err(err) = self.render.update_ubos(self.time_since_start.elapsed().as_secs_f32()) {
+            warn!("{}", err);
+        }
 
         // Pull in the next image from the swapchain
         if self.has_swapchain() {
-            self.render.acquire_swapchain();
+            self.render.acquire_swapchain()?;
         }
 
         self.render.begin_record();
@@ -368,7 +370,7 @@ impl Reforge {
             }
         }
 
-        requested_exit
+        Ok(requested_exit)
     }
 
     pub fn run(&mut self) -> Result<()> {
@@ -401,7 +403,7 @@ impl Reforge {
 
             // Render to swapchain or file
             if self.encoder.is_some() {
-                self.execute(frame.as_deref(), Some(&mut rf_output));
+                self.execute(frame.as_deref(), Some(&mut rf_output))?;
 
                 // Encode to file
                 self.encoder.as_mut().unwrap().write_frame(&rf_output)?;
@@ -412,7 +414,7 @@ impl Reforge {
                 }
             }
             else {
-                window_exit_requested = self.execute(frame.as_deref(), None);
+                window_exit_requested = self.execute(frame.as_deref(), None)?;
             }
         }
     

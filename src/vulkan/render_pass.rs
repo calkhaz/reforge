@@ -3,11 +3,12 @@ extern crate shaderc;
 extern crate gpu_allocator;
 
 use ash::vk;
+use anyhow::Result;
 use std::default::Default;
 use crate::vulkan::core::VkCore;
 use crate::vulkan::vkutils::Image;
 
-pub unsafe fn build_framebuffer(core: &VkCore, image: &Image, render_pass: vk::RenderPass, width: u32, height: u32) -> vk::Framebuffer {
+pub unsafe fn build_framebuffer(core: &VkCore, image: &Image, render_pass: vk::RenderPass, width: u32, height: u32) -> Result<vk::Framebuffer> {
     let info = vk::FramebufferCreateInfo {
         render_pass,
         attachment_count: 1,
@@ -18,10 +19,10 @@ pub unsafe fn build_framebuffer(core: &VkCore, image: &Image, render_pass: vk::R
         ..Default::default()
     };
 
-    core.device.create_framebuffer(&info, None).unwrap_or_else(|err| panic!("Error: {}", err))
+    Ok(core.device.create_framebuffer(&info, None)?)
 }
 
-pub unsafe fn build_render_pass(device: &ash::Device, format: vk::Format) -> vk::RenderPass {
+pub unsafe fn build_render_pass(device: &ash::Device, format: vk::Format) -> Result<vk::RenderPass> {
     let color_attachment = vk::AttachmentReference {
         attachment: 0,
         layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL
@@ -53,6 +54,6 @@ pub unsafe fn build_render_pass(device: &ash::Device, format: vk::Format) -> vk:
         ..Default::default()
     };
 
-    device.create_render_pass(&info, None).unwrap_or_else(|err| panic!("Error: {}", err))
+    Ok(device.create_render_pass(&info, None)?)
 }
 

@@ -5,7 +5,7 @@ use crate::vulkan::pipeline::Pipeline;
 use std::rc::Rc;
 use std::cell::RefCell;
 use tracing::{debug, trace};
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Result, Context};
 
 pub const TERM_CLEAR : &str = "\r\x1b[2K";
 
@@ -23,17 +23,14 @@ macro_rules! err {
     }};
 }
 
-pub fn load_file_contents(config_path: &str) -> Option<String> {
-    let contents = match std::fs::read_to_string(config_path) {
-        Ok(contents) => contents,
-        Err(e) => { warnln!("Error reading file '{}' : {}", config_path, e); return None }
-    };
+pub fn load_file_contents(config_path: &str) -> Result<String> {
+    let contents = std::fs::read_to_string(config_path).context(format!("Reading {}", config_path))?;
 
     if contents.is_empty() {
-        warnln!("File was empty: {config_path}");
-        return None
+        return err!("File was empty: {config_path}");
     }
-    Some(contents)
+
+    Ok(contents)
 }
 
 pub fn get_modified_time(path: &String) -> u64 {
@@ -60,23 +57,12 @@ pub fn get_modified_times(pipelines: &HashMap<String, Rc<RefCell<Pipeline>>>) ->
 }
 
 pub fn get_dim(width: u32, height: u32, new_width: Option<u32>, new_height: Option<u32>) -> (u32, u32) {
-    let mut w  = width;
-    let mut h = height;
-
-    if new_width.is_some() && new_height.is_some() {
-        return (new_width.unwrap(), new_height.unwrap())
+    match (new_width, new_height) {
+        (Some(new_width), Some(new_height)) => (new_width, new_height),
+        (Some(new_width), None)             => (new_width, ((new_width as f32/width as f32)*height as f32) as u32),
+        (None,            Some(new_height)) => (((new_height as f32/(height as f32))*width as f32) as u32, new_height),
+        (None,            None)             => (width, height)
     }
-
-    if new_width.is_some() {
-        w = new_width.unwrap();
-        h = ((w as f32/width as f32)*height as f32) as u32;
-    }
-    else if new_height.is_some() {
-        h = new_height.unwrap();
-        w = ((h as f32/(height as f32))*width as f32) as u32;
-    }
-
-    (w, h)
 }
 
 /*

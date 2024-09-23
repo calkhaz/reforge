@@ -3,6 +3,7 @@ extern crate shaderc;
 extern crate gpu_allocator;
 
 use ash::vk;
+use anyhow::{anyhow, Result};
 use std::collections::HashSet;
 use std::default::Default;
 use std::collections::HashMap;
@@ -10,6 +11,7 @@ use std::rc::Rc;
 use std::cell::RefCell;
 use std::ops::Drop;
 
+use crate::err;
 use crate::vulkan::core::VkCore;
 use crate::vulkan::vkutils;
 use crate::vulkan::vkutils::{Buffer, Image, Sampler};
@@ -138,7 +140,7 @@ impl PipelineGraphFrame {
         }
     }
 
-    unsafe fn new(core: &VkCore, frame_info: &PipelineGraphFrameInfo) -> PipelineGraphFrame {
+    unsafe fn new(core: &VkCore, frame_info: &PipelineGraphFrameInfo) -> Result<PipelineGraphFrame> {
         let device = &core.device;
         let format = frame_info.format;
 
@@ -158,7 +160,7 @@ impl PipelineGraphFrame {
             for pipeline in layer {
                 if let Some(render_pass) = pipeline.borrow().render_pass {
                     attachment_image = Some(vkutils::create_image(core, "color-attachment".to_string(), format, frame_info.width, frame_info.height));
-                    framebuffer = Some(render_pass::build_framebuffer(core, &attachment_image.as_ref().unwrap(), render_pass, frame_info.width, frame_info.height));
+                    framebuffer = Some(render_pass::build_framebuffer(core, &attachment_image.as_ref().unwrap(), render_pass, frame_info.width, frame_info.height)?);
                 }
             }
         }
@@ -312,7 +314,7 @@ impl PipelineGraphFrame {
             }
         }
 
-        PipelineGraphFrame {
+        Ok(PipelineGraphFrame {
             device: Rc::clone(&device),
             images,
             buffers,
@@ -321,7 +323,7 @@ impl PipelineGraphFrame {
             attachment_image,
             framebuffer,
             image_reuse_remapping: frame_info.image_reuse_remapping.clone()
-        }
+        })
     }
 }
 
@@ -338,7 +340,7 @@ impl PipelineGraph {
 
         let shader = Shader::from_path(device, &pipeline.info.shader.borrow().path.as_ref().unwrap());
 
-        if let Some(shader) = shader { 
+        if let Ok(shader) = shader { 
             pipeline.rebuild(self.width, self.height, shader)
                 .unwrap_or_else(|err| { warnln!("{:?}", err); })
         }
@@ -428,7 +430,7 @@ impl PipelineGraph {
         image_reuse
     }
 
-    fn order_by_execution(infos: &HashMap<String, PipelineInfo>) -> Option<Vec<Vec<PipelineInfo>>> {
+    fn order_by_execution(infos: &HashMap<String, PipelineInfo>) -> Result<Vec<Vec<PipelineInfo>>> {
         let mut ordered_pipelines: Vec<Vec<PipelineInfo>> = Vec::new();
         let mut unexecuted_nodes_set: HashSet<String> = infos.keys().cloned().collect();
 
@@ -487,18 +489,17 @@ impl PipelineGraph {
             }
 
             if unexecuted_nodes.len() == unexecuted_nodes_set.len() {
-                warnln!("Graph incorrectly constructed. Failed to add nodes into execution: {:?}", unexecuted_nodes);
-                return None
+                return err!("Graph incorrectly constructed. Failed to add nodes into execution: {:?}", unexecuted_nodes);
             }
 
             ordered_pipelines.push(node_infos);
         }
 
 
-        Some(ordered_pipelines)
+        Ok(ordered_pipelines)
     }
 
-    pub unsafe fn new(core: &VkCore, gi: PipelineGraphInfo) -> Option<PipelineGraph> {
+    pub unsafe fn new(core: &VkCore, gi: PipelineGraphInfo) -> Result<PipelineGraph> {
         let ordered_infos = Self::order_by_execution(&gi.pipeline_infos)?;
         let image_reuse_remapping = Self::reusable_image_remapping(&ordered_infos);
 
@@ -514,13 +515,13 @@ impl PipelineGraph {
             for info in layer {
                 let name = info.name.clone();
 
-                let pipeline_layout = Pipeline::new_layout(Rc::clone(&core.device), &info, &mut pool_sizes, gi.num_frames);
+                let pipeline_layout = Pipeline::new_layout(Rc::clone(&core.device), &info, &mut pool_sizes, gi.num_frames)?;
 
                 let pipeline = if info.shader.borrow().stage == vk::ShaderStageFlags::FRAGMENT {
                     bind_point = vk::PipelineBindPoint::GRAPHICS;
                     assert!(pipelines.len() < 1, "Can only have one pipeline when using fragment shaders");
-                    let render_pass = render_pass::build_render_pass(&core.device, gi.format);
-                    let vertex_shader = Rc::new(vkutils::build_vertex_shader(&core.device));
+                    let render_pass = render_pass::build_render_pass(&core.device, gi.format)?;
+                    let vertex_shader = Rc::new(vkutils::build_vertex_shader(&core.device)?);
                     Pipeline::new_gfx(Rc::clone(&core.device),
                                       gi.width,
                                       gi.height,
@@ -559,10 +560,9 @@ impl PipelineGraph {
             .max_sets(num_max_sets);
 
         let descriptor_pool = core.device
-            .create_descriptor_pool(&descriptor_pool_info, None)
-            .unwrap();
+            .create_descriptor_pool(&descriptor_pool_info, None)?;
 
-        let sampler = vkutils::create_sampler(Rc::clone(&core.device));
+        let sampler = vkutils::create_sampler(Rc::clone(&core.device))?;
 
         let mut frames: Vec<PipelineGraphFrame> = Vec::with_capacity(gi.num_frames);
 
@@ -577,10 +577,10 @@ impl PipelineGraph {
                 image_reuse_remapping: &image_reuse_remapping
             };
 
-            frames.push(PipelineGraphFrame::new(core, &graph_frame_info));
+            frames.push(PipelineGraphFrame::new(core, &graph_frame_info)?);
         }
 
-        Some(PipelineGraph {
+        Ok(PipelineGraph {
             device: Rc::clone(&core.device),
             frames: frames,
             width: gi.width,

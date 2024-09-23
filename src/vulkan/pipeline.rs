@@ -2,7 +2,9 @@ extern crate ash;
 extern crate shaderc;
 extern crate gpu_allocator;
 
+use crate::err;
 use ash::vk;
+use anyhow::{anyhow, Result};
 use std::ffi::CStr;
 use std::default::Default;
 use std::collections::HashMap;
@@ -45,7 +47,7 @@ pub struct PipelineLayout {
 impl Pipeline {
     pub unsafe fn build_compute_vk(device: &Rc<ash::Device>,
                                    shader: &Shader,
-                                   pipeline_layout: &PipelineLayout) -> Result<vk::Pipeline, String> {
+                                   pipeline_layout: &PipelineLayout) -> Result<vk::Pipeline> {
 
         let shader_entry_name = CStr::from_bytes_with_nul_unchecked(b"main\0");
         let shader_stage_create_infos = vk::PipelineShaderStageCreateInfo {
@@ -66,14 +68,14 @@ impl Pipeline {
                 Ok(pipelines[0])
             },
             Err(err) => {
-                Err(format!("Failed to create graphics pipeline: {:?}", err))
+                return err!("Failed to create graphics pipeline: {:?}", err)
             }
         }
     }
 
     pub unsafe fn new_compute(device: Rc<ash::Device>,
                               info: PipelineInfo,
-                              pipeline_layout: PipelineLayout) -> Result<Pipeline, String> {
+                              pipeline_layout: PipelineLayout) -> Result<Pipeline> {
 
         let vk_pipeline = Self::build_compute_vk(&device, &info.shader.borrow(), &pipeline_layout)?;
 
@@ -94,7 +96,7 @@ impl Pipeline {
                                vertex_shader: &Rc<Shader>,
                                fragment_shader: &Shader,
                                pipeline_layout: &PipelineLayout,
-                               render_pass: vk::RenderPass) -> Result<vk::Pipeline, String> {
+                               render_pass: vk::RenderPass) -> Result<vk::Pipeline> {
         let shader_entry_name = CStr::from_bytes_with_nul_unchecked(b"main\0");
 
         let shader_stages = vec![
@@ -186,7 +188,7 @@ impl Pipeline {
                 Ok(pipelines[0])
             },
             Err(err) => {
-                Err(format!("Failed to create graphics pipeline: {:?}", err))
+                return err!("Failed to create graphics pipeline: {:?}", err)
             }
         }
     }
@@ -197,7 +199,7 @@ impl Pipeline {
                           vertex_shader: Rc<Shader>,
                           info: PipelineInfo,
                           pipeline_layout: PipelineLayout,
-                          render_pass: vk::RenderPass) -> Result<Pipeline, String> {
+                          render_pass: vk::RenderPass) -> Result<Pipeline> {
 
         let vk_pipeline = Self::build_gfx_vk(
             &device, width, height, &vertex_shader, &info.shader.borrow(), &pipeline_layout, render_pass
@@ -217,29 +219,28 @@ impl Pipeline {
     pub unsafe fn new_layout(device: Rc<ash::Device>,
                              info: &PipelineInfo,
                              pool_sizes: &mut HashMap<vk::DescriptorType, u32>,
-                             num_frames: usize) -> PipelineLayout {
+                             num_frames: usize) -> Result<PipelineLayout> {
         // create descriptor layouts, add descriptor pool sizes, and add pipelines to hashmap
         let layout_bindings = vkutils::create_descriptor_layout_bindings(&info.shader.borrow().bindings, num_frames, pool_sizes);
 
         let descriptor_info = vk::DescriptorSetLayoutCreateInfo::builder().bindings(&layout_bindings);
         let descriptor_layout = [device
-            .create_descriptor_set_layout(&descriptor_info, None)
-            .unwrap()];
+            .create_descriptor_set_layout(&descriptor_info, None)?];
 
         let pipeline_layout = device.
             create_pipeline_layout(&vk::PipelineLayoutCreateInfo::builder()
-                .set_layouts(&descriptor_layout), None).unwrap();
+                .set_layouts(&descriptor_layout), None)?;
 
-        PipelineLayout {
+        Ok(PipelineLayout {
             vk: pipeline_layout,
             descriptor_layout: descriptor_layout[0]
-        }
+        })
     }
 
-    pub unsafe fn rebuild(&mut self, width: u32, height:u32, shader: Shader) -> Result<(), String> {
-        let vk_pipeline = if self.vertex_shader.is_some() {
+    pub unsafe fn rebuild(&mut self, width: u32, height:u32, shader: Shader) -> Result<()> {
+        let vk_pipeline = if let Some(vertex_shader) = self.vertex_shader.as_ref() {
             Self::build_gfx_vk(
-                &self.device, width, height, &self.vertex_shader.as_ref().unwrap(),
+                &self.device, width, height, vertex_shader,
                 &shader, &self.layout, self.render_pass.unwrap()
             )
         }

@@ -40,9 +40,9 @@ fn ffprobe_info(input_path: &str) -> Result<(u32, u32, u32)> {
 
     match output.status.code() {
         Some(code) => {
-            let stdout_str : &str = std::str::from_utf8(&output.stdout).unwrap();
+            let stdout_str : &str = std::str::from_utf8(&output.stdout)?;
             if code != 0 {
-                let stderr_str : &str = std::str::from_utf8(&output.stderr).unwrap();
+                let stderr_str : &str = std::str::from_utf8(&output.stderr)?;
 
                 return Err(anyhow!("ffprobe exited with status code: {} - {} - {}", code, stdout_str, stderr_str));
             }
@@ -129,7 +129,7 @@ impl Decoder {
 }
 
 impl Encoder {
-    pub fn new(output_file: &str, width: u32, height: u32) -> Result<Encoder, std::io::Error> {
+    pub fn new(output_file: &str, width: u32, height: u32) -> Result<Encoder> {
         let file_path = Path::new(output_file);
         let ext = if let Some(ext) = file_path.extension() {
             ext.to_str().unwrap()

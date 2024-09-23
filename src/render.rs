@@ -1,6 +1,8 @@
+use anyhow::{anyhow, Context, Result};
 use ash::vk;
 use gpu_allocator as gpu_alloc;
 
+use crate::err;
 use crate::utils;
 use crate::config::Config;
 use crate::vulkan::command;
@@ -37,24 +39,26 @@ pub enum ParamData {
 }
 
 impl ParamData {
-    fn primitive<T: num_traits::cast::NumCast>(&self) -> Option<T> {
-        match self {
+    fn primitive<T: num_traits::cast::NumCast>(&self) -> Result<T> {
+        let prim = match self {
             ParamData::Float(v)   => { num_traits::cast::<f32, T>(*v) },
             ParamData::Integer(v) => { num_traits::cast::<i32, T>(*v) },
             ParamData::Boolean(v) => { let tmp = *v as u32;
                                        num_traits::cast::<u32, T>(tmp) },
             _ => None
-        }
+        };
+
+        prim.context(format!("Unable to parse primitive {:?}", self))
     }
 
-    fn write_to_buffer<T: num_traits::cast::NumCast>(&self, buffer: *mut u8) -> Option<()> {
+    fn write_to_buffer<T: num_traits::cast::NumCast>(&self, buffer: *mut u8) -> Result<()> {
         let val = self.primitive::<T>()?;
         unsafe { std::ptr::copy_nonoverlapping(&val, buffer as *mut T, 1); }
-        Some(())
+        Ok(())
     }
 
-    fn primitive_vec<T: num_traits::cast::NumCast>(&self) -> Option<Vec<T>> {
-        match self {
+    fn primitive_vec<T: num_traits::cast::NumCast>(&self) -> Result<Vec<T>> {
+        let prim_vec = match self {
             ParamData::FloatArray(v)   => {
                 Some(v.iter().filter_map(|val|  { num_traits::cast::<f32, T>(*val) }).collect())
             },
@@ -62,16 +66,17 @@ impl ParamData {
                 Some(v.iter().filter_map(|val|  { num_traits::cast::<i32, T>(*val) }).collect())
             },
             _ => None
-        }
+        };
+
+        prim_vec.context(format!("Unable to parse vec primitive {:?}", self))
     }
 
-    fn write_vec_to_buffer<T: num_traits::cast::NumCast>(&self, buffer: *mut u8, block: &BufferBlock) -> Option<()> {
+    fn write_vec_to_buffer<T: num_traits::cast::NumCast>(&self, buffer: *mut u8, block: &BufferBlock) -> Result<()> {
         let vec = self.primitive_vec::<T>()?;
         let mut offset = 0;
 
         if vec.len() > block.array_len as usize {
-            warnln!("Vector exceeds block size");
-            return None
+            return err!("Vector exceeds block size");
         }
 
         for v in vec {
@@ -79,7 +84,8 @@ impl ParamData {
             unsafe { std::ptr::copy_nonoverlapping(&v, offset_buffer as *mut T, 1); }
             offset += block.array_stride;
         }
-        Some(())
+
+        Ok(())
     }
 }
 
@@ -131,19 +137,18 @@ impl Render {
         &self.swapchain.as_ref().expect("No swapchain created")
     }
 
-    fn create_window(event_loop: &EventLoop<()>, width: u32, height:u32) -> winit::window::Window {
-        WindowBuilder::new()
+    fn create_window(event_loop: &EventLoop<()>, width: u32, height:u32) -> Result<winit::window::Window> {
+        Ok(WindowBuilder::new()
             .with_title("Reforge")
             .with_inner_size(winit::dpi::PhysicalSize::new(
                 f64::from(width),
                 f64::from(height),
             ))
             .with_resizable(true)
-            .build(&event_loop)
-            .unwrap()
+            .build(&event_loop)?)
     }
 
-    unsafe fn create_graph(vk_core: &VkCore, info: &RenderInfo) -> Option<PipelineGraph> {
+    unsafe fn create_graph(vk_core: &VkCore, info: &RenderInfo) -> Result<PipelineGraph> {
         let pipeline_infos = vkutils::synthesize_config(Rc::clone(&vk_core.device), &info.config)?;
 
         let graph_info = PipelineGraphInfo {
@@ -154,12 +159,12 @@ impl Render {
             num_frames: info.num_frames
         };
 
-        Some(PipelineGraph::new(&vk_core, graph_info))?
+        PipelineGraph::new(&vk_core, graph_info)
     }
 
-    fn recreate_graph(&mut self) -> Option<()> {
+    fn recreate_graph(&mut self) -> Result<()> {
         unsafe {
-        self.vk_core.device.device_wait_idle().unwrap();
+        self.vk_core.device.device_wait_idle()?;
 
         let num_pipelines = self.info.config.graph_pipelines.len() as u32;
         let graph = Self::create_graph(&self.vk_core, &self.info)?;
@@ -169,19 +174,19 @@ impl Render {
         }
         self.frame_index = 0;
 
-        Some(())
+        Ok(())
     }
 
-    pub fn write_to_outdated_ubos(&mut self) {
+    pub fn write_to_outdated_ubos(&mut self) -> Result<()> {
         let outdated = self.frame_outdated[self.frame_index];
     
         if !outdated {
-            return
+            return Ok(())
         }
     
         let ubos = &mut self.graph.frames[self.frame_index].ubos;
     
-        let write_to_buffer = |val: &ParamData, ptr: *mut u8, block: &BufferBlock | -> Option<()> {
+        let write_to_buffer = |val: &ParamData, ptr: *mut u8, block: &BufferBlock | -> Result<()> {
             let t = block.block_type;
     
             // Array primitives
@@ -192,7 +197,7 @@ impl Render {
             else if t == DescBlockType::INT   { val.write_to_buffer::<i32>(ptr)?; }
             else if t == DescBlockType::BOOL  { val.write_to_buffer::<u32>(ptr)?; }
     
-            Some(())
+            Ok(())
         };
 
         // Descripting debugging
@@ -228,15 +233,16 @@ impl Render {
         for (name, param, buffer_block) in matched_params.iter().flatten() {
             let ptr = unsafe { buffer_block.buffer.mapped_data.offset(buffer_block.offset as isize) };
     
-            write_to_buffer(param, ptr, &buffer_block)
-                .unwrap_or_else(|| warnln!("Failed to write param to buffer {}", name) );
+            write_to_buffer(param, ptr, &buffer_block).context(format!("Failed to write param to buffer {}", name))?;
         }
     
         self.frame_outdated[self.frame_index] = false;
+
+        Ok(())
     }
 
-    pub fn update_ubos(&mut self, time: f32) {
-        self.write_to_outdated_ubos();
+    pub fn update_ubos(&mut self, time: f32) -> Result<()> {
+        self.write_to_outdated_ubos()?;
     
         self.graph.frames[self.frame_index].ubos.iter_mut().for_each(|(_pipeline_name, buffer_block_map)| {
             buffer_block_map.iter_mut().for_each(|(buffer_member_name, buffer_block)| {
@@ -248,6 +254,8 @@ impl Render {
                 }
             });
         });
+
+        Ok(())
     }
 
     fn reload_changed_pipelines(&mut self) {
@@ -259,7 +267,7 @@ impl Render {
                 // Ex: File was moved or not available, print an error just once if we previously saw it
                 0 => {
                     if 0 != *last_timestamp {
-                        let pipeline = self.graph.pipelines.get(name.as_str()).unwrap().borrow();
+                        let pipeline = self.graph.pipelines.get(name).unwrap().borrow();
                         warnln!("Unable to access shader file: {}", pipeline.info.shader.borrow().path.as_ref().unwrap());
                     }
                 }
@@ -276,7 +284,7 @@ impl Render {
         self.last_modified_shader_times = current_modified_shader_times;
     }
 
-    pub fn acquire_swapchain(&mut self) {
+    pub fn acquire_swapchain(&mut self) -> Result<()> {
         let swapchain = self.get_swapchain();
         unsafe {
         let (present_index, _) = swapchain.loader.acquire_next_image(
@@ -284,11 +292,12 @@ impl Render {
                 std::u64::MAX,
                 self.frames[self.frame_index].present_complete_semaphore, // Semaphore to signal
                 vk::Fence::null(),
-            )
-            .unwrap();
+            )?;
 
         self.present_index = present_index;
         }
+
+        Ok(())
     }
 
     pub fn record_initial_image_load(&self) {
@@ -408,26 +417,26 @@ impl Render {
             command::transition_image_layout(&device, frame.cmd_buffer, graph_frame.get_output_image(), vk::ImageLayout::GENERAL, vk::ImageLayout::TRANSFER_SRC_OPTIMAL);
         }
 
-        if self.swapchain.is_some() {
-            command::transition_image_layout(&device, frame.cmd_buffer, swapchain_image.unwrap(), vk::ImageLayout::UNDEFINED, vk::ImageLayout::TRANSFER_DST_OPTIMAL);
+        if let (Some(swapchain), Some(swapchain_image)) = (self.swapchain.as_ref(), swapchain_image) {
+            command::transition_image_layout(&device, frame.cmd_buffer, swapchain_image, vk::ImageLayout::UNDEFINED, vk::ImageLayout::TRANSFER_DST_OPTIMAL);
 
             /* TODO?: Currently, we are using blit_image because it will do the format
              * conversion for us. However, another alternative is to do copy_image
              * after specifying th final compute shader destination image as the same
              * format as the swapchain format. Maybe worth measuring perf difference later */
             command::blit_copy(device, frame.cmd_buffer, &command::BlitCopy {
-                src_width: if self.info.has_input_image { self.info.width } else { self.swapchain.as_ref().unwrap().width },
-                src_height: if self.info.has_input_image { self.info.height } else { self.swapchain.as_ref().unwrap().height },
-                dst_width: self.swapchain.as_ref().unwrap().width,
-                dst_height: self.swapchain.as_ref().unwrap().height,
+                src_width: if self.info.has_input_image { self.info.width } else { swapchain.width },
+                src_height: if self.info.has_input_image { self.info.height } else { swapchain.height },
+                dst_width: swapchain.width,
+                dst_height: swapchain.height,
                 src_image: graph_frame.get_output_image(),
-                dst_image: swapchain_image.unwrap(),
+                dst_image: swapchain_image,
                 src_layout: vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
                 dst_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
                 center: true
             });
 
-            command::transition_image_layout(&device, frame.cmd_buffer, swapchain_image.unwrap(), vk::ImageLayout::TRANSFER_DST_OPTIMAL, vk::ImageLayout::PRESENT_SRC_KHR);
+            command::transition_image_layout(&device, frame.cmd_buffer, swapchain_image, vk::ImageLayout::TRANSFER_DST_OPTIMAL, vk::ImageLayout::PRESENT_SRC_KHR);
         }
 
         }
@@ -524,31 +533,30 @@ impl Render {
         self.frame_index = (self.frame_index+1)%self.info.num_frames;
     }
 
-    pub fn trigger_reloads(&mut self) -> bool {
+    pub fn trigger_reloads(&mut self) -> Result<bool> {
         let mut full_reload_performed = false;
 
         // If the window has changed, we need to reload the swapchain
         if self.swapchain_rebuilt_required {
-            self.rebuild_swapchain();
-            full_reload_performed = self.recreate_graph().is_some();
+            self.rebuild_swapchain()?;
+            full_reload_performed = self.recreate_graph().is_ok();
             self.swapchain_rebuilt_required = false;
             self.outdate_frames();
         }
 
         // If our configuration has changed, live reload it
-        if self.reload_config.is_some() {
+        if let Some(reload_config) = &mut self.reload_config {
             // Swap reload into info
             {
-            let reload_config = self.reload_config.as_mut().unwrap();
             std::mem::swap(&mut self.info.config, reload_config);
             }
 
             // Try to reload with the new config
-            full_reload_performed = self.recreate_graph().is_some();
+            full_reload_performed = self.recreate_graph().is_ok();
 
             // If the reload failed, return to our original state
             if !full_reload_performed {
-                let reload_config = self.reload_config.as_mut().unwrap();
+                let reload_config = self.reload_config.as_mut().context("reload_config invalid")?;
                 std::mem::swap(&mut self.info.config, reload_config);
             }
             self.reload_config = None;
@@ -560,7 +568,7 @@ impl Render {
         }
         self.reload_changed_pipelines();
 
-        full_reload_performed
+        Ok(full_reload_performed)
     }
 
     /*
@@ -569,27 +577,30 @@ impl Render {
     }
     */
 
-    fn rebuild_swapchain(&mut self) {
-        let window_size = self.window.as_ref().unwrap().inner_size();
+    fn rebuild_swapchain(&mut self) -> Result<()> {
+        let window_size = self.window.as_ref().context("No window previously created")?.inner_size();
         unsafe {
-        self.vk_core.device.device_wait_idle().unwrap();
+        self.vk_core.device.device_wait_idle()?;
         if !self.info.has_input_image {
             self.info.width = window_size.width;
             self.info.height = window_size.height;
         }
-        self.swapchain.as_mut().unwrap().rebuild(&self.vk_core, window_size.width, window_size.height);
+        self.swapchain.as_mut().context("No swapchain previously created")?.rebuild(&self.vk_core, window_size.width, window_size.height)?;
         }
+
+        Ok(())
     }
 
-    pub fn new(info: RenderInfo, event_loop: &Option<EventLoop<()>>) -> Render {
-        let window = if info.swapchain { Some(Self::create_window(&event_loop.as_ref().unwrap(), info.width, info.height)) } else { None };
+    pub fn new(info: RenderInfo, event_loop: &Option<EventLoop<()>>) -> Result<Render> {
+        let window = if info.swapchain { Some(Self::create_window(event_loop.as_ref().context("No event loop available")?, info.width, info.height)?) } else { None };
 
         unsafe {
         let vk_core = VkCore::new(&window);
 
-        let graph = Self::create_graph(&vk_core, &info).unwrap();
+        let graph = Self::create_graph(&vk_core, &info)?;
 
-        let frames : Vec<Frame> = (0..info.num_frames).map(|_|{
+        let frames: Result<Vec<Frame>, _> =
+            (0..info.num_frames).map(|_|{
             Frame::new(&vk_core, info.config.graph_pipelines.len() as u32)
         }).collect();
 
@@ -610,10 +621,10 @@ impl Render {
 
         let last_modified_shader_times: HashMap<String, u64> = utils::get_modified_times(&graph.pipelines);
 
-        let swapchain = if info.swapchain { Some(SwapChain::new(&vk_core, info.width, info.height)) } else { None };
+        let swapchain = if info.swapchain { Some(SwapChain::new(&vk_core, info.width, info.height)?) } else { None };
 
-        Render {
-            frames: frames,
+        Ok(Render {
+            frames: frames?,
             frame_outdated: (0..info.num_frames).map(|_| { true } ).collect(),
             graph: graph,
             info: info,
@@ -628,7 +639,7 @@ impl Render {
             swapchain_rebuilt_required: false,
             pipeline_buffer_data: HashMap::new(),
             reload_config: None
-        }
+        })
 
         }
     }

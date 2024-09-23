@@ -1,6 +1,7 @@
 extern crate ash;
 extern crate gpu_allocator;
 
+use anyhow::{anyhow, Result};
 use gpu_allocator as gpu_alloc;
 use gpu_allocator::vulkan as gpu_alloc_vk;
 
@@ -12,7 +13,7 @@ use crate::vulkan::core::VkCore;
 use crate::vulkan::shader::ShaderBindings;
 use crate::vulkan::shader::Shader;
 use crate::vulkan::pipeline::PipelineInfo;
-use crate::warnln;
+use crate::err;
 
 use std::rc::Rc;
 use std::cell::RefCell;
@@ -149,7 +150,7 @@ impl GpuTimer{
 /* Take the parsed configuration and read the shader of each corresponding pipeline
  * We then match up the bindings parsed from the spirv of the shader and the
  * configuration to create the PipelineInfo(s) */
-pub fn synthesize_config(device: Rc<ash::Device>, config: &Config) -> Option<HashMap<String, PipelineInfo>> {
+pub fn synthesize_config(device: Rc<ash::Device>, config: &Config) -> Result<HashMap<String, PipelineInfo>> {
     let mut infos: HashMap<String, PipelineInfo> = HashMap::new();
 
     for (pipeline_name, pipeline) in &config.graph_pipelines {
@@ -164,7 +165,7 @@ pub fn synthesize_config(device: Rc<ash::Device>, config: &Config) -> Option<Has
 
         // Match up the parsed configuration with what the parsed spirv bindings of the shader
         let add_resource_and_descriptor = |file_path: &str, config_bindings: &Vec<ConfigDescriptor> |
-                                           -> Option<(Vec<(String, ImageBinding)>, Vec<(String, SsboBinding)>)> {
+                                           -> Result<(Vec<(String, ImageBinding)>, Vec<(String, SsboBinding)>)> {
             let mut image_bindings : Vec<(String, ImageBinding)> = Vec::new();
             let mut buffer_bindings: Vec<(String, SsboBinding)> = Vec::new();
 
@@ -187,14 +188,13 @@ pub fn synthesize_config(device: Rc<ash::Device>, config: &Config) -> Option<Has
                             if info.shader.borrow().stage == vk::ShaderStageFlags::FRAGMENT && config_binding.descriptor_name == "output_image" {
                                 continue;
                             }
-                            warnln!("Shader {file_path} has no binding named: {}", config_binding.descriptor_name);
-                            return None
+                            return err!("Shader {file_path} has no binding named: {}", config_binding.descriptor_name)
                         }
                     }
                 };
             }
 
-            Some((image_bindings, buffer_bindings))
+            Ok((image_bindings, buffer_bindings))
         };
 
         (info.input_images , info.input_ssbos)  = add_resource_and_descriptor(&pipeline.file_path, &pipeline.inputs)?;
@@ -203,7 +203,7 @@ pub fn synthesize_config(device: Rc<ash::Device>, config: &Config) -> Option<Has
         infos.insert(pipeline_name.clone(), info);
     }
 
-    Some(infos)
+    Ok(infos)
 }
 
 pub unsafe fn create_buffer(core: &VkCore,
@@ -347,7 +347,7 @@ pub fn create_descriptor_layout_bindings(bindings: &ShaderBindings,
     vk_bindings
 }
 
-pub unsafe fn create_sampler(device: Rc<ash::Device>) -> Sampler {
+pub unsafe fn create_sampler(device: Rc<ash::Device>) -> Result<Sampler> {
     let sampler_info = vk::SamplerCreateInfo::builder()
         .min_filter(vk::Filter::LINEAR)
         .mag_filter(vk::Filter::LINEAR)
@@ -355,12 +355,12 @@ pub unsafe fn create_sampler(device: Rc<ash::Device>) -> Sampler {
         .address_mode_v(vk::SamplerAddressMode::CLAMP_TO_EDGE)
         .address_mode_w(vk::SamplerAddressMode::CLAMP_TO_EDGE);
 
-    let vk = device.create_sampler(&sampler_info, None).unwrap();
+    let vk = device.create_sampler(&sampler_info, None)?;
 
-    Sampler { device, vk }
+    Ok(Sampler { device, vk })
 }
 
-pub unsafe fn build_vertex_shader(device: &Rc<ash::Device>) -> Shader {
+pub unsafe fn build_vertex_shader(device: &Rc<ash::Device>) -> Result<Shader> {
     // full-screen triangle
     let vertex_shader_code = r#"
         #version 450
@@ -376,7 +376,7 @@ pub unsafe fn build_vertex_shader(device: &Rc<ash::Device>) -> Shader {
         }
     "#;
 
-    Shader::from_contents(device, "full-screen-triangle".to_string(), vk::ShaderStageFlags::VERTEX, vertex_shader_code.to_string()).unwrap()
+    Shader::from_contents(device, "full-screen-triangle".to_string(), vk::ShaderStageFlags::VERTEX, vertex_shader_code.to_string())
 }
 
 impl Drop for Buffer {
