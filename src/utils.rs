@@ -10,13 +10,6 @@ use anyhow::{anyhow, Result, Context};
 pub const TERM_CLEAR : &str = "\r\x1b[2K";
 
 #[macro_export]
-macro_rules! warnln {
-    ($($arg:tt)*) => {{
-        eprintln!("\r\x1b[2K\x1b[33m{}\x1b[0m", format_args!($($arg)*));
-    }}
-}
-
-#[macro_export]
 macro_rules! err {
     ($($arg:tt)*) => {{
         Err(anyhow!($($arg)*))

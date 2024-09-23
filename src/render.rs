@@ -17,8 +17,8 @@ use crate::vulkan::swapchain::SwapChain;
 use crate::vulkan::vkutils;
 use crate::vulkan::vkutils::Buffer;
 use crate::vulkan::vkutils::Image;
-use crate::warnln;
 use crate::vulkan::shader::DescBlockType;
+use tracing::warn;
 
 use std::collections::HashMap;
 use std::default::Default;
@@ -268,7 +268,7 @@ impl Render {
                 0 => {
                     if 0 != *last_timestamp {
                         let pipeline = self.graph.pipelines.get(name).unwrap().borrow();
-                        warnln!("Unable to access shader file: {}", pipeline.info.shader.borrow().path.as_ref().unwrap());
+                        warn!("Unable to access shader file: {}", pipeline.info.shader.borrow().path.as_ref().unwrap());
                     }
                 }
                 modified_timestamp => {

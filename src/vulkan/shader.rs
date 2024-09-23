@@ -6,8 +6,8 @@ use crate::{utils, err};
 use std::rc::Rc;
 use std::collections::HashMap;
 
-use crate::warnln;
 use bitflags::bitflags;
+use tracing::warn;
 
 #[derive(Clone, Copy, Debug)]
 pub enum DescType {
@@ -267,7 +267,7 @@ impl Shader {
             // Remove the "compilation error:\n" before a single error, which is not very useful
             // On multiple errors, it may say "2 compilation errors:", which can be useful
             Err(e) => {
-                warnln!("{}", e.to_string().trim_start_matches("compilation error:\n").trim_end_matches('\n')); 
+                warn!("{}", e.to_string().trim_start_matches("compilation error:\n").trim_end_matches('\n'));
                 err!("Compilation error:")
             }
         }

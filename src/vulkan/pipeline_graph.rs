@@ -18,7 +18,7 @@ use crate::vulkan::vkutils::{Buffer, Image, Sampler};
 use crate::vulkan::shader::Shader;
 use crate::vulkan::pipeline::{Pipeline, PipelineInfo};
 use crate::vulkan::render_pass;
-use crate::warnln;
+use tracing::warn;
 
 use crate::vulkan::shader::DescBlockType;
 
@@ -342,7 +342,7 @@ impl PipelineGraph {
 
         if let Ok(shader) = shader { 
             pipeline.rebuild(self.width, self.height, shader)
-                .unwrap_or_else(|err| { warnln!("{:?}", err); })
+                .unwrap_or_else(|err| { warn!("{:?}", err); })
         }
     }
 
