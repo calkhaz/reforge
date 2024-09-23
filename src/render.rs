@@ -75,14 +75,14 @@ impl ParamData {
         let vec = self.primitive_vec::<T>()?;
         let mut offset = 0;
 
-        if vec.len() > block.array_len as usize {
+        if vec.len() > block.ubo.array_len as usize {
             return err!("Vector exceeds block size");
         }
 
         for v in vec {
             let offset_buffer = unsafe { buffer.offset(offset as isize) };
             unsafe { std::ptr::copy_nonoverlapping(&v, offset_buffer as *mut T, 1); }
-            offset += block.array_stride;
+            offset += block.ubo.array_stride;
         }
 
         Ok(())
@@ -187,7 +187,7 @@ impl Render {
         let ubos = &mut self.graph.frames[self.frame_index].ubos;
     
         let write_to_buffer = |val: &ParamData, ptr: *mut u8, block: &BufferBlock | -> Result<()> {
-            let t = block.block_type;
+            let t = block.ubo.block_type;
     
             // Array primitives
             if      t == DescBlockType::FLOAT | DescBlockType::ARRAY  { val.write_vec_to_buffer::<f32>(ptr, block)?; }
@@ -231,7 +231,7 @@ impl Render {
             }).collect();
     
         for (name, param, buffer_block) in matched_params.iter().flatten() {
-            let ptr = unsafe { buffer_block.buffer.mapped_data.offset(buffer_block.offset as isize) };
+            let ptr = unsafe { buffer_block.buffer.mapped_data.offset(buffer_block.ubo.offset as isize) };
     
             write_to_buffer(param, ptr, &buffer_block).context(format!("Failed to write param to buffer {}", name))?;
         }
@@ -248,7 +248,7 @@ impl Render {
             buffer_block_map.iter_mut().for_each(|(buffer_member_name, buffer_block)| {
                 if buffer_member_name.ends_with("_rf_time") {
                     unsafe {
-                    let ptr = buffer_block.buffer.mapped_data.offset(buffer_block.offset as isize) as *mut f32;
+                    let ptr = buffer_block.buffer.mapped_data.offset(buffer_block.ubo.offset as isize) as *mut f32;
                     std::ptr::copy_nonoverlapping(&time, ptr, 1)
                     }
                 }

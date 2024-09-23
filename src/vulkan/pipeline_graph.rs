@@ -20,9 +20,7 @@ use crate::vulkan::pipeline::{Pipeline, PipelineInfo};
 use crate::vulkan::render_pass;
 use tracing::warn;
 
-use crate::vulkan::shader::DescBlockType;
-
-use super::shader::{SsboBinding, ImageBinding};
+use super::shader::{SsboBinding, ImageBinding, UboVar};
 
 pub const FILE_INPUT: &str = "rf:file-input";
 pub const FINAL_OUTPUT: &str = "rf:final-output";
@@ -73,12 +71,7 @@ struct PipelineGraphFrameInfo<'a> {
 
 #[derive(Debug)]
 pub struct BufferBlock {
-    #[allow(dead_code)]
-    pub size: u32,
-    pub offset: u32,
-    pub array_stride: u32,
-    pub array_len: u32,
-    pub block_type: DescBlockType,
+    pub ubo: UboVar,
     pub buffer: Rc<Buffer>
 }
 
@@ -295,11 +288,7 @@ impl PipelineGraphFrame {
                     for (ubo_name, ubo) in &ubo_binding.ubos {
 
                         let block = BufferBlock {
-                            size: ubo.size as u32,
-                            offset: ubo.offset as u32,
-                            array_stride: ubo.array_stride as u32,
-                            array_len: ubo.array_len,
-                            block_type: ubo.block_type,
+                            ubo: ubo.clone(),
                             buffer: Rc::clone(&buffer),
                         };
 

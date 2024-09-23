@@ -68,8 +68,9 @@ pub struct UboBinding {
     pub size: usize
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct UboVar {
+    #[allow(dead_code)]
     pub size: usize,
     pub offset: usize,
     pub block_type: DescBlockType,
