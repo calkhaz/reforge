@@ -68,7 +68,7 @@ impl GpuTimer{
         // 2* because need begin + end timers
         count *= 2;
 
-        let query_info = vk::QueryPoolCreateInfo::builder()
+        let query_info = vk::QueryPoolCreateInfo::default()
             .query_count(count)
             .query_type(vk::QueryType::TIMESTAMP);
 
@@ -76,8 +76,8 @@ impl GpuTimer{
         let query_pool = device.create_query_pool(&query_info, None).unwrap();
 
         GpuTimer {
-            device: device,
-            query_pool: query_pool,
+            device,
+            query_pool,
             query_indices: BTreeMap::new(),
             current_query_index: 0,
             query_pool_size: count
@@ -211,7 +211,7 @@ pub unsafe fn create_buffer(core: &VkCore,
                             size: vk::DeviceSize,
                             usage: vk::BufferUsageFlags,
                             mem_type: gpu_alloc::MemoryLocation) -> Buffer {
-    let info = vk::BufferCreateInfo::builder()
+    let info = vk::BufferCreateInfo::default()
         .size(size)
         .usage(usage)
         .sharing_mode(vk::SharingMode::EXCLUSIVE);
@@ -240,7 +240,7 @@ pub unsafe fn create_buffer(core: &VkCore,
 
     core.set_debug_name(&name, buffer.as_raw(), vk::ObjectType::BUFFER);
 
-    Buffer{device: Rc::clone(&core.device), allocator: Rc::clone(&allocator), vk: buffer, allocation: allocation, mapped_data: mapped_data}
+    Buffer{device: Rc::clone(&core.device), allocator: Rc::clone(&allocator), vk: buffer, allocation, mapped_data}
 }
 
 // TODO: Don't be lazy about usage here
@@ -255,7 +255,7 @@ pub unsafe fn create_image(core: &VkCore, name: String, format: vk::Format, widt
         usage |= vk::ImageUsageFlags::COLOR_ATTACHMENT;
     }
 
-    let input_image_info = vk::ImageCreateInfo::builder()
+    let input_image_info = vk::ImageCreateInfo::default()
         .image_type(vk::ImageType::TYPE_2D)
         .array_layers(1)
         .samples(vk::SampleCountFlags::TYPE_1)
@@ -263,7 +263,7 @@ pub unsafe fn create_image(core: &VkCore, name: String, format: vk::Format, widt
         .initial_layout(vk::ImageLayout::UNDEFINED)
         .format(format)
         .mip_levels(1)
-        .extent(vk::Extent3D{width: width, height: height, depth: 1})
+        .extent(vk::Extent3D{width, height, depth: 1})
         // TODO: Optimize for what is actually needed
         .usage(usage)
         .sharing_mode(vk::SharingMode::EXCLUSIVE);
@@ -287,11 +287,11 @@ pub unsafe fn create_image(core: &VkCore, name: String, format: vk::Format, widt
     // Because SRGB is only going to be used for blitting, an image view
     // is not required and only causes validation warnings
     let image_view = if format != vk::Format::R8G8B8A8_SRGB {
-        let image_view_info = vk::ImageViewCreateInfo::builder()
+        let image_view_info = vk::ImageViewCreateInfo::default()
             .image(vk_image)
             .view_type(vk::ImageViewType::TYPE_2D)
             .format(format)
-            .subresource_range(*vk::ImageSubresourceRange::builder()
+            .subresource_range(vk::ImageSubresourceRange::default()
                 .aspect_mask(vk::ImageAspectFlags::COLOR)
                 .base_mip_level(0)
                 .level_count(1)
@@ -308,7 +308,7 @@ pub unsafe fn create_image(core: &VkCore, name: String, format: vk::Format, widt
 
     Image {
         device: Rc::clone(&core.device),
-        format: format,
+        format,
         allocator: Rc::clone(&allocator),
         vk: vk_image,
         view: image_view,
@@ -316,9 +316,9 @@ pub unsafe fn create_image(core: &VkCore, name: String, format: vk::Format, widt
     }
 }
 
-pub fn create_descriptor_layout_bindings(bindings: &ShaderBindings,
+pub fn create_descriptor_layout_bindings<'a>(bindings: &ShaderBindings,
                                          num_frames: usize,
-                                         pool_sizes: &mut HashMap<vk::DescriptorType, u32>) -> Vec<vk::DescriptorSetLayoutBinding> {
+                                         pool_sizes: &mut HashMap<vk::DescriptorType, u32>) -> Vec<vk::DescriptorSetLayoutBinding<'a>> {
 
     let mut vk_bindings: Vec<vk::DescriptorSetLayoutBinding> = Vec::with_capacity(bindings.images.len() + bindings.ssbos.len());
 
@@ -348,7 +348,7 @@ pub fn create_descriptor_layout_bindings(bindings: &ShaderBindings,
 }
 
 pub unsafe fn create_sampler(device: Rc<ash::Device>) -> Result<Sampler> {
-    let sampler_info = vk::SamplerCreateInfo::builder()
+    let sampler_info = vk::SamplerCreateInfo::default()
         .min_filter(vk::Filter::LINEAR)
         .mag_filter(vk::Filter::LINEAR)
         .address_mode_u(vk::SamplerAddressMode::CLAMP_TO_EDGE)

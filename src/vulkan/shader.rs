@@ -240,7 +240,7 @@ impl Shader {
 
     fn create_module(device: &ash::Device, spirv_binary: &[u32]) -> Result<vk::ShaderModule> {
 
-        let shader_info = vk::ShaderModuleCreateInfo::builder().code(spirv_binary);
+        let shader_info = vk::ShaderModuleCreateInfo::default().code(spirv_binary);
 
         unsafe {
         Ok(device.create_shader_module(&shader_info, None)?)

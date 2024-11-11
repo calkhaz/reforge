@@ -98,7 +98,7 @@ impl PipelineGraphFrame {
         }
     }
 
-    unsafe fn image_write(image: &Image, infos: &mut Vec<vk::DescriptorImageInfo>, binding: &ImageBinding, set: vk::DescriptorSet, sampler: &Sampler) -> vk::WriteDescriptorSet {
+    unsafe fn image_write<'a>(image: &Image, infos: &mut Vec<vk::DescriptorImageInfo>, binding: &ImageBinding, set: vk::DescriptorSet, sampler: &Sampler) -> vk::WriteDescriptorSet<'a> {
         infos.push(vk::DescriptorImageInfo {
             image_layout: vk::ImageLayout::GENERAL,
             image_view: image.view.unwrap(),
@@ -115,7 +115,7 @@ impl PipelineGraphFrame {
         }
     }
 
-    unsafe fn buffer_write(buffer: &Buffer, desc_type: vk::DescriptorType, infos: &mut Vec<vk::DescriptorBufferInfo>, binding_idx: u32, set: vk::DescriptorSet) -> vk::WriteDescriptorSet {
+    unsafe fn buffer_write<'a>(buffer: &Buffer, desc_type: vk::DescriptorType, infos: &mut Vec<vk::DescriptorBufferInfo>, binding_idx: u32, set: vk::DescriptorSet) -> vk::WriteDescriptorSet<'a> {
         // TODO: If we get a different allocator, we'll want to change the offset and range here
         infos.push(vk::DescriptorBufferInfo {
             buffer: buffer.vk,
@@ -185,7 +185,7 @@ impl PipelineGraphFrame {
                 let info = &pipeline.borrow().info;
                 let layout_info = &[pipeline.borrow().layout.descriptor_layout];
 
-                let desc_alloc_info = vk::DescriptorSetAllocateInfo::builder()
+                let desc_alloc_info = vk::DescriptorSetAllocateInfo::default()
                     .descriptor_pool(frame_info.descriptor_pool)
                     .set_layouts(layout_info);
 
@@ -225,7 +225,6 @@ impl PipelineGraphFrame {
                     let image = images.entry(name.clone()).or_insert(
                         vkutils::create_image(core, name.clone(), format, frame_info.width, frame_info.height)
                     );
-
                     descriptor_writes.push(Self::image_write(&image, &mut desc_image_infos, binding, descriptor_set, frame_info.sampler));
                 }
 
@@ -544,7 +543,7 @@ impl PipelineGraph {
         // However, if there is a set of swapchain images being used for one pipeline, we will include that
         let num_max_sets = gi.num_frames as u32*pipelines.len() as u32;
 
-        let descriptor_pool_info = vk::DescriptorPoolCreateInfo::builder()
+        let descriptor_pool_info = vk::DescriptorPoolCreateInfo::default()
             .pool_sizes(&descriptor_size_vec)
             .max_sets(num_max_sets);
 

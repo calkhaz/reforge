@@ -2,7 +2,7 @@ extern crate ash;
 
 use anyhow::{Result, Context};
 use ash::vk;
-use ash::extensions::khr;
+use ash::khr;
 
 use std::rc::Rc;
 
@@ -10,7 +10,7 @@ use crate::vulkan::core::VkCore;
 
 pub struct SwapChain {
     pub vk: vk::SwapchainKHR,
-    pub loader: khr::Swapchain,
+    pub loader: khr::swapchain::Device,
     pub images: Vec<vk::Image>,
     pub views: Vec<vk::ImageView>,
     device: Rc<ash::Device>,
@@ -20,7 +20,7 @@ pub struct SwapChain {
 
 impl SwapChain {
     pub unsafe fn new(core: &VkCore, width: u32, height: u32) -> Result<SwapChain> {
-        let swapchain_loader = khr::Swapchain::new(&core.instance, &core.device);
+        let swapchain_loader = khr::swapchain::Device::new(&core.instance, &core.device);
         let (swapchain, surface_format) = SwapChain::build(core, width, height, &swapchain_loader, None)?;
 
         let images = swapchain_loader.get_swapchain_images(swapchain)?;
@@ -30,10 +30,10 @@ impl SwapChain {
             device: Rc::clone(&core.device),
             vk: swapchain,
             loader: swapchain_loader,
-            images: images,
-            views: views,
-            width: width,
-            height: height,
+            images,
+            views,
+            width,
+            height
         })
     }
 
@@ -41,7 +41,7 @@ impl SwapChain {
         let res: Result<Vec<_>, _> = images
             .iter()
             .map(|&image| {
-                let create_view_info = vk::ImageViewCreateInfo::builder()
+                let create_view_info = vk::ImageViewCreateInfo::default()
                     .view_type(vk::ImageViewType::TYPE_2D)
                     .format(surface_format.format)
                     .components(vk::ComponentMapping {
@@ -64,7 +64,7 @@ impl SwapChain {
         Ok(res?)
     }
 
-    unsafe fn build(core: &VkCore, width: u32, height: u32, swapchain_loader: &khr::Swapchain, old_swapchain: Option<vk::SwapchainKHR>) -> Result<(vk::SwapchainKHR, vk::SurfaceFormatKHR)> {
+    unsafe fn build(core: &VkCore, width: u32, height: u32, swapchain_loader: &khr::swapchain::Device, old_swapchain: Option<vk::SwapchainKHR>) -> Result<(vk::SwapchainKHR, vk::SurfaceFormatKHR)> {
         let surface = core.surface.expect("Cannot create swapchain without a valid surface");
         let surface_loader = core.surface_loader.as_ref().expect("Cannot create swapchain without a valid surface loader");
 
@@ -106,7 +106,7 @@ impl SwapChain {
             .find(|&mode| mode == vk::PresentModeKHR::MAILBOX)
             .unwrap_or(vk::PresentModeKHR::FIFO);
 
-        let swapchain_create_info = vk::SwapchainCreateInfoKHR::builder()
+        let swapchain_create_info = vk::SwapchainCreateInfoKHR::default()
             .surface(surface)
             .min_image_count(desired_image_count)
             .image_color_space(surface_format.color_space)

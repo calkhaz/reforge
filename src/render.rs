@@ -23,11 +23,7 @@ use tracing::warn;
 use std::collections::HashMap;
 use std::default::Default;
 use std::rc::Rc;
-
-use winit::{
-    event_loop::EventLoop,
-    window::WindowBuilder,
-};
+use winit::window::Window;
 
 #[derive(Clone, Debug)]
 pub enum ParamData {
@@ -111,14 +107,19 @@ pub struct Render {
     present_index: u32,
     pub frame_index: usize,
     swapchain: Option<SwapChain>,
-    window: Option<winit::window::Window>,
     pub vk_core: VkCore,
     pub swapchain_rebuilt_required: bool,
     pub pipeline_buffer_data: HashMap<String, HashMap<String, ParamData>>,
-    reload_config: Option<Config>
+    reload_config: Option<Config>,
+    pub window_width: u32,
+    pub window_height: u32
 }
 
 impl Render {
+    pub fn has_swapchain(&self) -> bool {
+        self.swapchain.is_some()
+    }
+
     pub fn outdate_frames(&mut self) {
         for f in &mut self.frame_outdated {
             *f = true;
@@ -135,17 +136,6 @@ impl Render {
 
     fn get_swapchain(&self) -> &SwapChain {
         &self.swapchain.as_ref().expect("No swapchain created")
-    }
-
-    fn create_window(event_loop: &EventLoop<()>, width: u32, height:u32) -> Result<winit::window::Window> {
-        Ok(WindowBuilder::new()
-            .with_title("Reforge")
-            .with_inner_size(winit::dpi::PhysicalSize::new(
-                f64::from(width),
-                f64::from(height),
-            ))
-            .with_resizable(true)
-            .build(&event_loop)?)
     }
 
     unsafe fn create_graph(vk_core: &VkCore, info: &RenderInfo) -> Result<PipelineGraph> {
@@ -484,7 +474,7 @@ impl Render {
         let cmd_buffers = &[frame.cmd_buffer];
         let signal_semaphores = &[frame.render_complete_semaphore];
 
-        let mut submit_info = vk::SubmitInfo::builder()
+        let mut submit_info = vk::SubmitInfo::default()
             .command_buffers(cmd_buffers);
 
         // Semaphores only needed if we use a swapchain
@@ -498,7 +488,7 @@ impl Render {
         unsafe {
         self.vk_core.device.queue_submit(
             self.vk_core.queue,
-            &[submit_info.build()],
+            &[submit_info],
             frame.fence,
         ).expect("queue submit failed.");
         }
@@ -508,7 +498,7 @@ impl Render {
             let swapchain = self.get_swapchain();
             let swapchains = [swapchain.vk];
             let image_indices = [self.present_index];
-            let present_info = vk::PresentInfoKHR::builder()
+            let present_info = vk::PresentInfoKHR::default()
                 .wait_semaphores(&wait_semaphores)
                 .swapchains(&swapchains)
                 .image_indices(&image_indices);
@@ -534,15 +524,15 @@ impl Render {
     }
 
     pub fn trigger_reloads(&mut self) -> Result<bool> {
-        let mut full_reload_performed = false;
 
         // If the window has changed, we need to reload the swapchain
+        // Normally, resize_swapchain() is called explicitly elsewhere,
+        // so this should only be the case if we got an OUT_OF_DATE KHR or suboptimal present
         if self.swapchain_rebuilt_required {
-            self.rebuild_swapchain()?;
-            full_reload_performed = self.recreate_graph().is_ok();
-            self.swapchain_rebuilt_required = false;
-            self.outdate_frames();
+            self.resize_swapchain(self.window_width, self.window_height)?;
         }
+
+        let mut full_reload_performed = false;
 
         // If our configuration has changed, live reload it
         if let Some(reload_config) = &mut self.reload_config {
@@ -555,17 +545,18 @@ impl Render {
             full_reload_performed = self.recreate_graph().is_ok();
 
             // If the reload failed, return to our original state
-            if !full_reload_performed {
+            // If any of our shaders have changed, live reload them
+            if full_reload_performed {
+                self.last_modified_shader_times.clear();
+            }
+            else {
                 let reload_config = self.reload_config.as_mut().context("reload_config invalid")?;
                 std::mem::swap(&mut self.info.config, reload_config);
             }
+
             self.reload_config = None;
         }
 
-        // If any of our shaders have changed, live reload them
-        if full_reload_performed {
-            self.last_modified_shader_times.clear();
-        }
         self.reload_changed_pipelines();
 
         Ok(full_reload_performed)
@@ -576,26 +567,35 @@ impl Render {
         self.frames[self.frame_index].timer.get_elapsed_ms()
     }
     */
-
-    fn rebuild_swapchain(&mut self) -> Result<()> {
-        let window_size = self.window.as_ref().context("No window previously created")?.inner_size();
+    pub fn resize_swapchain(&mut self, width: u32, height: u32) -> Result<()> {
         unsafe {
         self.vk_core.device.device_wait_idle()?;
+
+        self.window_width  = width;
+        self.window_height = height;
+
+        self.swapchain.as_mut().context("No swapchain previously created")?.rebuild(&self.vk_core, self.window_width, self.window_height)?;
+
         if !self.info.has_input_image {
-            self.info.width = window_size.width;
-            self.info.height = window_size.height;
+            // Pipeline dimensions shouldn't change if we are using an input
+            // We just blit the same dimensions to a larger window
+            self.recreate_graph()?;
+
+            // For generative shaders where we want the blit size = window size
+            self.info.width  = self.window_width;
+            self.info.height = self.window_height;
         }
-        self.swapchain.as_mut().context("No swapchain previously created")?.rebuild(&self.vk_core, window_size.width, window_size.height)?;
         }
+
+        self.outdate_frames();
+        self.swapchain_rebuilt_required = false;
 
         Ok(())
     }
 
-    pub fn new(info: RenderInfo, event_loop: &Option<EventLoop<()>>) -> Result<Render> {
-        let window = if info.swapchain { Some(Self::create_window(event_loop.as_ref().context("No event loop available")?, info.width, info.height)?) } else { None };
-
+    pub fn new(info: RenderInfo, window: Option<&Window>) -> Result<Render> {
         unsafe {
-        let vk_core = VkCore::new(&window);
+        let vk_core = VkCore::new(window)?;
 
         let graph = Self::create_graph(&vk_core, &info)?;
 
@@ -623,22 +623,25 @@ impl Render {
 
         let swapchain = if info.swapchain { Some(SwapChain::new(&vk_core, info.width, info.height)?) } else { None };
 
+        let (window_width, window_height) = if info.swapchain { (info.width, info.height) } else { (0, 0 ) };
+
         Ok(Render {
             frames: frames?,
             frame_outdated: (0..info.num_frames).map(|_| { true } ).collect(),
-            graph: graph,
-            info: info,
-            staging_srgb_image: staging_srgb_image,
-            staging_buffer: staging_buffer,
-            last_modified_shader_times: last_modified_shader_times,
+            graph,
+            info,
+            staging_srgb_image,
+            staging_buffer,
+            last_modified_shader_times,
             present_index: 0,
             frame_index: 0,
-            vk_core: vk_core,
-            swapchain: swapchain,
-            window: window,
+            vk_core,
+            swapchain,
             swapchain_rebuilt_required: false,
             pipeline_buffer_data: HashMap::new(),
-            reload_config: None
+            reload_config: None,
+            window_width,
+            window_height
         })
 
         }

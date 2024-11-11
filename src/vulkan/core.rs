@@ -1,13 +1,14 @@
+use anyhow::Result;
 use ash::vk;
 use std::ffi::CStr;
-use ash::extensions::khr;
+use ash::khr;
 use std::borrow::Cow;
 use std::default::Default;
 use std::os::raw::c_char;
 use std::rc::Rc;
 use std::cell::RefCell;
 use winit::window::Window;
-use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
+use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use gpu_allocator::vulkan as gpu_alloc_vk;
 
 unsafe extern "system" fn vulkan_debug_callback(
@@ -52,36 +53,39 @@ pub struct VkCore {
     pub pdevice: vk::PhysicalDevice,
     pub queue: vk::Queue,
     pub queue_family_index: u32,
-    pub debug_utils_loader: ash::extensions::ext::DebugUtils,
+    pub debug_utils_instance: ash::ext::debug_utils::Instance,
+    pub debug_utils_device: ash::ext::debug_utils::Device,
     pub debug_callback: ash::vk::DebugUtilsMessengerEXT,
     pub surface: Option<vk::SurfaceKHR>,
-    pub surface_loader: Option<khr::Surface>
+    pub surface_loader: Option<khr::surface::Instance>
 }
 
 
 impl VkCore {
-    pub unsafe fn new(window: &Option<Window>) -> Self {
+    pub unsafe fn new(window: Option<&Window>) -> Result<Self> {
         let mut extension_names: Vec<*const i8> = Vec::new();
-        if window.is_some() {
-            extension_names.extend(ash_window::enumerate_required_extensions(window.as_ref().unwrap().raw_display_handle()).unwrap().to_vec());
+
+        if let Some(window) = window {
+            extension_names.extend(ash_window::enumerate_required_extensions(window.display_handle()?.as_raw())
+                .unwrap()
+                .to_vec());
         }
-        extension_names.push(ash::extensions::ext::DebugUtils::name().as_ptr());
+
+        extension_names.push(ash::ext::debug_utils::NAME.as_ptr());
 
         #[cfg(any(target_os = "macos", target_os = "ios"))]
         {
-            extension_names.push(ash::vk::KhrPortabilityEnumerationFn::name().as_ptr());
-            //// Enabling this extension is a requirement when using `VK_KHR_portability_subset`
-            extension_names.push(ash::vk::KhrGetPhysicalDeviceProperties2Fn::name().as_ptr());
+            extension_names.push(ash::khr::portability_enumeration::NAME.as_ptr());
+            // Enabling this extension is a requirement when using `VK_KHR_portability_subset`
+            extension_names.push(ash::khr::get_physical_device_properties2::NAME.as_ptr());
         }
 
-
-        let entry = ash::Entry::load().unwrap();
+        let entry = ash::Entry::load()?;
         let instance = Self::create_instance(&entry, &extension_names);
-        let (debug_callback, debug_utils) = Self::create_debug_utils(&instance, &entry);
 
         let (surface, surface_loader) = match window {
             Some(window) => {
-                let (surface, surface_loader) = Self::create_surface(&entry, &instance, &window);
+                let (surface, surface_loader) = Self::create_surface(&entry, &instance, &window)?;
                 (Some(surface), Some(surface_loader))
             }
             None => (None, None)
@@ -95,7 +99,7 @@ impl VkCore {
         ];
 
         if window.is_some() {
-            device_extension_names_raw.push(khr::Swapchain::name().as_ptr());
+            device_extension_names_raw.push(khr::swapchain::NAME.as_ptr());
         }
 
         let features = vk::PhysicalDeviceFeatures {
@@ -104,11 +108,11 @@ impl VkCore {
         };
         let priorities = [1.0];
 
-        let queue_info = vk::DeviceQueueCreateInfo::builder()
+        let queue_info = vk::DeviceQueueCreateInfo::default()
             .queue_family_index(queue_family_index)
             .queue_priorities(&priorities);
 
-        let device_create_info = vk::DeviceCreateInfo::builder()
+        let device_create_info = vk::DeviceCreateInfo::default()
             .queue_create_infos(std::slice::from_ref(&queue_info))
             .enabled_extension_names(&device_extension_names_raw)
             .enabled_features(&features);
@@ -116,6 +120,8 @@ impl VkCore {
         let device: ash::Device = instance
             .create_device(pdevice, &device_create_info, None)
             .unwrap();
+
+        let (debug_callback, debug_utils_instance, debug_utils_device) = Self::create_debug_utils(&instance, &device, &entry);
 
         let queue = device.get_device_queue(queue_family_index, 0);
 
@@ -125,21 +131,23 @@ impl VkCore {
             physical_device: pdevice,
             debug_settings: Default::default(),
             buffer_device_address: false,
+            allocation_sizes: Default::default()
         }).unwrap()));
 
-        VkCore {
-            entry: entry,
-            instance: instance,
+        Ok(VkCore {
+            entry,
+            instance,
             device: Rc::new(device),
-            pdevice: pdevice,
-            queue: queue,
-            queue_family_index: queue_family_index,
-            debug_utils_loader: debug_utils,
-            debug_callback: debug_callback,
-            surface: surface,
-            surface_loader: surface_loader,
+            pdevice,
+            queue,
+            queue_family_index,
+            debug_utils_instance,
+            debug_utils_device,
+            debug_callback,
+            surface,
+            surface_loader,
             allocator: Some(allocator)
-        }
+        })
     }
 
     pub fn set_debug_name(&self, name: &str, handle: u64, object_type: vk::ObjectType) {
@@ -154,27 +162,27 @@ impl VkCore {
         };
 
         unsafe {
-        self.debug_utils_loader.set_debug_utils_object_name(self.device.handle(), &info).unwrap();
+        self.debug_utils_device.set_debug_utils_object_name(&info).unwrap();
         }
     }
 
-    unsafe fn create_surface(entry: &ash::Entry, instance: &ash::Instance, window: &Window) -> (vk::SurfaceKHR, khr::Surface) {
-        let surface_loader = khr::Surface::new(&entry, &instance);
+    unsafe fn create_surface(entry: &ash::Entry, instance: &ash::Instance, window: &Window) -> Result<(vk::SurfaceKHR, khr::surface::Instance)> {
+        let surface_loader = khr::surface::Instance::new(&entry, &instance);
 
         let surface = ash_window::create_surface(
             &entry,
             &instance,
-            window.raw_display_handle(),
-            window.raw_window_handle(),
+            window.display_handle()?.as_raw(),
+            window.window_handle()?.as_raw(),
             None,
         )
         .unwrap();
 
-        return (surface, surface_loader)
+        Ok((surface, surface_loader))
     }
 
-    unsafe fn create_debug_utils(instance: &ash::Instance, entry: &ash::Entry) -> (vk::DebugUtilsMessengerEXT, ash::extensions::ext::DebugUtils) {
-        let debug_info = vk::DebugUtilsMessengerCreateInfoEXT::builder()
+    unsafe fn create_debug_utils(instance: &ash::Instance, device: &ash::Device, entry: &ash::Entry) -> (vk::DebugUtilsMessengerEXT, ash::ext::debug_utils::Instance, ash::ext::debug_utils::Device) {
+        let debug_info = vk::DebugUtilsMessengerCreateInfoEXT::default()
             .message_severity(
                 vk::DebugUtilsMessageSeverityFlagsEXT::ERROR
                     | vk::DebugUtilsMessageSeverityFlagsEXT::WARNING
@@ -187,13 +195,14 @@ impl VkCore {
             )
             .pfn_user_callback(Some(vulkan_debug_callback));
 
-        let debug_utils_loader = ash::extensions::ext::DebugUtils::new(&entry, &instance);
+        let debug_utils_instance = ash::ext::debug_utils::Instance::new(&entry, &instance);
+        let debug_utils_device = ash::ext::debug_utils::Device::new(&instance, &device);
 
-        let debug_call_back = debug_utils_loader
+        let debug_call_back = debug_utils_instance
             .create_debug_utils_messenger(&debug_info, None)
             .unwrap();
 
-        (debug_call_back, debug_utils_loader)
+        (debug_call_back, debug_utils_instance, debug_utils_device)
     }
 
     unsafe fn create_instance(entry: &ash::Entry, extension_names : &Vec<*const i8>) -> ash::Instance {
@@ -217,14 +226,14 @@ impl VkCore {
             .map(|raw_name| raw_name.as_ptr())
             .collect();
 
-        let appinfo = vk::ApplicationInfo::builder()
+        let appinfo = vk::ApplicationInfo::default()
             .application_name(app_name)
             .application_version(0)
             .engine_name(app_name)
             .engine_version(0)
             .api_version(vk::make_api_version(0, 1, 0, 0));
 
-        let create_info = vk::InstanceCreateInfo::builder()
+        let create_info = vk::InstanceCreateInfo::default()
             .application_info(&appinfo)
             .enabled_layer_names(&layers_names_raw)
             .enabled_extension_names(&extension_names)
@@ -238,7 +247,7 @@ impl VkCore {
         instance
     }
 
-    unsafe fn create_physical_device(instance: &ash::Instance, surface: Option<vk::SurfaceKHR>, surface_loader: &Option<khr::Surface>) -> (vk::PhysicalDevice, u32) {
+    unsafe fn create_physical_device(instance: &ash::Instance, surface: Option<vk::SurfaceKHR>, surface_loader: &Option<khr::surface::Instance>) -> (vk::PhysicalDevice, u32) {
         let pdevices = instance
             .enumerate_physical_devices()
             .expect("Physical device error");
@@ -292,7 +301,7 @@ impl Drop for VkCore {
             if self.surface.is_some() {
                 self.surface_loader.as_ref().unwrap().destroy_surface(self.surface.unwrap(), None);
             }
-            self.debug_utils_loader.destroy_debug_utils_messenger(self.debug_callback, None);
+            self.debug_utils_instance.destroy_debug_utils_messenger(self.debug_callback, None);
             self.instance.destroy_instance(None);
         }
     }

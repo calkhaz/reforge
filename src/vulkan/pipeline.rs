@@ -223,12 +223,12 @@ impl Pipeline {
         // create descriptor layouts, add descriptor pool sizes, and add pipelines to hashmap
         let layout_bindings = vkutils::create_descriptor_layout_bindings(&info.shader.borrow().bindings, num_frames, pool_sizes);
 
-        let descriptor_info = vk::DescriptorSetLayoutCreateInfo::builder().bindings(&layout_bindings);
+        let descriptor_info = vk::DescriptorSetLayoutCreateInfo::default().bindings(&layout_bindings);
         let descriptor_layout = [device
             .create_descriptor_set_layout(&descriptor_info, None)?];
 
         let pipeline_layout = device.
-            create_pipeline_layout(&vk::PipelineLayoutCreateInfo::builder()
+            create_pipeline_layout(&vk::PipelineLayoutCreateInfo::default()
                 .set_layouts(&descriptor_layout), None)?;
 
         Ok(PipelineLayout {
