@@ -3,6 +3,7 @@ mod ffmpeg;
 mod py;
 mod reforge;
 mod render;
+mod ui;
 mod utils;
 mod vulkan;
 
@@ -173,8 +174,15 @@ impl ApplicationHandler for WindowHandler {
             WindowEvent::RedrawRequested => {
                 let window = self.window.as_ref().unwrap();
                 window.pre_present_notify();
-                if let Err(err) = self.reforge.as_mut().unwrap().run() {
-                    warn!("Rendering err: {err}");
+
+                if let Some(rf) = &mut self.reforge {
+                    rf.render.ui.as_mut().unwrap().process_window_input(window);
+
+                    if let Err(err) = rf.run() {
+                        warn!("Rendering err: {err}");
+                    }
+
+                    rf.render.ui.as_mut().unwrap().handle_ui_window_event(window);
                 }
             },
             _ => (),

@@ -3,6 +3,7 @@ use ash::vk;
 use gpu_allocator as gpu_alloc;
 
 use crate::err;
+use crate::ui;
 use crate::utils;
 use crate::config::Config;
 use crate::vulkan::command;
@@ -112,7 +113,8 @@ pub struct Render {
     pub pipeline_buffer_data: HashMap<String, HashMap<String, ParamData>>,
     reload_config: Option<Config>,
     pub window_width: u32,
-    pub window_height: u32
+    pub window_height: u32,
+    pub ui: Option<ui::ui>
 }
 
 impl Render {
@@ -352,6 +354,10 @@ impl Render {
                 command::transition_image_layout(&device, frame.cmd_buffer, image.vk, vk::ImageLayout::UNDEFINED, vk::ImageLayout::GENERAL);
             }
         }
+    }
+
+    pub fn prepare_ui(&mut self) {
+        self.ui.as_mut().map(|ui| ui.run());
     }
 
     pub fn wait_for_frame_fence(&self) {
@@ -621,9 +627,11 @@ impl Render {
 
         let last_modified_shader_times: HashMap<String, u64> = utils::get_modified_times(&graph.pipelines);
 
-        let swapchain = if info.swapchain { Some(SwapChain::new(&vk_core, info.width, info.height)?) } else { None };
+        let swapchain = window.map(|_| SwapChain::new(&vk_core, info.width, info.height)).transpose()?;
 
-        let (window_width, window_height) = if info.swapchain { (info.width, info.height) } else { (0, 0 ) };
+        let (window_width, window_height) = if window.is_some() { (info.width, info.height) } else { (0, 0 ) };
+
+        let ui = window.map(|w| ui::ui::new(w));
 
         Ok(Render {
             frames: frames?,
@@ -641,7 +649,8 @@ impl Render {
             pipeline_buffer_data: HashMap::new(),
             reload_config: None,
             window_width,
-            window_height
+            window_height,
+            ui
         })
 
         }

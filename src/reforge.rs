@@ -20,7 +20,7 @@ pub struct Reforge {
     height: u32,
     decoder: Option<Decoder>,
     encoder: Option<Encoder>,
-    render: Render,
+    pub render: Render,
     graph: String,
     params: HashMap<String, HashMap<String, ParamData>>,
     py_config_timestamp: u64,
@@ -162,12 +162,13 @@ impl Reforge {
             unsafe { std::ptr::copy_nonoverlapping(input_bytes.as_ptr(), mapped_input_image_data, input_bytes.len()); }
         }
 
+        self.render.prepare_ui();
+
         // Wait for the previous iteration of this frame before
         // changing or executing on its resources
         self.render.wait_for_frame_fence();
 
         if self.render.trigger_reloads()? {
-            // Clear current line of timers
             eprint!("{TERM_CLEAR}");
             first_run.iter_mut().for_each(|b| *b = true);
         }
@@ -175,6 +176,7 @@ impl Reforge {
         if let Err(err) = self.render.update_ubos(self.time_since_start.elapsed().as_secs_f32()) {
             warn!("{}", err);
         }
+            // Clear current line of timers
 
         // Pull in the next image from the swapchain
         if self.render.has_swapchain() {
