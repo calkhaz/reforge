@@ -20,6 +20,8 @@ pyo3 = { version = "0.20.3", features = ["auto-initialize"] }
 num-traits = "0.2.18"
 spirq = "1.2.2"
 bitflags = "2.6.0"
+egui-winit = "0.29.1"
+egui = "0.29.1"
 
 [dev-dependencies]
 image-compare = "0.4.1"
