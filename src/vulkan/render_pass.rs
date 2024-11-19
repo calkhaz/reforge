@@ -6,13 +6,12 @@ use ash::vk;
 use anyhow::Result;
 use std::default::Default;
 use crate::vulkan::core::VkCore;
-use crate::vulkan::vkutils::Image;
 
-pub unsafe fn build_framebuffer(core: &VkCore, image: &Image, render_pass: vk::RenderPass, width: u32, height: u32) -> Result<vk::Framebuffer> {
+pub unsafe fn build_framebuffer(core: &VkCore, image_view: vk::ImageView, render_pass: vk::RenderPass, width: u32, height: u32) -> Result<vk::Framebuffer> {
     let info = vk::FramebufferCreateInfo {
         render_pass,
         attachment_count: 1,
-        p_attachments: &image.view.unwrap(),
+        p_attachments: &image_view,
         width,
         height,
         layers: 1,
@@ -22,7 +21,7 @@ pub unsafe fn build_framebuffer(core: &VkCore, image: &Image, render_pass: vk::R
     Ok(core.device.create_framebuffer(&info, None)?)
 }
 
-pub unsafe fn build_render_pass(device: &ash::Device, format: vk::Format) -> Result<vk::RenderPass> {
+pub unsafe fn build_render_pass(device: &ash::Device, format: vk::Format, load_op: vk::AttachmentLoadOp, initial_layout: vk::ImageLayout, final_layout: vk::ImageLayout) -> Result<vk::RenderPass> {
     let color_attachment = vk::AttachmentReference {
         attachment: 0,
         layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL
@@ -31,11 +30,10 @@ pub unsafe fn build_render_pass(device: &ash::Device, format: vk::Format) -> Res
     let attachment_desc = vk::AttachmentDescription {
         format,
         samples: vk::SampleCountFlags::TYPE_1,
-        load_op: vk::AttachmentLoadOp::DONT_CARE,
+        load_op,
         store_op: vk::AttachmentStoreOp::STORE,
-        //initial_layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
-        initial_layout: vk::ImageLayout::UNDEFINED,
-        final_layout: vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+        initial_layout,
+        final_layout,
         ..Default::default()
     };
 

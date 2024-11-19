@@ -54,7 +54,7 @@ pub struct PipelineGraph {
     pub width: u32,
     pub height: u32,
     pub pipelines: HashMap<String, Rc<RefCell<Pipeline>>>,
-    _sampler: Sampler, // Stored here so it doesn't get dropped
+    pub sampler: Sampler, // Stored here so it doesn't get dropped
     descriptor_pool: vk::DescriptorPool,
     pub bind_point: vk::PipelineBindPoint
 }
@@ -101,7 +101,7 @@ impl PipelineGraphFrame {
     unsafe fn image_write<'a>(image: &Image, infos: &mut Vec<vk::DescriptorImageInfo>, binding: &ImageBinding, set: vk::DescriptorSet, sampler: &Sampler) -> vk::WriteDescriptorSet<'a> {
         infos.push(vk::DescriptorImageInfo {
             image_layout: vk::ImageLayout::GENERAL,
-            image_view: image.view.unwrap(),
+            image_view: image.view,
             sampler: sampler.vk
         });
 
@@ -153,7 +153,7 @@ impl PipelineGraphFrame {
             for pipeline in layer {
                 if let Some(render_pass) = pipeline.borrow().render_pass {
                     attachment_image = Some(vkutils::create_image(core, "color-attachment".to_string(), format, frame_info.width, frame_info.height));
-                    framebuffer = Some(render_pass::build_framebuffer(core, &attachment_image.as_ref().unwrap(), render_pass, frame_info.width, frame_info.height)?);
+                    framebuffer = Some(render_pass::build_framebuffer(core, attachment_image.as_ref().unwrap().view, render_pass, frame_info.width, frame_info.height)?);
                 }
             }
         }
@@ -508,7 +508,8 @@ impl PipelineGraph {
                 let pipeline = if info.shader.borrow().stage == vk::ShaderStageFlags::FRAGMENT {
                     bind_point = vk::PipelineBindPoint::GRAPHICS;
                     assert!(pipelines.len() < 1, "Can only have one pipeline when using fragment shaders");
-                    let render_pass = render_pass::build_render_pass(&core.device, gi.format)?;
+                    // Final image should be ready to be transferred out
+                    let render_pass = render_pass::build_render_pass(&core.device, gi.format, vk::AttachmentLoadOp::DONT_CARE, vk::ImageLayout::UNDEFINED, vk::ImageLayout::TRANSFER_SRC_OPTIMAL)?;
                     let vertex_shader = Rc::new(vkutils::build_vertex_shader(&core.device)?);
                     Pipeline::new_gfx(Rc::clone(&core.device),
                                       gi.width,
@@ -574,7 +575,7 @@ impl PipelineGraph {
             width: gi.width,
             height: gi.height,
             pipelines: pipelines,
-            _sampler: sampler,
+            sampler: sampler,
             descriptor_pool: descriptor_pool,
             ordered_pipelines,
             bind_point

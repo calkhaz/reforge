@@ -35,13 +35,13 @@ pub struct Image {
     allocator: Rc<RefCell<gpu_alloc_vk::Allocator>>,
     pub allocation: gpu_alloc_vk::Allocation,
     pub vk: vk::Image,
-    pub view: Option<vk::ImageView>,
+    pub view: vk::ImageView,
     #[allow(dead_code)]
     pub format: vk::Format
 }
 
 pub struct Buffer {
-    device: Rc<ash::Device>,
+    pub device: Rc<ash::Device>,
     allocator: Rc<RefCell<gpu_alloc_vk::Allocator>>,
     pub allocation: gpu_alloc_vk::Allocation,
     pub vk: vk::Buffer,
@@ -231,7 +231,7 @@ pub unsafe fn create_buffer(core: &VkCore,
 
     core.device.bind_buffer_memory(buffer, allocation.memory(), allocation.offset()).unwrap();
 
-    let mapped_data : *mut u8 = if mem_type == gpu_alloc::MemoryLocation::GpuToCpu {
+    let mapped_data : *mut u8 = if mem_type == gpu_alloc::MemoryLocation::GpuToCpu || mem_type == gpu_alloc::MemoryLocation::CpuToGpu {
         allocation.mapped_ptr().unwrap().as_ptr() as *mut u8
     }
     else {
@@ -284,9 +284,7 @@ pub unsafe fn create_image(core: &VkCore, name: String, format: vk::Format, widt
 
     core.device.bind_image_memory(vk_image, image_allocation.memory(), image_allocation.offset()).unwrap();
 
-    // Because SRGB is only going to be used for blitting, an image view
-    // is not required and only causes validation warnings
-    let image_view = if format != vk::Format::R8G8B8A8_SRGB {
+    let image_view = {
         let image_view_info = vk::ImageViewCreateInfo::default()
             .image(vk_image)
             .view_type(vk::ImageViewType::TYPE_2D)
@@ -298,10 +296,7 @@ pub unsafe fn create_image(core: &VkCore, name: String, format: vk::Format, widt
                 .base_array_layer(0)
                 .layer_count(1));
 
-        Some(core.device.create_image_view(&image_view_info, None).unwrap())
-    }
-    else {
-        None
+        core.device.create_image_view(&image_view_info, None).unwrap()
     };
 
     core.set_debug_name(&name, vk_image.as_raw(), vk::ObjectType::IMAGE);
@@ -392,9 +387,7 @@ impl Drop for Buffer {
 impl Drop for Image {
     fn drop(&mut self) {
         unsafe {
-            if let Some(view) = self.view {
-                self.device.destroy_image_view(view, None);
-            }
+            self.device.destroy_image_view(self.view, None);
             self.device.destroy_image(self.vk, None);
         }
         let allocation = std::mem::take(&mut self.allocation);

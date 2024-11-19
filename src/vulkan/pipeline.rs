@@ -193,6 +193,193 @@ impl Pipeline {
         }
     }
 
+
+    // ----------------------------------------
+    //          UI Pipeline Creation
+    // ----------------------------------------
+
+    fn build_ui_descriptor_layout(device: &ash::Device) -> Result<vk::DescriptorSetLayout> {
+        let bindings = [vk::DescriptorSetLayoutBinding::default()
+            .binding(0)
+            .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+            .descriptor_count(1)
+            .stage_flags(vk::ShaderStageFlags::FRAGMENT)];
+
+        let descriptor_set_create_info =
+            vk::DescriptorSetLayoutCreateInfo::default().bindings(&bindings);
+
+        unsafe { Ok(device.create_descriptor_set_layout(&descriptor_set_create_info, None)?) }
+    }
+
+    fn new_ui_gfx_layout(device: &ash::Device, descriptor_set_layout: vk::DescriptorSetLayout) -> Result<vk::PipelineLayout> {
+
+        let push_const_range = [vk::PushConstantRange {
+            stage_flags: vk::ShaderStageFlags::VERTEX,
+            offset: 0,
+            size: 64 as u32,
+        }];
+
+        let descriptor_set_layouts = [descriptor_set_layout];
+        let layout_info = vk::PipelineLayoutCreateInfo::default()
+            .set_layouts(&descriptor_set_layouts)
+            .push_constant_ranges(&push_const_range);
+        let pipeline_layout = unsafe { device.create_pipeline_layout(&layout_info, None)? };
+        Ok(pipeline_layout)
+    }
+
+    pub unsafe fn new_ui_gfx(device: Rc<ash::Device>,
+                             render_pass: vk::RenderPass) -> Result<Pipeline> {
+
+        let descriptor_layout = Self::build_ui_descriptor_layout(&device)?;
+        let pipeline_layout = Self::new_ui_gfx_layout(&device, descriptor_layout)?;
+        let shader_entry_name = CStr::from_bytes_with_nul_unchecked(b"main\0");
+
+        let vertex_shader = Shader::from_path(&device, &"shaders/ui.vert".to_string()).unwrap();
+        let fragment_shader = Shader::from_path(&device, &"shaders/ui.frag".to_string()).unwrap();
+
+        let shader_stages = vec![
+            vk::PipelineShaderStageCreateInfo {
+                stage: vk::ShaderStageFlags::VERTEX,
+                module: vertex_shader.module,
+                p_name: shader_entry_name.as_ptr(),
+                ..Default::default()
+            },
+            vk::PipelineShaderStageCreateInfo {
+                stage: vk::ShaderStageFlags::FRAGMENT,
+                module: fragment_shader.module,
+                p_name: shader_entry_name.as_ptr(),
+                ..Default::default()
+            }
+        ];
+
+        let binding_desc = [vk::VertexInputBindingDescription::default()
+            .binding(0)
+            .stride(20)
+            .input_rate(vk::VertexInputRate::VERTEX)];
+        let attribute_desc = [
+            vk::VertexInputAttributeDescription::default()
+                .binding(0)
+                .location(0)
+                .format(vk::Format::R32G32_SFLOAT)
+                .offset(0),
+            vk::VertexInputAttributeDescription::default()
+                .binding(0)
+                .location(1)
+                .format(vk::Format::R32G32_SFLOAT)
+                .offset(8),
+            vk::VertexInputAttributeDescription::default()
+                .binding(0)
+                .location(2)
+                .format(vk::Format::R8G8B8A8_UNORM)
+                .offset(16)
+        ];
+
+        let vertex_input_info = vk::PipelineVertexInputStateCreateInfo::default()
+            .vertex_binding_descriptions(&binding_desc)
+            .vertex_attribute_descriptions(&attribute_desc);
+
+        let input_assembly_info = vk::PipelineInputAssemblyStateCreateInfo::default()
+            .topology(vk::PrimitiveTopology::TRIANGLE_LIST)
+            .primitive_restart_enable(false);
+
+        let rasterizer_info = vk::PipelineRasterizationStateCreateInfo::default()
+            .depth_clamp_enable(false)
+            .rasterizer_discard_enable(false)
+            .polygon_mode(vk::PolygonMode::FILL)
+            .line_width(1.0)
+            .cull_mode(vk::CullModeFlags::NONE)
+            .front_face(vk::FrontFace::CLOCKWISE)
+            .depth_bias_enable(false)
+            .depth_bias_constant_factor(0.0)
+            .depth_bias_clamp(0.0)
+            .depth_bias_slope_factor(0.0);
+
+        let viewports = [Default::default()];
+        let scissors = [Default::default()];
+        let viewport_info = vk::PipelineViewportStateCreateInfo::default()
+            .viewports(&viewports)
+            .scissors(&scissors);
+
+        let multisampling_info = vk::PipelineMultisampleStateCreateInfo::default()
+            .sample_shading_enable(false)
+            .rasterization_samples(vk::SampleCountFlags::TYPE_1)
+            .min_sample_shading(1.0)
+            .alpha_to_coverage_enable(false)
+            .alpha_to_one_enable(false);
+
+        let color_blend_attachments = [vk::PipelineColorBlendAttachmentState::default()
+            .color_write_mask(
+                vk::ColorComponentFlags::R
+                    | vk::ColorComponentFlags::G
+                    | vk::ColorComponentFlags::B
+                    | vk::ColorComponentFlags::A,
+            )
+            .blend_enable(true)
+            .src_color_blend_factor(vk::BlendFactor::ONE)
+            .dst_color_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
+            .color_blend_op(vk::BlendOp::ADD)
+            .src_alpha_blend_factor(vk::BlendFactor::ONE_MINUS_DST_ALPHA)
+            .dst_alpha_blend_factor(vk::BlendFactor::ONE)
+            .alpha_blend_op(vk::BlendOp::ADD)];
+
+        let color_blending_info = vk::PipelineColorBlendStateCreateInfo::default()
+            .logic_op_enable(false)
+            .logic_op(vk::LogicOp::COPY)
+            .attachments(&color_blend_attachments)
+            .blend_constants([0.0, 0.0, 0.0, 0.0]);
+
+        let depth_stencil_state_create_info = vk::PipelineDepthStencilStateCreateInfo::default()
+            .depth_test_enable(false)
+            .depth_write_enable(false)
+            .depth_compare_op(vk::CompareOp::ALWAYS)
+            .depth_bounds_test_enable(false)
+            .stencil_test_enable(false);
+
+        let dynamic_states = [vk::DynamicState::SCISSOR, vk::DynamicState::VIEWPORT];
+        let dynamic_states_info = vk::PipelineDynamicStateCreateInfo::default().dynamic_states(&dynamic_states);
+
+        let pipeline_info = vk::GraphicsPipelineCreateInfo::default()
+            .stages(&shader_stages)
+            .vertex_input_state(&vertex_input_info)
+            .input_assembly_state(&input_assembly_info)
+            .rasterization_state(&rasterizer_info)
+            .viewport_state(&viewport_info)
+            .multisample_state(&multisampling_info)
+            .color_blend_state(&color_blending_info)
+            .depth_stencil_state(&depth_stencil_state_create_info)
+            .dynamic_state(&dynamic_states_info)
+            .layout(pipeline_layout)
+            .render_pass(render_pass);
+
+        let vk_pipeline = match device.create_graphics_pipelines(vk::PipelineCache::null(), &[pipeline_info], None) {
+            Ok(pipelines) => {
+                Ok(pipelines[0])
+            },
+            Err(err) => {
+                Err(anyhow!("Failed to create graphics pipeline: {:?}", err))
+            }
+        }?;
+
+        let info = PipelineInfo { name: "ui-pipeline".to_string(),
+                                  shader: Rc::new(RefCell::new(fragment_shader)), input_images: vec![], output_images: vec![], input_ssbos: vec![], output_ssbos: vec![] };
+
+        let pipeline_layout = PipelineLayout {
+            vk: pipeline_layout,
+            descriptor_layout
+        };
+
+        Ok(Pipeline {
+            device,
+            name: "ui-pipeline".to_string(),
+            info,
+            layout: pipeline_layout,
+            vk_pipeline,
+            render_pass: Some(render_pass),
+            vertex_shader: Some(Rc::new(vertex_shader))
+        })
+    }
+
+
     pub unsafe fn new_gfx(device: Rc<ash::Device>,
                           width: u32,
                           height: u32,

@@ -138,7 +138,6 @@ impl Reforge {
             height,
             num_frames,
             format: args.shader_format.unwrap().to_vk_format(),
-            swapchain: encoder.is_none(),
             has_input_image: decoder.is_some(),
         };
 
@@ -161,8 +160,6 @@ impl Reforge {
         if let Some(input_bytes) = input_bytes {
             unsafe { std::ptr::copy_nonoverlapping(input_bytes.as_ptr(), mapped_input_image_data, input_bytes.len()); }
         }
-
-        self.render.prepare_ui();
 
         // Wait for the previous iteration of this frame before
         // changing or executing on its resources

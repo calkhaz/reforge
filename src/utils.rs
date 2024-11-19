@@ -90,7 +90,6 @@ pub fn find_python_config(python_config: &str, mut python_path: Option<String>) 
     let inferred_path = if let Some(python_path) = python_path.as_ref() {
         let file_path = format!("{}/{}", python_path, python_config);
         let file_path_py = format!("{}.py", file_path);
-        println!("{} {}", file_path, file_path_py);
 
         if file_exists(&file_path)        { Some(file_path) }
         else if file_exists(&file_path_py){ Some(file_path_py) }

@@ -7,7 +7,7 @@ use std::rc::Rc;
 use std::collections::HashMap;
 
 use bitflags::bitflags;
-use tracing::warn;
+use tracing::{warn, trace};
 
 #[derive(Clone, Copy, Debug)]
 pub enum DescType {
@@ -209,7 +209,9 @@ impl Shader {
         let name = std::path::Path::new(&path).file_stem().unwrap().to_str().unwrap();
         let file_contents = utils::load_file_contents(&path)?;
 
-        let shader_type = if path.ends_with(".frag") { vk::ShaderStageFlags::FRAGMENT } else { vk::ShaderStageFlags::COMPUTE };
+        let shader_type = if path.ends_with(".frag") { vk::ShaderStageFlags::FRAGMENT }
+        else if              path.ends_with(".vert") { vk::ShaderStageFlags::VERTEX }
+        else                                         { vk::ShaderStageFlags::COMPUTE };
 
         let mut shader = Self::from_contents(device, name.to_string(), shader_type, file_contents)?;
 
@@ -348,10 +350,10 @@ impl Shader {
 
                             ssbos.insert(ssbo_name, SsboBinding{ binding, size });
                         },
-                        _ => println!("Note unsupported descriptor ignored {:?}", desc_ty)
+                        _ => trace!("Note unsupported descriptor ignored {:?}", desc_ty)
                     }
                 },
-                _ => println!("Note unsupported descriptor ignored {:?}", var)
+                _ => trace!("Note unsupported descriptor ignored {:?}", var)
             };
         }
 

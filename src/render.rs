@@ -9,6 +9,7 @@ use crate::config::Config;
 use crate::vulkan::command;
 use crate::vulkan::core::VkCore;
 use crate::vulkan::frame::Frame;
+use crate::vulkan::pipeline::Pipeline;
 use crate::vulkan::pipeline_graph::BufferBlock;
 use crate::vulkan::pipeline_graph::FILE_INPUT;
 use crate::vulkan::pipeline_graph::PipelineGraph;
@@ -19,6 +20,7 @@ use crate::vulkan::vkutils;
 use crate::vulkan::vkutils::Buffer;
 use crate::vulkan::vkutils::Image;
 use crate::vulkan::shader::DescBlockType;
+use crate::vulkan::render_pass;
 use tracing::warn;
 
 use std::collections::HashMap;
@@ -34,6 +36,41 @@ pub enum ParamData {
     FloatArray(Vec<f32>),
     IntegerArray(Vec<i32>)
 }
+
+/// Orthographic projection matrix for Vulkan
+/// From: https://github.com/fu5ha/ultraviolet
+#[inline]
+pub fn orthographic_vk(
+    left: f32,
+    right: f32,
+    bottom: f32,
+    top: f32,
+    near: f32,
+    far: f32,
+) -> [f32; 16] {
+    let rml = right - left;
+    let rpl = right + left;
+    let tmb = top - bottom;
+    let tpb = top + bottom;
+    let fmn = far - near;
+
+    #[rustfmt::skip]
+    let res = [
+        2.0 / rml, 0.0, 0.0, 0.0,
+        0.0, -2.0 / tmb, 0.0, 0.0,
+        0.0, 0.0, -1.0 / fmn, 0.0,
+        -(rpl / rml), -(tpb / tmb), -(near / fmn), 1.0
+    ];
+
+    res
+}
+
+unsafe fn any_as_u8_slice<T: Sized>(any: &T) -> &[u8] {
+    let ptr = (any as *const T) as *const u8;
+    std::slice::from_raw_parts(ptr, std::mem::size_of::<T>())
+}
+
+
 
 impl ParamData {
     fn primitive<T: num_traits::cast::NumCast>(&self) -> Result<T> {
@@ -92,8 +129,43 @@ pub struct RenderInfo {
     pub height: u32,
     pub num_frames: usize,
     pub format: vk::Format,
-    pub swapchain: bool,
     pub has_input_image: bool,
+}
+
+struct UiResources {
+    render_pass: vk::RenderPass,
+    pipeline: Pipeline,
+    _descriptor_pool: vk::DescriptorPool,
+    font_image: Option<Image>,
+    font_image_staging_buffer: Option<Buffer>,
+    descriptor_set: vk::DescriptorSet,
+}
+
+struct UiPerSwapchain {
+    pub framebuffer: vk::Framebuffer,
+    pub vertex_buffer: vkutils::Buffer,
+    pub index_buffer: vkutils::Buffer,
+}
+
+struct PerSwapChainRes {
+    ui: UiPerSwapchain
+}
+
+impl PerSwapChainRes {
+    pub fn new(core: &VkCore, ui_render_pass: vk::RenderPass, sc_image_view: vk::ImageView, width: u32, height: u32) -> Result<PerSwapChainRes> {
+        unsafe {
+        let ui : UiPerSwapchain = {
+            //let image = vkutils::create_image(core, "ui-image".to_string(), format, width, height);
+            let framebuffer = render_pass::build_framebuffer(core, sc_image_view, ui_render_pass, width, height)?;
+            let vertex_buffer = vkutils::create_buffer(core, "ui-vertex".to_string(), 32*1024*1024, vk::BufferUsageFlags::VERTEX_BUFFER | vk::BufferUsageFlags::TRANSFER_SRC, gpu_allocator::MemoryLocation::GpuToCpu);
+            let index_buffer  = vkutils::create_buffer(core, "ui-index".to_string(), 32*1024*1024, vk::BufferUsageFlags::INDEX_BUFFER | vk::BufferUsageFlags::TRANSFER_SRC, gpu_allocator::MemoryLocation::GpuToCpu);
+
+            UiPerSwapchain{ framebuffer, vertex_buffer, index_buffer}
+        };
+
+        Ok(PerSwapChainRes { ui })
+        }
+    }
 }
 
 pub struct Render {
@@ -108,13 +180,52 @@ pub struct Render {
     present_index: u32,
     pub frame_index: usize,
     swapchain: Option<SwapChain>,
-    pub vk_core: VkCore,
     pub swapchain_rebuilt_required: bool,
     pub pipeline_buffer_data: HashMap<String, HashMap<String, ParamData>>,
     reload_config: Option<Config>,
     pub window_width: u32,
     pub window_height: u32,
-    pub ui: Option<ui::ui>
+    pub ui: Option<ui::Ui>,
+    ui_res: Option<UiResources>,
+    per_sc_res: Option<Vec<PerSwapChainRes>>,
+    pub vk_core: VkCore,
+}
+
+impl UiResources {
+    pub fn new(device: &Rc<ash::Device>, format: vk::Format) -> Result<UiResources> {
+        unsafe {
+        // Going from vulkan blit as dst to presentation
+        let render_pass = render_pass::build_render_pass(&device, format, vk::AttachmentLoadOp::LOAD, vk::ImageLayout::TRANSFER_DST_OPTIMAL, vk::ImageLayout::PRESENT_SRC_KHR)?;
+
+        let pipeline = Pipeline::new_ui_gfx(device.clone(), render_pass)?;
+
+        let pool_size = vk::DescriptorPoolSize {
+            ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+            descriptor_count: 1
+        };
+
+        let pool_vec = &[pool_size];
+
+        let descriptor_pool_info = vk::DescriptorPoolCreateInfo::default()
+            .pool_sizes(pool_vec)
+            .max_sets(1u32);
+
+        let descriptor_pool = device
+            .create_descriptor_pool(&descriptor_pool_info, None)?;
+
+        let desc_layouts = &[pipeline.layout.descriptor_layout];
+
+        let desc_alloc_info = vk::DescriptorSetAllocateInfo::default()
+            .descriptor_pool(descriptor_pool)
+            .set_layouts(desc_layouts);
+
+        let descriptor_set = device
+            .allocate_descriptor_sets(&desc_alloc_info)
+            .unwrap()[0];
+
+        Ok(UiResources { render_pass, pipeline, _descriptor_pool: descriptor_pool, font_image: None, font_image_staging_buffer: None, descriptor_set })
+        }
+    }
 }
 
 impl Render {
@@ -356,10 +467,6 @@ impl Render {
         }
     }
 
-    pub fn prepare_ui(&mut self) {
-        self.ui.as_mut().map(|ui| ui.run());
-    }
-
     pub fn wait_for_frame_fence(&self) {
         let frame = &self.frames[self.frame_index];
         let device = &self.vk_core.device;
@@ -391,11 +498,216 @@ impl Render {
         }
     }
 
-    pub fn record(&mut self) {
-        let graph_frame = &self.graph.frames[self.frame_index];
-        let swapchain_image = if self.swapchain.is_some() { Some(self.get_swapchain().images[self.present_index as usize]) } else { None };
-        let frame = &mut self.frames[self.frame_index];
+    fn record_ui_font_image_upload(&mut self, font_image: egui::FontImage) {
+        let ui_res = self.ui_res.as_mut().unwrap();
+
+        let data = font_image
+            .srgba_pixels(None)
+            .flat_map(|c| c.to_array())
+            .collect::<Vec<_>>();
+
+        let data = data.as_slice();
         let device = &self.vk_core.device;
+        let frame = &self.frames[self.frame_index];
+
+        unsafe {
+        let buffer = vkutils::create_buffer(&self.vk_core, "ui-font-staging".to_string(), (data.len()) as u64, vk::BufferUsageFlags::TRANSFER_SRC, gpu_alloc::MemoryLocation::GpuToCpu);
+        std::ptr::copy_nonoverlapping(data.as_ptr(), buffer.mapped_data, data.len());
+        let image = vkutils::create_image(&self.vk_core, "ui-font".to_string(), vk::Format::R8G8B8A8_SRGB, font_image.width() as u32, font_image.height() as u32);
+
+
+        let buffer_regions = vk::BufferImageCopy {
+            buffer_offset: 0,
+            image_subresource: vk::ImageSubresourceLayers {
+                aspect_mask: vk::ImageAspectFlags::COLOR,
+                layer_count: 1,
+                ..Default::default()
+            },
+            image_extent: vk::Extent3D {
+                width: font_image.width() as u32,
+                height: font_image.height() as u32,
+                depth: 1
+            },
+            ..Default::default()
+        };
+
+        command::transition_image_layout(&device, frame.cmd_buffer, image.vk, vk::ImageLayout::UNDEFINED, vk::ImageLayout::TRANSFER_DST_OPTIMAL);
+        device.cmd_copy_buffer_to_image(frame.cmd_buffer, buffer.vk, image.vk, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &[buffer_regions]);
+        command::transition_image_layout(&device, frame.cmd_buffer, image.vk, vk::ImageLayout::TRANSFER_DST_OPTIMAL, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+
+        let desc_info = vk::DescriptorImageInfo {
+            image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+            image_view: image.view,
+            sampler: self.graph.sampler.vk
+        };
+
+        let descriptor_write = vk::WriteDescriptorSet {
+            dst_set: ui_res.descriptor_set,
+            dst_binding: 0,
+            descriptor_count: 1,
+            descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+            p_image_info: [desc_info].as_ptr(),
+            ..Default::default()
+        };
+
+        device.update_descriptor_sets(&[descriptor_write], &[]);
+
+        ui_res.font_image_staging_buffer = Some(buffer);
+        ui_res.font_image = Some(image);
+        }
+    }
+
+    fn record_ui_drawing(&self, primitives: &Vec<egui::ClippedPrimitive>, pixels_per_point: f32) {
+        let frame = &self.frames[self.frame_index];
+        let ui_sc = &self.per_sc_res.as_ref().unwrap()[self.present_index as usize].ui;
+        let device = &self.vk_core.device;
+
+        let mut index_write_offset  = 0usize;
+        let mut vertex_write_offset = 0usize;
+        let mut index_draw_offset  = 0u32;
+        let mut vertex_draw_offset = 0u32;
+
+        for p in primitives {
+            let clip_rect = p.clip_rect;
+            match &p.primitive {
+                egui::epaint::Primitive::Mesh(m) => {
+                    let clip_x = clip_rect.min.x * pixels_per_point;
+                    let clip_y = clip_rect.min.y * pixels_per_point;
+                    let clip_w = clip_rect.max.x * pixels_per_point - clip_x;
+                    let clip_h = clip_rect.max.y * pixels_per_point - clip_y;
+
+                    let scissors = [vk::Rect2D {
+                        offset: vk::Offset2D {
+                            x: (clip_x as i32).max(0),
+                            y: (clip_y as i32).max(0),
+                        },
+                        extent: vk::Extent2D {
+                            width: clip_w as _,
+                            height: clip_h as _,
+                        },
+                    }];
+
+                    unsafe {
+                        device.cmd_set_scissor(frame.cmd_buffer, 0, &scissors);
+                    }
+
+                    let index_count = m.indices.len() as u32;
+                    let vertex_size = std::mem::size_of::<egui::epaint::Vertex>();
+                    let index_size = std::mem::size_of::<u32>();
+
+                    unsafe {
+                        device.cmd_draw_indexed(
+                            frame.cmd_buffer,
+                            index_count,
+                            1,
+                            index_draw_offset,
+                            vertex_draw_offset as i32,
+                            0,
+                        );
+
+                        let vertex_ptr = ui_sc.vertex_buffer.mapped_data.offset(vertex_write_offset as isize);
+                        let index_ptr  = ui_sc.index_buffer.mapped_data.offset(index_write_offset as isize);
+
+                        std::ptr::copy_nonoverlapping(m.vertices.as_ptr() as *const u8, vertex_ptr, vertex_size*m.vertices.len());
+                        std::ptr::copy_nonoverlapping(m.indices.as_ptr()  as *const u8, index_ptr,  index_size*m.indices.len());
+                    };
+
+                    index_draw_offset  += m.indices.len() as u32;
+                    vertex_draw_offset += m.vertices.len() as u32;
+                    index_write_offset  += index_size*m.indices.len();
+                    vertex_write_offset += vertex_size*m.vertices.len();
+                }
+                egui::epaint::Primitive::Callback(_) => {
+                    warn!("Primitive callbacks are not supported")
+                }
+            }
+        }
+    }
+
+    fn record_ui(&mut self) {
+        let (primitives, texture_deltas, pixels_per_point) = self.ui.as_mut().unwrap().run();
+
+        // Only upload font image once ever
+        for (_texture_id, image_delta) in texture_deltas.set {
+            match image_delta.image {
+                egui::ImageData::Color(_) => { warn!("egui color image delta is unsupported"); }
+                egui::ImageData::Font(f) => {
+                    if self.ui_res.as_ref().unwrap().font_image.is_none() {
+                        self.record_ui_font_image_upload(f);
+                    }
+                    else {
+                        warn!("Egui tried to upload font more than once, but we don't handle that case");
+                    }
+                }
+            };
+        }
+
+        let frame = &self.frames[self.frame_index];
+        let ui_sc = &self.per_sc_res.as_ref().unwrap()[self.present_index as usize].ui;
+        let swapchain = self.swapchain.as_ref().unwrap();
+        let device = &self.vk_core.device;
+        let ui_res = &self.ui_res.as_ref().unwrap();
+
+        let render_pass_begin_info = vk::RenderPassBeginInfo::default()
+            .render_pass(ui_res.render_pass)
+            .framebuffer(ui_sc.framebuffer)
+            .render_area(vk::Rect2D {
+                offset: vk::Offset2D { x: 0, y: 0 },
+                extent: vk::Extent2D{width: swapchain.width, height: swapchain.height },
+            })
+            .clear_values(&[vk::ClearValue {
+                color: vk::ClearColorValue {
+                    float32: [0.105, 0.105, 0.105, 1.0],
+                },
+            }]);
+
+        unsafe {
+
+        // RP will transition from TRANSFER_DST -> PRESENT_SRC_KHR for us
+        device.cmd_begin_render_pass(frame.cmd_buffer, &render_pass_begin_info, vk::SubpassContents::INLINE);
+
+        device.cmd_bind_pipeline(frame.cmd_buffer, vk::PipelineBindPoint::GRAPHICS, ui_res.pipeline.vk_pipeline);
+
+        device.cmd_set_viewport(
+            frame.cmd_buffer,
+            0,
+            &[vk::Viewport {
+                width: swapchain.width as f32,
+                height: swapchain.height as f32,
+                max_depth: 1.0,
+                ..Default::default()
+            }],
+        );
+
+        device.cmd_bind_index_buffer( frame.cmd_buffer, ui_sc.index_buffer.vk, 0, vk::IndexType::UINT32);
+        device.cmd_bind_vertex_buffers(frame.cmd_buffer, 0, &[ui_sc.vertex_buffer.vk], &[0]);
+        device.cmd_bind_descriptor_sets(frame.cmd_buffer, vk::PipelineBindPoint::GRAPHICS, ui_res.pipeline.layout.vk, 0, &[ui_res.descriptor_set], &[],);
+
+        }
+
+        // Ortho projection
+        let projection = orthographic_vk( 0.0,
+            swapchain.width as f32/pixels_per_point,
+            0.0,
+            -(swapchain.height as f32/pixels_per_point),
+            -1.0,
+            1.0,
+        );
+
+        unsafe {
+        let projection = any_as_u8_slice(&projection);
+        device.cmd_push_constants( frame.cmd_buffer, ui_res.pipeline.layout.vk, vk::ShaderStageFlags::VERTEX, 0, projection);
+        }
+
+        self.record_ui_drawing(&primitives, pixels_per_point);
+
+        unsafe { device.cmd_end_render_pass(frame.cmd_buffer) };
+    }
+
+    pub fn record_pipeline_graph(&mut self) {
+        let device = &self.vk_core.device;
+        let graph_frame = &self.graph.frames[self.frame_index];
+        let frame = &mut self.frames[self.frame_index];
 
         unsafe {
         device.cmd_reset_query_pool(frame.cmd_buffer,
@@ -409,33 +721,81 @@ impl Render {
 
         command::execute_pipeline_graph(&device, frame, graph_frame, &self.graph);
 
+        let frame = &self.frames[self.frame_index];
+
         if self.graph.is_compute() {
             command::transition_image_layout(&device, frame.cmd_buffer, graph_frame.get_output_image(), vk::ImageLayout::GENERAL, vk::ImageLayout::TRANSFER_SRC_OPTIMAL);
         }
 
+        }
+    }
+
+    pub fn record_swapchain_blit(&self) {
+        let swapchain_image = if self.swapchain.is_some() { Some(self.get_swapchain().images[self.present_index as usize]) } else { None };
+        let device = &self.vk_core.device;
+        let graph_frame = &self.graph.frames[self.frame_index];
+        let frame = &self.frames[self.frame_index];
+
         if let (Some(swapchain), Some(swapchain_image)) = (self.swapchain.as_ref(), swapchain_image) {
             command::transition_image_layout(&device, frame.cmd_buffer, swapchain_image, vk::ImageLayout::UNDEFINED, vk::ImageLayout::TRANSFER_DST_OPTIMAL);
+
+            let src_width  = if self.info.has_input_image { self.info.width  } else { swapchain.width };
+            let src_height = if self.info.has_input_image { self.info.height } else { swapchain.height };
+            let dst_width  = swapchain.width;
+            let dst_height = swapchain.height;
+            
+            // All 0
+            let color = vk::ClearColorValue::default();
+            let subres_range = vk::ImageSubresourceRange {
+                aspect_mask: vk::ImageAspectFlags::COLOR,
+                level_count: 1,
+                layer_count: 1,
+                ..Default::default()
+            };
+
+            // If we're partial blitting, clear the rest of the frame so the UI
+            // doesn't drag around the borders of it
+            if (src_width, src_height) != (dst_width, dst_height) {
+                unsafe {
+                device.cmd_clear_color_image(frame.cmd_buffer, swapchain_image, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &color, &[subres_range]);
+                }
+            }
 
             /* TODO?: Currently, we are using blit_image because it will do the format
              * conversion for us. However, another alternative is to do copy_image
              * after specifying th final compute shader destination image as the same
              * format as the swapchain format. Maybe worth measuring perf difference later */
             command::blit_copy(device, frame.cmd_buffer, &command::BlitCopy {
-                src_width: if self.info.has_input_image { self.info.width } else { swapchain.width },
-                src_height: if self.info.has_input_image { self.info.height } else { swapchain.height },
-                dst_width: swapchain.width,
-                dst_height: swapchain.height,
+                src_width, src_height,
+                dst_width, dst_height,
                 src_image: graph_frame.get_output_image(),
                 dst_image: swapchain_image,
                 src_layout: vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
                 dst_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
                 center: true
             });
+        }
+    }
 
-            command::transition_image_layout(&device, frame.cmd_buffer, swapchain_image, vk::ImageLayout::TRANSFER_DST_OPTIMAL, vk::ImageLayout::PRESENT_SRC_KHR);
+
+    pub fn record(&mut self) {
+        self.record_pipeline_graph();
+        self.record_swapchain_blit();
+
+        if self.ui.is_some() {
+            self.record_ui();
+        }
+        else {
+            let frame = &self.frames[self.frame_index];
+            let device = &self.vk_core.device;
+
+            // we blit to swapchain from compute and present directly
+            self.swapchain.as_ref().map(|sc| {
+                let swapchain_image = sc.images[self.present_index as usize];
+                command::transition_image_layout(&device, frame.cmd_buffer, swapchain_image, vk::ImageLayout::TRANSFER_DST_OPTIMAL, vk::ImageLayout::PRESENT_SRC_KHR);
+            });
         }
 
-        }
     }
 
     pub fn write_output_to_buffer(&self) {
@@ -582,6 +942,17 @@ impl Render {
 
         self.swapchain.as_mut().context("No swapchain previously created")?.rebuild(&self.vk_core, self.window_width, self.window_height)?;
 
+        // Recreate per-swapchain resources
+        self.per_sc_res = self.ui_res.as_ref().map(|ui|  {
+            let swapchain = self.swapchain.as_ref().unwrap();
+
+            let sc_res: Result<Vec<PerSwapChainRes>> = swapchain.views.iter().map(|sc_image_view|{
+                PerSwapChainRes::new(&self.vk_core, ui.render_pass, *sc_image_view, swapchain.width, swapchain.height)
+            }).collect();
+
+            sc_res
+        }).transpose()?;
+
         if !self.info.has_input_image {
             // Pipeline dimensions shouldn't change if we are using an input
             // We just blit the same dimensions to a larger window
@@ -605,11 +976,6 @@ impl Render {
 
         let graph = Self::create_graph(&vk_core, &info)?;
 
-        let frames: Result<Vec<Frame>, _> =
-            (0..info.num_frames).map(|_|{
-            Frame::new(&vk_core, info.config.graph_pipelines.len() as u32)
-        }).collect();
-
         // We use rgba8 as the input file format
         let buffer_size = (info.width as vk::DeviceSize)*(info.height as vk::DeviceSize)*4;
 
@@ -627,11 +993,28 @@ impl Render {
 
         let last_modified_shader_times: HashMap<String, u64> = utils::get_modified_times(&graph.pipelines);
 
-        let swapchain = window.map(|_| SwapChain::new(&vk_core, info.width, info.height)).transpose()?;
 
         let (window_width, window_height) = if window.is_some() { (info.width, info.height) } else { (0, 0 ) };
 
-        let ui = window.map(|w| ui::ui::new(w));
+        let swapchain = window.map(|_| SwapChain::new(&vk_core, info.width, info.height)).transpose()?;
+        let ui = window.map(|w| ui::Ui::new(w));
+        let ui_res = swapchain.as_ref().map(|sc| UiResources::new(&vk_core.device, sc.surface_format.format)).transpose()?;
+
+        let frames: Result<Vec<Frame>, _> =
+            (0..info.num_frames).map(|_|{
+            Frame::new(&vk_core, info.config.graph_pipelines.len() as u32)
+        }).collect();
+
+        let per_swapchain: Option<Vec<PerSwapChainRes>> =  ui_res.as_ref().map(|ui|  {
+            let swapchain = swapchain.as_ref().unwrap();
+
+            let sc_res: Result<Vec<PerSwapChainRes>> = swapchain.views.iter().map(|sc_image_view|{
+                PerSwapChainRes::new(&vk_core, ui.render_pass, *sc_image_view, swapchain.width, swapchain.height)
+            }).collect();
+
+            sc_res
+        }).transpose()?;
+
 
         Ok(Render {
             frames: frames?,
@@ -650,9 +1033,29 @@ impl Render {
             reload_config: None,
             window_width,
             window_height,
-            ui
+            ui,
+            ui_res,
+            per_sc_res: per_swapchain
         })
 
+        }
+    }
+}
+
+impl Drop for UiResources {
+    fn drop(&mut self) {
+        unsafe {
+            let device = &self.pipeline.device;
+            device.destroy_descriptor_pool(self._descriptor_pool, None);
+        }
+    }
+}
+
+impl Drop for UiPerSwapchain {
+    fn drop(&mut self) {
+        unsafe {
+            let device = &self.vertex_buffer.device;
+            device.destroy_framebuffer(self.framebuffer, None);
         }
     }
 }

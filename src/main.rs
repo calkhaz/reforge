@@ -151,12 +151,15 @@ impl ApplicationHandler for WindowHandler {
         }
     }
 
+
     fn window_event(
         &mut self,
         _event_loop: &ActiveEventLoop,
         _window_id: WindowId,
         event: WindowEvent,
     ) {
+        self.reforge.as_mut().unwrap().render.ui.as_mut().unwrap().on_window_event(self.window.as_ref().unwrap(), &event);
+
         match event {
             WindowEvent::CloseRequested => self.close_requested = true,
             WindowEvent::KeyboardInput {

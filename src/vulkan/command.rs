@@ -28,6 +28,10 @@ pub fn transition_image_layout(device: &ash::Device, cmd: vk::CommandBuffer, ima
             src_access = vk::AccessFlags::TRANSFER_WRITE;
             src_pipeline = vk::PipelineStageFlags::TRANSFER
         }
+        vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL => {
+            src_pipeline = vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT;
+            src_access = vk::AccessFlags::COLOR_ATTACHMENT_READ
+        }
         _ => panic!("No matching result for src_layout: {:?}", src_layout)
     }
 
@@ -45,9 +49,17 @@ pub fn transition_image_layout(device: &ash::Device, cmd: vk::CommandBuffer, ima
             dst_access = vk::AccessFlags::TRANSFER_READ;
             dst_pipeline = vk::PipelineStageFlags::TRANSFER
         }
+        vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL => {
+            dst_pipeline = vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT;
+            dst_access = vk::AccessFlags::COLOR_ATTACHMENT_WRITE
+        }
         vk::ImageLayout::PRESENT_SRC_KHR => {
             dst_pipeline = vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT;
             dst_access = vk::AccessFlags::COLOR_ATTACHMENT_WRITE
+        }
+        vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL => {
+            dst_pipeline = vk::PipelineStageFlags::FRAGMENT_SHADER;
+            dst_access = vk::AccessFlags::SHADER_READ
         }
         _ => panic!("No matching result for dst_layout: {:?}", dst_layout)
     }

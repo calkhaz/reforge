@@ -15,7 +15,7 @@ pub struct Frame {
     pub render_complete_semaphore: vk::Semaphore,
     pub cmd_pool: vk::CommandPool,
     pub cmd_buffer: vk::CommandBuffer,
-    pub timer: GpuTimer
+    pub timer: GpuTimer,
 }
 
 impl Frame {
@@ -56,7 +56,7 @@ impl Frame {
                 render_complete_semaphore: core.device.create_semaphore(&semaphore_create_info, None)?,
                 cmd_pool,
                 cmd_buffer: cmd_buff,
-                timer: GpuTimer::new(Rc::clone(&core.device), query_buffer_size)
+                timer: GpuTimer::new(Rc::clone(&core.device), query_buffer_size),
             })
         }
     }
