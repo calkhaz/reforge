@@ -186,6 +186,7 @@ impl Reforge {
         // 1. Transitioned images as needed
         // 2. Load the staging input buffer into an image and convert it to linear
         if first_run[self.render.frame_index] {
+            self.write_params();
             if input_bytes.as_ref().is_some() {
                 self.render.record_initial_image_load();
             }
@@ -220,7 +221,6 @@ impl Reforge {
 
         let mut rf_output: Vec<u8> = Vec::with_capacity(frame_size);
         unsafe { rf_output.set_len(frame_size) }
-        self.write_params();
 
         let (frame, is_last_frame) = if let Some(decoder) = self.decoder.as_mut() {
             let (frame, is_last_frame) = decoder.read_frame()?;
