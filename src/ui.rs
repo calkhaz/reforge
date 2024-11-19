@@ -33,9 +33,46 @@ impl Ui {
         let window_input = std::mem::replace(&mut self.window_input, egui::RawInput::default());
 
         let full_output: egui::FullOutput = self.ctx.run(window_input, |ctx| {
-            let win = egui::Window::new("Egui");
-                win.show(ctx, |ui| {
-                ui.label("Is egui working?");
+            let purple = egui::Color32::from_rgb(150, 123, 182);
+
+            let shadow = egui::Shadow {
+                offset: egui::Vec2{x: 1.0, y: 2.0},
+                blur: 3.0,
+                spread: 2.0,
+                color: egui::Color32::from_rgba_unmultiplied(0, 0, 0, 120)
+            };
+
+            egui::Window::new("")
+                .default_pos(egui::Pos2{x: 0.0, y: 0.0})
+                .fade_in(true)
+                .fade_out(true)
+                .collapsible(true)
+                .frame(egui::Frame::default()
+                    .inner_margin(egui::Margin::same(10.0))
+                    .fill(egui::Color32::from_rgba_unmultiplied(40, 40, 40, 120))
+                    .shadow(egui::Shadow::default())
+                    .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(64, 64, 64, 120)))
+                    .rounding(egui::Rounding::same(3.0))
+                    .shadow(shadow)
+                )
+                .title_bar(false)
+                .resizable(false)
+                .movable(true)
+                .show(ctx, |ui| {
+                    ui.style_mut().visuals.widgets.noninteractive.bg_stroke = egui::Stroke::new(2.0, purple);
+
+                    // Modify the style of the slider background and thumb
+                    let style = ui.style_mut();
+                    style.visuals.widgets.inactive.bg_fill = purple; // Set slider background color
+                    style.visuals.widgets.hovered.bg_fill = purple;  // Set slider background color when hovered
+                    style.visuals.widgets.active.bg_fill = purple;   // Set slider background color when active
+
+
+                    for i in 0..5 {
+                        let mut slider_value: i32 = 50; // Initial value of the slider
+                        ui.add(egui::Slider::new(&mut slider_value, 0..=100*i).text("value"));
+                    }
+
             });
         });
 
