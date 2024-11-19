@@ -7,6 +7,7 @@ use ash::khr;
 use std::rc::Rc;
 
 use crate::vulkan::core::VkCore;
+use ash::vk::Handle;
 
 pub struct SwapChain {
     pub vk: vk::SwapchainKHR,
@@ -15,7 +16,8 @@ pub struct SwapChain {
     pub views: Vec<vk::ImageView>,
     device: Rc<ash::Device>,
     pub width: u32,
-    pub height: u32
+    pub height: u32,
+    pub surface_format: vk::SurfaceFormatKHR
 }
 
 impl SwapChain {
@@ -26,6 +28,14 @@ impl SwapChain {
         let images = swapchain_loader.get_swapchain_images(swapchain)?;
         let views = SwapChain::create_present_image_views(core, &images, surface_format)?;
 
+        for (idx, image) in images.iter().enumerate() {
+            core.set_debug_name(&format!("swapchain-image:{idx}"), image.as_raw(), vk::ObjectType::IMAGE);
+        }
+
+        for (idx, view) in views.iter().enumerate() {
+            core.set_debug_name(&format!("swapchain-view:{idx}"), view.as_raw(), vk::ObjectType::IMAGE_VIEW);
+        }
+
         Ok(SwapChain {
             device: Rc::clone(&core.device),
             vk: swapchain,
@@ -33,7 +43,8 @@ impl SwapChain {
             images,
             views,
             width,
-            height
+            height,
+            surface_format
         })
     }
 
