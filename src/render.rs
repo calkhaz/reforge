@@ -782,7 +782,9 @@ impl Render {
         self.record_pipeline_graph();
         self.record_swapchain_blit();
 
-        if self.ui.is_some() {
+        let render_ui = self.ui.as_ref().map(|ui| !ui.hidden).unwrap_or(false);
+
+        if render_ui {
             self.record_ui();
         }
         else {

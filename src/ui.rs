@@ -5,6 +5,7 @@ pub struct Ui {
     state: egui_winit::State,
     window_input: egui::RawInput,
     platform_output: egui::PlatformOutput,
+    pub hidden: bool
 }
 
 impl Ui {
@@ -16,7 +17,7 @@ impl Ui {
         let state = egui_winit::State::new(ctx.clone(), egui::ViewportId::ROOT, &window, Some(window.scale_factor() as f32), None, None);
         
         Ui {
-            ctx, state, window_input: egui::RawInput::default(), platform_output: egui::PlatformOutput::default()
+            ctx, state, window_input: egui::RawInput::default(), platform_output: egui::PlatformOutput::default(), hidden: false
         }
     }
 

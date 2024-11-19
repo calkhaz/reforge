@@ -110,6 +110,14 @@ impl WindowHandler {
             ..Default::default()
         }
     }
+
+    fn rf(&mut self) -> &mut Reforge {
+        self.reforge.as_mut().unwrap()
+    }
+
+    fn ui(&mut self) -> &mut ui::Ui {
+        self.reforge.as_mut().unwrap().render.ui.as_mut().unwrap()
+    }
 }
 
 // Validation checks and adjust args
@@ -169,10 +177,13 @@ impl ApplicationHandler for WindowHandler {
                 Key::Named(NamedKey::Escape) => {
                     self.close_requested = true;
                 },
+                Key::Character("h") => {
+                    self.ui().hidden = !self.ui().hidden;
+                },
                 _ => (),
             },
             WindowEvent::Resized(size) => {
-                self.reforge.as_mut().unwrap().resize_swapchain(size.width, size.height).unwrap();
+                self.rf().resize_swapchain(size.width, size.height).unwrap();
             },
             WindowEvent::RedrawRequested => {
                 let window = self.window.as_ref().unwrap();
