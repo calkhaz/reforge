@@ -535,18 +535,18 @@ impl Render {
         device.cmd_copy_buffer_to_image(frame.cmd_buffer, buffer.vk, image.vk, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &[buffer_regions]);
         command::transition_image_layout(&device, frame.cmd_buffer, image.vk, vk::ImageLayout::TRANSFER_DST_OPTIMAL, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
-        let desc_info = vk::DescriptorImageInfo {
+        let image_infos = [vk::DescriptorImageInfo {
             image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
             image_view: image.view,
             sampler: self.graph.sampler.vk
-        };
+        }];
 
         let descriptor_write = vk::WriteDescriptorSet {
             dst_set: ui_res.descriptor_set,
             dst_binding: 0,
             descriptor_count: 1,
             descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-            p_image_info: [desc_info].as_ptr(),
+            p_image_info: image_infos.last().unwrap(),
             ..Default::default()
         };
 
