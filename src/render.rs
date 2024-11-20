@@ -892,15 +892,16 @@ impl Render {
     }
 
     pub fn trigger_reloads(&mut self) -> Result<bool> {
+        let mut full_reload_performed = false;
 
         // If the window has changed, we need to reload the swapchain
         // Normally, resize_swapchain() is called explicitly elsewhere,
         // so this should only be the case if we got an OUT_OF_DATE KHR or suboptimal present
         if self.swapchain_rebuilt_required {
             self.resize_swapchain(self.window_width, self.window_height)?;
+            full_reload_performed = true;
         }
 
-        let mut full_reload_performed = false;
 
         // If our configuration has changed, live reload it
         if let Some(reload_config) = &mut self.reload_config {

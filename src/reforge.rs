@@ -25,6 +25,7 @@ pub struct Reforge {
     params: HashMap<String, HashMap<String, ParamData>>,
     py_config_timestamp: u64,
     time_since_start: std::time::Instant,
+    first_run: Vec<bool>
 }
 
 impl Reforge {
@@ -144,12 +145,12 @@ impl Reforge {
         let render = Render::new(render_info, window)?;
         let time_since_start: std::time::Instant = std::time::Instant::now();
 
-        Ok(Reforge { args, width, height, decoder, encoder, render, graph, params, py_config_timestamp, /*ui, event_loop,*/ time_since_start })
+        let first_run = vec![true; args.num_frames.unwrap()];
+
+        Ok(Reforge { args, width, height, decoder, encoder, render, graph, params, py_config_timestamp, time_since_start, first_run })
     }
 
     pub fn execute(&mut self, input_bytes: Option<&[u8]>, output_bytes: Option<&mut [u8]>) -> Result<()> {
-        let mut first_run = vec![true; self.args.num_frames.unwrap()];
-
         //let mut avg_ms = 0.0;
         let mapped_input_image_data: *mut u8 = self.render.staging_buffer_ptr();
 
@@ -167,7 +168,7 @@ impl Reforge {
 
         if self.render.trigger_reloads()? {
             eprint!("{TERM_CLEAR}");
-            first_run.iter_mut().for_each(|b| *b = true);
+            self.first_run.iter_mut().for_each(|b| *b = true);
         }
 
         if let Err(err) = self.render.update_ubos(self.time_since_start.elapsed().as_secs_f32()) {
@@ -185,13 +186,13 @@ impl Reforge {
         // On the first run, we:
         // 1. Transitioned images as needed
         // 2. Load the staging input buffer into an image and convert it to linear
-        if first_run[self.render.frame_index] {
+        if self.first_run[self.render.frame_index] {
             self.write_params();
             if input_bytes.as_ref().is_some() {
                 self.render.record_initial_image_load();
             }
             self.render.record_pipeline_image_transitions();
-            //first_run[render.frame_index] = false;
+            self.first_run[self.render.frame_index] = false;
         }
 
         self.render.record();
@@ -224,7 +225,13 @@ impl Reforge {
 
         let (frame, is_last_frame) = if let Some(decoder) = self.decoder.as_mut() {
             let (frame, is_last_frame) = decoder.read_frame()?;
-                (Some(frame), is_last_frame)
+
+            // For videos, we will always be on our "first run"
+            // where we need to load images into a buffer and transition them
+            if decoder.num_frames > 1 {
+                self.first_run.iter_mut().for_each(|b| *b = true);
+            }
+            (Some(frame), is_last_frame)
         }
         else { (None, false) };
 
