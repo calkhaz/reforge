@@ -1,11 +1,23 @@
 use winit::window::Window;
+use crate::render::ParamData;
+
+use std::collections::HashMap;
+use tracing::warn;
+
+#[derive(Clone, Debug)]
+pub struct UiParam {
+    pub min: ParamData,
+    pub max: ParamData,
+    pub val: ParamData
+}
 
 pub struct Ui {
     ctx: egui::Context,
     state: egui_winit::State,
     window_input: egui::RawInput,
     platform_output: egui::PlatformOutput,
-    pub hidden: bool
+    pub hidden: bool,
+    pub params: HashMap<String, UiParam>
 }
 
 impl Ui {
@@ -17,7 +29,7 @@ impl Ui {
         let state = egui_winit::State::new(ctx.clone(), egui::ViewportId::ROOT, &window, Some(window.scale_factor() as f32), None, None);
         
         Ui {
-            ctx, state, window_input: egui::RawInput::default(), platform_output: egui::PlatformOutput::default(), hidden: false
+            ctx, state, window_input: egui::RawInput::default(), platform_output: egui::PlatformOutput::default(), hidden: false, params: HashMap::new()
         }
     }
 
@@ -67,10 +79,22 @@ impl Ui {
                     style.visuals.widgets.hovered.bg_fill = purple;  // Set slider background color when hovered
                     style.visuals.widgets.active.bg_fill = purple;   // Set slider background color when active
 
+                    for (param_name, p) in &mut self.params {
+                        use ParamData::*;
 
-                    for i in 0..5 {
-                        let mut slider_value: i32 = 50; // Initial value of the slider
-                        ui.add(egui::Slider::new(&mut slider_value, 0..=100*i).text("value"));
+                        ui.label(param_name);
+
+                        match (&mut p.val, p.min.clone(), p.max.clone()) {
+                            (Float(v), Float(min), Float(max)) => {
+                                ui.add(egui::Slider::new(v, min..=max));
+                            },
+                            (Integer(v), Integer(min), Integer(max)) => {
+                                ui.add(egui::Slider::new(v, min..=max));
+                            },
+                            _ => {
+                                warn!("Unsupported ui paramdata for {param_name}")
+                            }
+                        }
                     }
 
             });

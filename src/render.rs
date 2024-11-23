@@ -624,7 +624,7 @@ impl Render {
         }
     }
 
-    fn record_ui(&mut self) {
+    pub fn record_ui(&mut self) {
         let (primitives, texture_deltas, pixels_per_point) = self.ui.as_mut().unwrap().run();
 
         // Only upload font image once ever
@@ -782,22 +782,6 @@ impl Render {
         self.record_pipeline_graph();
         self.record_swapchain_blit();
 
-        let render_ui = self.ui.as_ref().map(|ui| !ui.hidden).unwrap_or(false);
-
-        if render_ui {
-            self.record_ui();
-        }
-        else {
-            let frame = &self.frames[self.frame_index];
-            let device = &self.vk_core.device;
-
-            // we blit to swapchain from compute and present directly
-            self.swapchain.as_ref().map(|sc| {
-                let swapchain_image = sc.images[self.present_index as usize];
-                command::transition_image_layout(&device, frame.cmd_buffer, swapchain_image, vk::ImageLayout::TRANSFER_DST_OPTIMAL, vk::ImageLayout::PRESENT_SRC_KHR);
-            });
-        }
-
     }
 
     pub fn write_output_to_buffer(&self) {
@@ -830,6 +814,21 @@ impl Render {
     }
 
     pub fn end_record(&self) {
+        let frame = &self.frames[self.frame_index];
+        let device = &self.vk_core.device;
+
+        let ui_rendered = self.ui.as_ref().map(|ui| ui.hidden).unwrap_or(true);
+
+        // The ui render pass is setup to auto-transition the swapchain to PRESENT_SRC_KHR, so we
+        // only need this if we are rendering with no ui
+        if ui_rendered {
+            // Transition swapchain to present if we have one
+            self.swapchain.as_ref().map(|sc| {
+                let swapchain_image = sc.images[self.present_index as usize];
+                command::transition_image_layout(&device, frame.cmd_buffer, swapchain_image, vk::ImageLayout::TRANSFER_DST_OPTIMAL, vk::ImageLayout::PRESENT_SRC_KHR);
+            });
+        }
+
         unsafe {
         self.vk_core.device.end_command_buffer(self.frames[self.frame_index].cmd_buffer).unwrap();
         }

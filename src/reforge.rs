@@ -10,8 +10,6 @@ use crate::Args;
 use crate::config;
 use winit::window::Window;
 
-use crate::render::ParamData;
-
 use std::collections::HashMap;
 
 pub struct Reforge {
@@ -21,8 +19,7 @@ pub struct Reforge {
     decoder: Option<Decoder>,
     encoder: Option<Encoder>,
     pub render: Render,
-    graph: String,
-    params: HashMap<String, HashMap<String, ParamData>>,
+    pub cfg: py::PyConfig,
     py_config_timestamp: u64,
     time_since_start: std::time::Instant,
     first_run: Vec<bool>
@@ -30,7 +27,7 @@ pub struct Reforge {
 
 impl Reforge {
     fn write_params(&mut self) {
-        self.params.iter().for_each(|(node_name, params)| {
+        self.cfg.node_params.iter().for_each(|(node_name, params)| {
             params.iter().for_each(|(param_name, value)| {
                 let param_map = self.render.pipeline_buffer_data.entry(node_name.clone()).or_default();
                 param_map.insert(param_name.clone(), value.clone());
@@ -58,31 +55,29 @@ impl Reforge {
     }
 
     fn reload_py_config(&mut self) -> Result<()> {
-        if let Some(python_config) = self.args.python_config.as_ref() {
-            let shader_path = self.args.shader_path.as_ref().unwrap().clone();
-            match py::py_config(&python_config) {
-                Ok((graph, params)) => {
-                    self.params = params;
+        let Some(py_config_path) = self.args.python_config.as_ref() else { return Ok(()) };
 
-                    if graph != self.graph {
-                        let config = config::parse(graph.clone(), &shader_path).context("Failed to create config")?;
-                        self.render.update_config(config);
-                        self.graph = graph;
+        let shader_path = self.args.shader_path.as_ref().unwrap().clone();
 
-                        debug!("Reload graph: {}", self.graph);
-                    }
+        let config = py::py_config(&py_config_path).context(format!("Python config err in {py_config_path}"))?;
 
-                    debug!("Reload Params: {:?}", self.params);
+        if config.graph != self.cfg.graph {
+            let graph_config = config::parse(config.graph.clone(), &shader_path).context("Failed to create config")?;
+            self.render.update_config(graph_config);
+            self.cfg.graph = config.graph;
 
-                    self.write_params();
-                    Ok(())
-                },
-                Err(err) => Err(anyhow!("Python err in {}: {}", python_config, err))
+            if let Some(ui) = self.render.ui.as_mut() {
+                ui.params = config.ui_params;
             }
+
+            debug!("Reload graph: {}", self.cfg.graph);
         }
-        else {
-            Ok(())
-        }
+
+        debug!("Reload Params: {:?}", self.cfg.node_params);
+
+        self.write_params();
+
+        Ok(())
     }
 
     pub fn resize_swapchain(&mut self, width: u32, height: u32) -> Result<()> {
@@ -106,9 +101,8 @@ impl Reforge {
             Some(Encoder::new(&output_file, width, height).context("Failed to create encoder")?)
         } else { None };
 
-        let (graph, params, py_config_timestamp) = if let Some(python_config) = args.python_config.as_ref() {
-            let (graph, params) = py::py_config(&python_config)?;
-            (graph, params, utils::get_modified_time(&python_config))
+        let (cfg, py_config_timestamp) = if let Some(python_config) = args.python_config.as_ref() {
+            (py::py_config(&python_config)?, utils::get_modified_time(&python_config))
         }
         else {
             // Verified by this point in an earlier check
@@ -119,13 +113,13 @@ impl Reforge {
                 None    => format!(         "{} -> output", shader_file)
             };
 
-            (graph, HashMap::new(), 0)
+            (py::PyConfig{graph, node_params: HashMap::new(), ui_params: HashMap::new()}, 0)
         };
     
         let shader_path = args.shader_path.clone().unwrap_or("".to_string());
-        let config = config::parse(graph.clone(), &shader_path).context("Failed to create config")?;
-        debug!("Graph: {}", graph);
-        debug!("Config: {:?}", config);
+        let graph_config = config::parse(cfg.graph.clone(), &shader_path).context("Failed to create config")?;
+        debug!("Graph: {}", cfg.graph);
+        debug!("Graph Config: {:?}", graph_config);
 
         // We write each frame to the encoder and that cannot
         // currently work in multi-frame mode
@@ -134,7 +128,7 @@ impl Reforge {
         } else { args.num_frames.unwrap() };
 
         let render_info = RenderInfo {
-            config,
+            config: graph_config,
             width,
             height,
             num_frames,
@@ -142,12 +136,16 @@ impl Reforge {
             has_input_image: decoder.is_some(),
         };
 
-        let render = Render::new(render_info, window)?;
+        let mut render = Render::new(render_info, window)?;
+        if let Some(ui) = &mut render.ui {
+            ui.params = cfg.ui_params.clone();
+        }
+
         let time_since_start: std::time::Instant = std::time::Instant::now();
 
         let first_run = vec![true; args.num_frames.unwrap()];
 
-        Ok(Reforge { args, width, height, decoder, encoder, render, graph, params, py_config_timestamp, time_since_start, first_run })
+        Ok(Reforge { args, width, height, decoder, encoder, render, cfg, py_config_timestamp, time_since_start, first_run })
     }
 
     pub fn execute(&mut self, input_bytes: Option<&[u8]>, output_bytes: Option<&mut [u8]>) -> Result<()> {
@@ -196,6 +194,12 @@ impl Reforge {
         }
 
         self.render.record();
+
+        if let Some(ui) = self.render.ui.as_ref() {
+            if !ui.hidden {
+                self.render.record_ui();
+            }
+        }
 
         if output_bytes.is_some() {
             self.render.write_output_to_buffer();
