@@ -25,6 +25,9 @@ impl Ui {
         let ctx = egui::Context::default();
         ctx.set_visuals(egui::Visuals::dark());
 
+        // Scale the default ui size down a bit
+        ctx.set_pixels_per_point(0.8);
+
         // Setting none for max_texture_side for now
         let state = egui_winit::State::new(ctx.clone(), egui::ViewportId::ROOT, &window, Some(window.scale_factor() as f32), None, None);
         
