@@ -25,6 +25,7 @@ impl Ui {
         let ctx = egui::Context::default();
         ctx.set_visuals(egui::Visuals::dark());
 
+
         // Scale the default ui size down a bit
         ctx.set_pixels_per_point(0.8);
 
@@ -49,6 +50,8 @@ impl Ui {
 
         let full_output: egui::FullOutput = self.ctx.run(window_input, |ctx| {
             let purple = egui::Color32::from_rgb(150, 123, 182);
+            let dark = egui::Color32::from_rgba_unmultiplied(100, 100, 100, 60);
+            let dark_highlight = egui::Color32::from_rgba_unmultiplied(130, 130, 130, 60);
 
             let shadow = egui::Shadow {
                 offset: egui::Vec2{x: 1.0, y: 2.0},
@@ -64,7 +67,7 @@ impl Ui {
                 .collapsible(true)
                 .frame(egui::Frame::default()
                     .inner_margin(egui::Margin::same(10.0))
-                    .fill(egui::Color32::from_rgba_unmultiplied(40, 40, 40, 120))
+                    .fill(egui::Color32::from_rgba_unmultiplied(40, 40, 40, 180))
                     .shadow(egui::Shadow::default())
                     .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(64, 64, 64, 120)))
                     .rounding(egui::Rounding::same(3.0))
@@ -82,14 +85,35 @@ impl Ui {
                     style.visuals.widgets.hovered.bg_fill = purple;  // Set slider background color when hovered
                     style.visuals.widgets.active.bg_fill = purple;   // Set slider background color when active
 
+                    // Customize slider value box
+                    style.visuals.widgets.active.weak_bg_fill = dark;
+                    style.visuals.widgets.inactive.weak_bg_fill = dark;
+                    style.visuals.widgets.hovered.weak_bg_fill = dark;
+                    style.visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.0, purple);
+                    style.visuals.widgets.active.bg_stroke = egui::Stroke::new(1.0, purple);
+                    style.visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.0, dark_highlight);
+                    style.visuals.override_text_color = Some(egui::Color32::WHITE);
+
+                    //style.visuals.button_frame = false;
+
                     for (param_name, p) in &mut self.params {
                         use ParamData::*;
 
-                        ui.label(param_name);
+                        // TODO: We can probably add a custom shadow or outline to text this way,
+                        //       but we'll need to upload another font (creating new fontid) with different sizes
+                        //       and replace  the TextStyles
+                        // let resp: egui::Response = ui.label(" ");
+                        // let x = resp.rect.min.x;
+                        // let y = resp.rect.min.y;
+                        // ui.painter().text(egui::Pos2::new(x, y), egui::Align2::LEFT_TOP, param_name, egui::TextStyle::Heading.resolve(&ui.style()), egui::Color32::from_rgba_premultiplied(255, 255, 255, 255));
+                        // ui.painter().text(egui::Pos2::new(x, y), egui::Align2::LEFT_TOP, param_name, egui::TextStyle::Body.resolve(&ui.style()), egui::Color32::from_rgba_premultiplied(64, 64, 64, 255));
+
+                        //ui.label("yep");
+                        ui.label(egui::RichText::new(param_name).strong());
 
                         match (&mut p.val, p.min.clone(), p.max.clone()) {
                             (Float(v), Float(min), Float(max)) => {
-                                ui.add(egui::Slider::new(v, min..=max));
+                                ui.add(egui::Slider::new(v, min..=max).text_color(egui::Color32::from_rgb(255, 255, 255)));
                             },
                             (Integer(v), Integer(min), Integer(max)) => {
                                 ui.add(egui::Slider::new(v, min..=max));
