@@ -1,10 +1,10 @@
 use winit::window::Window;
 use crate::render::ParamData;
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use tracing::warn;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct UiParam {
     pub min: ParamData,
     pub max: ParamData,
@@ -17,7 +17,7 @@ pub struct Ui {
     window_input: egui::RawInput,
     platform_output: egui::PlatformOutput,
     pub hidden: bool,
-    pub params: HashMap<String, UiParam>
+    pub params: BTreeMap<String, UiParam>
 }
 
 impl Ui {
@@ -33,7 +33,7 @@ impl Ui {
         let state = egui_winit::State::new(ctx.clone(), egui::ViewportId::ROOT, &window, Some(window.scale_factor() as f32), None, None);
         
         Ui {
-            ctx, state, window_input: egui::RawInput::default(), platform_output: egui::PlatformOutput::default(), hidden: false, params: HashMap::new()
+            ctx, state, window_input: egui::RawInput::default(), platform_output: egui::PlatformOutput::default(), hidden: false, params: BTreeMap::new()
         }
     }
 

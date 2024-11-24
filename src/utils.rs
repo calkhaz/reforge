@@ -26,7 +26,7 @@ pub fn load_file_contents(config_path: &str) -> Result<String> {
     Ok(contents)
 }
 
-pub fn get_modified_time(path: &String) -> u64 {
+pub fn get_modified_time(path: &str) -> u64 {
     match std::fs::metadata(path) {
         Ok(metadata) => {
             metadata.modified().unwrap().duration_since(std::time::SystemTime::UNIX_EPOCH).unwrap().as_secs()

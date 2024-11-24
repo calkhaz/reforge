@@ -1,10 +1,11 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use pyo3::prelude::Python;
 use pyo3::types::{PyAny, PyList, PyString, PyModule, PyDict};
 use anyhow::{anyhow, Context, Result};
 use tracing::warn;
 
+use crate::utils;
 use crate::err;
 use crate::render::ParamData;
 use crate::ui::UiParam;
@@ -12,7 +13,10 @@ use crate::ui::UiParam;
 pub struct PyConfig {
     pub graph: String,
     pub node_params: HashMap<String, HashMap<String, ParamData>>,
-    pub ui_params: HashMap<String, UiParam>
+    pub ui_params: BTreeMap<String, UiParam>, // BTreeMap so the UI nodes are sorted consistently
+    pub module: pyo3::Py<PyModule>,
+    pub timestamp: u64,
+    pub path: String
 }
 
 fn pyany_to_param_data(value: &PyAny) -> Result<ParamData> {
@@ -51,17 +55,17 @@ ui = dict(
     kernel_radius = dict(val = 9,   min = 1,    max = 30),
 )
 */
-fn ui_to_paramdata(nodes: &PyDict) -> Result<HashMap<String, UiParam>> {
-    let mut node_params: HashMap<String, UiParam> = HashMap::new();
+fn ui_to_paramdata(nodes: &PyDict) -> Result<BTreeMap<String, UiParam>> {
+    let mut node_params: BTreeMap<String, UiParam> = BTreeMap::new();
 
     for (node_name, ui_dict) in nodes {
         let node_name = node_name.extract::<&PyString>()?.to_string();
 
         let ui_dict = ui_dict.extract::<&pyo3::types::PyDict>()?;
 
-        let val = ui_dict.get_item("val")?.context("UI entry must have 'min' entry")?;
+        let val = ui_dict.get_item("val")?.context("UI entry must have 'val' entry")?;
         let min = ui_dict.get_item("min")?.context("UI entry must have 'min' entry")?;
-        let max = ui_dict.get_item("max")?.context("UI entry must have 'min' entry")?;
+        let max = ui_dict.get_item("max")?.context("UI entry must have 'max' entry")?;
 
         let val = pyany_to_param_data(val)?;
         let min = pyany_to_param_data(min)?;
@@ -71,6 +75,40 @@ fn ui_to_paramdata(nodes: &PyDict) -> Result<HashMap<String, UiParam>> {
     }
 
     Ok(node_params)
+}
+
+/* Outputting data like this
+dict(
+    sigma = 2.0,
+    kernel_radius = 9,
+) */
+pub fn build_nodes_from_paramdata(module: &pyo3::Py<PyModule>, nodes: &BTreeMap<String, UiParam>) -> Result<HashMap<String, HashMap<String, ParamData>>> {
+    Python::with_gil(|py| -> Result<_> {
+        use ParamData::*;
+        let dict = PyDict::new(py);
+        for (name, node) in nodes {
+            match node.val.clone() {
+                Float(v) => dict.set_item(name, v)?,
+                Integer(v) => dict.set_item(name, v)?,
+                Boolean(v) => dict.set_item(name, v)?,
+                FloatArray(v) => {
+                    let py_list = PyList::new(py, &v);
+                    dict.set_item(name, py_list)?;
+                },
+                IntegerArray(v) => {
+                    let py_list = PyList::new(py, &v);
+                    dict.set_item(name, py_list)?;
+                }
+            }
+        }
+
+        let module = module.as_ref(py);
+        let pydict_nodes = module.getattr("build_nodes")?.call1((dict,))?;
+
+        let dict = pydict_nodes.extract::<&PyDict>()?;
+        let nodes = nodes_to_paramdata(&dict)?;
+        Ok(nodes)
+    })
 }
 
 fn nodes_to_paramdata(nodes: &PyDict) -> Result<HashMap<String, HashMap<String, ParamData>>> {
@@ -126,18 +164,16 @@ pub fn py_config(path: &str) -> Result<PyConfig> {
 
         let module = PyModule::from_code(py, &script, file_name, module_name)?;
         let graph = module.getattr("graph")?.extract::<&PyString>()?.to_string();
-        let ui_nodes = module.getattr("ui2")?.extract::<&PyDict>()?;
+        let ui_nodes = module.getattr("ui")?.extract::<&PyDict>()?;
 
         let ui_params = ui_to_paramdata(ui_nodes)?;
 
-        // Don't require "nodes", but enforce it to be correct if it is found
-        let node_params = if let Ok(nodes) = module.getattr("nodes") {
-            if let Ok(nodes) = nodes.extract::<&PyDict>() {
-                nodes_to_paramdata(nodes)?
-            }
-            else { HashMap::new() }
-        } else { HashMap::new() };
+        let module : pyo3::Py<PyModule> = module.into();
 
-        Ok(PyConfig{ graph, node_params, ui_params})
+        let node_params = build_nodes_from_paramdata(&module, &ui_params)?;
+
+        let timestamp = utils::get_modified_time(path);
+
+        Ok(PyConfig{ graph, node_params, ui_params, module, timestamp, path: path.to_string()})
     })
 }

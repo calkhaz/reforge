@@ -28,7 +28,7 @@ use std::default::Default;
 use std::rc::Rc;
 use winit::window::Window;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum ParamData {
     Boolean(bool),
     Float(f32),

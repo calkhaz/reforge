@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 use crate::ffmpeg::{Decoder, Encoder};
 use crate::render::Render;
 use crate::render::RenderInfo;
@@ -10,8 +10,6 @@ use crate::Args;
 use crate::config;
 use winit::window::Window;
 
-use std::collections::HashMap;
-
 pub struct Reforge {
     args: Args,
     width: u32,
@@ -19,15 +17,16 @@ pub struct Reforge {
     decoder: Option<Decoder>,
     encoder: Option<Encoder>,
     pub render: Render,
-    pub cfg: py::PyConfig,
-    py_config_timestamp: u64,
+    pub cfg: Option<py::PyConfig>,
     time_since_start: std::time::Instant,
     first_run: Vec<bool>
 }
 
 impl Reforge {
     fn write_params(&mut self) {
-        self.cfg.node_params.iter().for_each(|(node_name, params)| {
+        let Some(cfg) = self.cfg.as_mut() else { return };
+
+        cfg.node_params.iter().for_each(|(node_name, params)| {
             params.iter().for_each(|(param_name, value)| {
                 let param_map = self.render.pipeline_buffer_data.entry(node_name.clone()).or_default();
                 param_map.insert(param_name.clone(), value.clone());
@@ -38,44 +37,49 @@ impl Reforge {
     }
 
     fn py_needs_reload(&mut self) -> bool {
-        if let Some(python_config) = self.args.python_config.as_ref() {
-            let current_py_config_timestamp = utils::get_modified_time(&python_config);
+        let Some(cfg) = self.cfg.as_mut() else { return false };
 
-            if current_py_config_timestamp == 0 {
-                warn!("Unable to access python config: {}", python_config);
-            }
+        let current_py_config_timestamp = utils::get_modified_time(&cfg.path);
 
-            if current_py_config_timestamp > self.py_config_timestamp {
-                self.py_config_timestamp = current_py_config_timestamp;
-                return true;
-            }
+        if current_py_config_timestamp == 0 {
+            warn!("Unable to access python config: {}", cfg.path);
+        }
+
+        if current_py_config_timestamp > cfg.timestamp {
+            cfg.timestamp = current_py_config_timestamp;
+            return true;
         }
 
         false
     }
 
     fn reload_py_config(&mut self) -> Result<()> {
-        let Some(py_config_path) = self.args.python_config.as_ref() else { return Ok(()) };
+        if let Some(cfg) = self.cfg.as_mut() {
+            let shader_path = self.args.shader_path.as_ref().unwrap().clone();
 
-        let shader_path = self.args.shader_path.as_ref().unwrap().clone();
+            let reload_cfg = py::py_config(&cfg.path).context(format!("Python config err in {}", cfg.path))?;
 
-        let config = py::py_config(&py_config_path).context(format!("Python config err in {py_config_path}"))?;
+            if reload_cfg.graph != cfg.graph {
+                let graph_config = config::parse(reload_cfg.graph.clone(), &shader_path).context("Failed to create config")?;
+                self.render.update_config(graph_config);
 
-        if config.graph != self.cfg.graph {
-            let graph_config = config::parse(config.graph.clone(), &shader_path).context("Failed to create config")?;
-            self.render.update_config(graph_config);
-            self.cfg.graph = config.graph;
-
-            if let Some(ui) = self.render.ui.as_mut() {
-                ui.params = config.ui_params;
+                debug!("Reload graph: {}", reload_cfg.graph);
             }
 
-            debug!("Reload graph: {}", self.cfg.graph);
+            *cfg = reload_cfg;
+            self.write_params();
+        }
+        else {
+            return Ok(())
         }
 
-        debug!("Reload Params: {:?}", self.cfg.node_params);
+        let Some(cfg) = self.cfg.as_ref() else { return Ok(()) };
 
-        self.write_params();
+        if let Some(ui) = self.render.ui.as_mut() {
+            ui.params = cfg.ui_params.clone();
+        }
+
+        debug!("Reload Params: {:?}", cfg.node_params);
 
         Ok(())
     }
@@ -101,10 +105,13 @@ impl Reforge {
             Some(Encoder::new(&output_file, width, height).context("Failed to create encoder")?)
         } else { None };
 
-        let (cfg, py_config_timestamp) = if let Some(python_config) = args.python_config.as_ref() {
-            (py::py_config(&python_config)?, utils::get_modified_time(&python_config))
-        }
-        else {
+        let cfg = args.python_config.as_ref().map(|py_config_path| -> Result<_> {
+            Ok(py::py_config(&py_config_path)?)
+        }).transpose()?;
+
+        let graph = if let Some(cfg) = cfg.as_ref() {
+            cfg.graph.clone()
+        } else {
             // Verified by this point in an earlier check
             let shader_file = args.shader_file.as_ref().unwrap();
 
@@ -113,12 +120,13 @@ impl Reforge {
                 None    => format!(         "{} -> output", shader_file)
             };
 
-            (py::PyConfig{graph, node_params: HashMap::new(), ui_params: HashMap::new()}, 0)
+            graph
         };
     
+        debug!("Graph: {graph}");
+
         let shader_path = args.shader_path.clone().unwrap_or("".to_string());
-        let graph_config = config::parse(cfg.graph.clone(), &shader_path).context("Failed to create config")?;
-        debug!("Graph: {}", cfg.graph);
+        let graph_config = config::parse(graph, &shader_path).context("Failed to create config")?;
         debug!("Graph Config: {:?}", graph_config);
 
         // We write each frame to the encoder and that cannot
@@ -137,16 +145,38 @@ impl Reforge {
         };
 
         let mut render = Render::new(render_info, window)?;
+
+        // Initialize ui with original params -- TODO: Rather ugly to do this here
         if let Some(ui) = &mut render.ui {
-            ui.params = cfg.ui_params.clone();
+            cfg.as_ref().map(|c| ui.params = c.ui_params.clone());
         }
 
         let time_since_start: std::time::Instant = std::time::Instant::now();
 
         let first_run = vec![true; args.num_frames.unwrap()];
 
-        Ok(Reforge { args, width, height, decoder, encoder, render, cfg, py_config_timestamp, time_since_start, first_run })
+        Ok(Reforge { args, width, height, decoder, encoder, render, cfg, time_since_start, first_run })
     }
+
+    fn ui_param_update(&mut self) {
+        let Some(ui) = self.render.ui.as_ref() else { return };
+        let Some(cfg) = self.cfg.as_mut() else { return };
+
+        if cfg.ui_params != ui.params {
+            cfg.ui_params = ui.params.clone();
+
+            let new_params = py::build_nodes_from_paramdata(&cfg.module, &cfg.ui_params);
+
+            match new_params {
+                Ok(p) => {
+                    cfg.node_params = p;
+                    self.write_params();
+                },
+                Err(e) => warn!("Failed building node params from ui: {:?}", e)
+            }
+        }
+    }
+
 
     pub fn execute(&mut self, input_bytes: Option<&[u8]>, output_bytes: Option<&mut [u8]>) -> Result<()> {
         //let mut avg_ms = 0.0;
@@ -163,6 +193,8 @@ impl Reforge {
         // Wait for the previous iteration of this frame before
         // changing or executing on its resources
         self.render.wait_for_frame_fence();
+
+        self.ui_param_update();
 
         if self.render.trigger_reloads()? {
             eprint!("{TERM_CLEAR}");
