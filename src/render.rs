@@ -16,9 +16,7 @@ use crate::vulkan::pipeline_graph::PipelineGraph;
 use crate::vulkan::pipeline_graph::PipelineGraphInfo;
 use crate::vulkan::pipeline_graph::FINAL_OUTPUT;
 use crate::vulkan::swapchain::SwapChain;
-use crate::vulkan::vkutils;
-use crate::vulkan::vkutils::Buffer;
-use crate::vulkan::vkutils::Image;
+use crate::vulkan::vkutils::{self, Buffer, Image, Sampler};
 use crate::vulkan::shader::DescBlockType;
 use crate::vulkan::render_pass;
 use tracing::warn;
@@ -139,6 +137,7 @@ struct UiResources {
     font_image: Option<Image>,
     font_image_staging_buffer: Option<Buffer>,
     descriptor_set: vk::DescriptorSet,
+    font_sampler: Sampler
 }
 
 struct UiPerSwapchain {
@@ -223,7 +222,9 @@ impl UiResources {
             .allocate_descriptor_sets(&desc_alloc_info)
             .unwrap()[0];
 
-        Ok(UiResources { render_pass, pipeline, _descriptor_pool: descriptor_pool, font_image: None, font_image_staging_buffer: None, descriptor_set })
+        let font_sampler = vkutils::create_sampler(Rc::clone(&device))?;
+
+        Ok(UiResources { render_pass, pipeline, _descriptor_pool: descriptor_pool, font_image: None, font_image_staging_buffer: None, descriptor_set, font_sampler })
         }
     }
 }
@@ -538,7 +539,7 @@ impl Render {
         let image_infos = [vk::DescriptorImageInfo {
             image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
             image_view: image.view,
-            sampler: self.graph.sampler.vk
+            sampler: ui_res.font_sampler.vk
         }];
 
         let descriptor_write = vk::WriteDescriptorSet {
