@@ -10,6 +10,7 @@ use crate::err;
 use crate::render::ParamData;
 use crate::ui::UiParam;
 
+#[derive(Debug)]
 pub struct PyConfig {
     pub graph: String,
     pub node_params: HashMap<String, HashMap<String, ParamData>>,

@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use crate::ffmpeg::{Decoder, Encoder};
 use crate::render::Render;
 use crate::render::RenderInfo;
-use tracing::{debug, info, warn};
+use tracing::{debug, info, warn, trace};
 use crate::utils::TERM_CLEAR;
 use crate::utils;
 use crate::py;
@@ -25,6 +25,7 @@ pub struct Reforge {
 impl Reforge {
     fn write_params(&mut self) {
         let Some(cfg) = self.cfg.as_mut() else { return };
+        trace!("write config to params {:?}", cfg);
 
         cfg.node_params.iter().for_each(|(node_name, params)| {
             params.iter().for_each(|(param_name, value)| {
@@ -201,9 +202,6 @@ impl Reforge {
             self.first_run.iter_mut().for_each(|b| *b = true);
         }
 
-        if let Err(err) = self.render.update_ubos(self.time_since_start.elapsed().as_secs_f32()) {
-            warn!("{}", err);
-        }
             // Clear current line of timers
 
         // Pull in the next image from the swapchain
@@ -217,12 +215,17 @@ impl Reforge {
         // 1. Transitioned images as needed
         // 2. Load the staging input buffer into an image and convert it to linear
         if self.first_run[self.render.frame_index] {
+            trace!("first_run");
             self.write_params();
             if input_bytes.as_ref().is_some() {
                 self.render.record_initial_image_load();
             }
             self.render.record_pipeline_image_transitions();
             self.first_run[self.render.frame_index] = false;
+        }
+
+        if let Err(err) = self.render.update_ubos(self.time_since_start.elapsed().as_secs_f32()) {
+            warn!("{}", err);
         }
 
         self.render.record();

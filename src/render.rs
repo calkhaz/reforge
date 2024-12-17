@@ -19,7 +19,7 @@ use crate::vulkan::swapchain::SwapChain;
 use crate::vulkan::vkutils::{self, Buffer, Image, Sampler};
 use crate::vulkan::shader::DescBlockType;
 use crate::vulkan::render_pass;
-use tracing::warn;
+use tracing::{warn, trace};
 
 use std::collections::HashMap;
 use std::default::Default;
@@ -281,7 +281,7 @@ impl Render {
         Ok(())
     }
 
-    pub fn write_to_outdated_ubos(&mut self) -> Result<()> {
+    fn write_to_outdated_ubos(&mut self) -> Result<()> {
         let outdated = self.frame_outdated[self.frame_index];
     
         if !outdated {
@@ -315,6 +315,8 @@ impl Render {
                     Some(param_map) => Some((param_map, buffer_map)),
                     None => None
                 }}).collect();
+
+        trace!("Writing to outdated ubos on frame {} - Matched {}/{} params/buffer-blocks", self.frame_index, matched_pipelines.len(), ubos.len());
     
         // For every pipeline (1st vec), we'll want vector (2nd vec)
         // for each parameter containing a tuple of the param name, param data, and buffer block
@@ -337,6 +339,7 @@ impl Render {
         for (name, param, buffer_block) in matched_params.iter().flatten() {
             let ptr = unsafe { buffer_block.buffer.mapped_data.offset(buffer_block.ubo.offset as isize) };
     
+            trace!("Writing {} to {:?}", name, param);
             write_to_buffer(param, ptr, &buffer_block).context(format!("Failed to write param to buffer {}", name))?;
         }
     
