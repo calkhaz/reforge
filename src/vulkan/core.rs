@@ -81,7 +81,7 @@ impl VkCore {
         }
 
         let entry = ash::Entry::load()?;
-        let instance = Self::create_instance(&entry, &extension_names);
+        let instance = Self::create_instance(&entry, &extension_names)?;
 
         let (surface, surface_loader) = match window {
             Some(window) => {
@@ -93,9 +93,10 @@ impl VkCore {
 
         let (pdevice, queue_family_index) = Self::create_physical_device(&instance, surface, &surface_loader);
 
+
         let mut device_extension_names_raw : Vec<*const i8> = vec![
             #[cfg(any(target_os = "macos", target_os = "ios"))]
-            ash::vk::KhrPortabilitySubsetFn::name().as_ptr(),
+            ash::vk::KHR_PORTABILITY_SUBSET_NAME.as_ptr()
         ];
 
         if window.is_some() {
@@ -205,7 +206,7 @@ impl VkCore {
         (debug_call_back, debug_utils_instance, debug_utils_device)
     }
 
-    unsafe fn create_instance(entry: &ash::Entry, extension_names : &Vec<*const i8>) -> ash::Instance {
+    unsafe fn create_instance(entry: &ash::Entry, extension_names : &Vec<*const i8>) -> Result<ash::Instance> {
         let create_flags = if cfg!(any(target_os = "macos", target_os = "ios"))
         {
             vk::InstanceCreateFlags::ENUMERATE_PORTABILITY_KHR
@@ -239,12 +240,7 @@ impl VkCore {
             .enabled_extension_names(&extension_names)
             .flags(create_flags);
 
-        let instance = entry
-            .create_instance(&create_info, None)
-            .expect("Instance creation error");
-
-
-        instance
+        Ok(entry.create_instance(&create_info, None)?)
     }
 
     unsafe fn create_physical_device(instance: &ash::Instance, surface: Option<vk::SurfaceKHR>, surface_loader: &Option<khr::surface::Instance>) -> (vk::PhysicalDevice, u32) {
